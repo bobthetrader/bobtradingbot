@@ -1,0 +1,8 @@
+krakenex==2.1.0
+toml==0.10.2
+numpy
+pandas
+python-dotenv==1.0.0
+websockets>=10.0
+openai>=1.0.0
+requests>=2.31.0

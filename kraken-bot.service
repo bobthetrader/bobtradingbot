@@ -1,0 +1,23 @@
+[Unit]
+Description=Kraken Trading Bot
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=felix
+WorkingDirectory=/home/felix/tradingbot
+ExecStartPre=/bin/rm -f /tmp/kraken_bot.lock /tmp/hermes_bot_start.pid /tmp/kraken_order_executor.lock
+ExecStart=/home/felix/tradingbot/venv/bin/python /home/felix/tradingbot/main.py
+Restart=always
+RestartSec=30
+OOMScoreAdj=-100
+MemoryMax=400M
+StandardOutput=append:/home/felix/tradingbot/logs/bot_stdout.log
+StandardError=append:/home/felix/tradingbot/logs/bot_stderr.log
+RuntimeMaxSec=604800
+
+[Install]
+WantedBy=multi-user.target

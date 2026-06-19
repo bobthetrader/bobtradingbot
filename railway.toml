@@ -1,0 +1,15 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Set BOT_ARGS=--paper in Railway env vars for paper mode, leave blank for live
+startCommand = "python main.py"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Railway volumes are configured in the dashboard under this service.
+# Mount the following persistent volumes so state survives redeploys:
+#   /app/data    → bot-data     (purchase prices, optimizer state, price history)
+#   /app/logs    → bot-logs     (trade events JSONL, activity log)
+#   /app/reports → bot-reports  (trade journal CSV)
