@@ -2690,7 +2690,7 @@ class TradingBot:
                     # ── Write bot_status.json for the web dashboard ───────────
                     try:
                         _status = {
-                            "ts":             datetime.datetime.utcnow().isoformat(),
+                            "ts":             datetime.utcnow().isoformat(),
                             "loop":           iteration,
                             "paper_mode":     bool(getattr(self.api, 'paper_mode', True)),
                             "balance_eur":    round(float(current_balance), 2),
