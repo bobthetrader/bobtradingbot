@@ -2690,44 +2690,45 @@ class TradingBot:
                     # ── Write bot_status.json for the web dashboard ───────────
                     try:
                         _status = {
-                            "ts":                datetime.datetime.utcnow().isoformat(),
-                            "loop":              iteration,
-                            "paper_mode":        bool(getattr(self.api, 'paper_mode', True)),
-                            "balance_eur":       round(current_balance, 2),
-                            "initial_balance":   round(self.initial_balance_eur, 2),
-                            "adjusted_pnl":      round(adjusted_pnl, 4),
-                            "trade_count":       self.trade_count,
-                            "pair_signals":      dict(self.pair_signals),
-                            "pair_scores":       {p: round(float(s), 2) for p, s in self.pair_scores.items()},
-                            "best_pair":         best_pair,
-                            "best_signal":       best_signal,
-                            "regime":            regime_state,
-                            "intelligence_score":round(getattr(self, '_intelligence_score', 0.0), 2),
-                            "sharpe":            self._sharpe_result.get('sharpe'),
-                            "sharpe_verdict":    self._sharpe_result.get('verdict', 'insufficient_data'),
-                            "sharpe_trending":   self._sharpe_result.get('trending', 'stable'),
-                            "open_positions":    {
-                                p: {
-                                    "qty":   round(float(self.holdings.get(p, 0)), 8),
-                                    "entry": round(float(self.purchase_prices.get(p, 0)), 4),
-                                }
-                                for p in self.trade_pairs
-                                if self.holdings.get(p, 0) > 0
-                            },
-                            "open_shorts": {
-                                p: {
-                                    "qty":   round(float(self.short_qty.get(p, 0)), 8),
-                                    "entry": round(float(self.short_entry_prices.get(p, 0)), 4),
-                                }
-                                for p in self.trade_pairs
-                                if self.short_qty.get(p, 0) > 0
-                            },
+                            "ts":             datetime.datetime.utcnow().isoformat(),
+                            "loop":           iteration,
+                            "paper_mode":     bool(getattr(self.api, 'paper_mode', True)),
+                            "balance_eur":    round(float(current_balance), 2),
+                            "initial_balance":round(float(getattr(self, 'initial_balance_eur', 100.0)), 2),
+                            "adjusted_pnl":   round(float(adjusted_pnl), 4),
+                            "trade_count":    int(getattr(self, 'trade_count', 0)),
+                            "pair_signals":   {str(k): str(v) for k, v in getattr(self, 'pair_signals', {}).items()},
+                            "pair_scores":    {str(k): round(float(v), 2) for k, v in getattr(self, 'pair_scores', {}).items()},
+                            "best_pair":      str(best_pair) if best_pair else None,
+                            "best_signal":    str(best_signal) if best_signal else None,
+                            "regime":         str(regime_state),
+                            "intelligence_score": round(float(getattr(self, '_intelligence_score', 0.0)), 2),
+                            "sharpe":         getattr(self, '_sharpe_result', {}).get('sharpe'),
+                            "sharpe_verdict": getattr(self, '_sharpe_result', {}).get('verdict', 'insufficient_data'),
+                            "sharpe_trending":getattr(self, '_sharpe_result', {}).get('trending', 'stable'),
+                            "open_positions": {},
+                            "open_shorts":    {},
                         }
+                        for _p in getattr(self, 'trade_pairs', []):
+                            try:
+                                if float(getattr(self, 'holdings', {}).get(_p, 0)) > 0:
+                                    _status["open_positions"][_p] = {
+                                        "qty":   round(float(self.holdings.get(_p, 0)), 8),
+                                        "entry": round(float(getattr(self, 'purchase_prices', {}).get(_p, 0)), 4),
+                                    }
+                                if float(getattr(self, 'short_qty', {}).get(_p, 0)) > 0:
+                                    _status["open_shorts"][_p] = {
+                                        "qty":   round(float(self.short_qty.get(_p, 0)), 8),
+                                        "entry": round(float(getattr(self, 'short_entry_prices', {}).get(_p, 0)), 4),
+                                    }
+                            except Exception:
+                                pass
                         _status_path = os.path.join(os.path.dirname(__file__), 'data', 'bot_status.json')
                         with open(_status_path, 'w') as _sf:
                             json.dump(_status, _sf)
-                    except Exception:
-                        pass
+                        self.logger.debug("Dashboard status written (loop %d)", iteration)
+                    except Exception as _se:
+                        self.logger.warning("bot_status.json write failed: %s", _se)
 
                     if iteration % 10 == 0:
                         metric_parts = []
