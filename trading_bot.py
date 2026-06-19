@@ -2599,15 +2599,22 @@ class TradingBot:
                                 except Exception:
                                     pass
 
+                                # Stamp immediately so only one thread spawns per interval
+                                self._intelligence_last_ts = time.time()
+
                                 def _refresh_intel(_ctx=_bot_ctx):
                                     try:
                                         result = _get_market_intelligence(self.trade_pairs, _ctx)
                                         self._intelligence_score = result.get("score", 0.0)
                                         self._intelligence_model_scores = result.get("model_scores", {})
                                         self._intelligence_model_outputs = result.get("model_outputs", {})
-                                        self._intelligence_last_ts = time.time()
+                                        self.logger.info(
+                                            "Intelligence refresh complete: score=%.2f sources=%d/5",
+                                            self._intelligence_score,
+                                            len([v for v in self._intelligence_model_scores.values() if v is not None])
+                                        )
                                     except Exception as _ie:
-                                        self.logger.debug(f"Intelligence refresh error: {_ie}")
+                                        self.logger.warning(f"Intelligence refresh error: {_ie}")
                                 _t = _threading.Thread(target=_refresh_intel, daemon=True, name='intel-refresh')
                                 _t.start()
                             except Exception:
