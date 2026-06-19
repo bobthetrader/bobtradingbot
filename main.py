@@ -136,6 +136,14 @@ kraken = None
 trading_bot = None
 
 if __name__ == "__main__":
+    # Start web dashboard on Railway's PORT (defaults to 8080)
+    try:
+        from dashboard import start_dashboard
+        _dash_port = int(os.environ.get("PORT", 8080))
+        start_dashboard(port=_dash_port)
+    except Exception as _de:
+        logger.warning("Dashboard failed to start: %s", _de)
+
     # Instantiate Kraken client with optional paper/dry-run mode.
     # In paper mode, seed the simulated balance from the paper config's
     # initial_balance so get_account_balance() reports something sane
