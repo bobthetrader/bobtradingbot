@@ -82,7 +82,7 @@ _OPENROUTER_MODELS = [
         ),
     ),
     (
-        "perplexity/llama-3.1-sonar-small-128k-online",
+        "perplexity/sonar",
         "sonar",
         1.5,   # higher weight — has live web access
         "live news analyst",
@@ -95,7 +95,7 @@ _OPENROUTER_MODELS = [
         ),
     ),
     (
-        "deepseek/deepseek-r1-distill-llama-70b",
+        "deepseek/deepseek-r1",
         "deepseek",
         1.0,
         "technical analyst",
@@ -108,9 +108,9 @@ _OPENROUTER_MODELS = [
         ),
     ),
     (
-        "mistralai/mistral-7b-instruct",
+        "mistralai/mistral-7b-instruct:free",
         "mistral",
-        0.75,  # fast cheap cross-check, lower weight
+        0.75,
         "sentiment checker",
         (
             "You are a crypto market sentiment checker. "
@@ -280,7 +280,7 @@ def _call_model(model_id: str, system: str, user: str, api_key: str,
         )
         return resp.choices[0].message.content.strip()
     except Exception as exc:
-        logger.debug("Model %s failed: %s", model_id, exc)
+        logger.warning("Model %s failed: %s", model_id, exc)
         return None
 
 
