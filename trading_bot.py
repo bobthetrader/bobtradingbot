@@ -2717,7 +2717,7 @@ class TradingBot:
                             "open_shorts": {
                                 p: {
                                     "qty":   round(float(self.short_qty.get(p, 0)), 8),
-                                    "entry": round(float(self.short_entry.get(p, 0)), 4),
+                                    "entry": round(float(self.short_entry_prices.get(p, 0)), 4),
                                 }
                                 for p in self.trade_pairs
                                 if self.short_qty.get(p, 0) > 0
