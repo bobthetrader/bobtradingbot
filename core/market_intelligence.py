@@ -108,7 +108,7 @@ _OPENROUTER_MODELS = [
         ),
     ),
     (
-        "mistralai/mistral-7b-instruct:free",
+        "meta-llama/llama-3.1-8b-instruct",
         "mistral",
         0.75,
         "sentiment checker",
@@ -117,6 +117,18 @@ _OPENROUTER_MODELS = [
             "Quickly assess overall market mood from the data provided. "
             "Reply with exactly: 'Score: X. Sentiment: <three words>.' "
             "where X is an integer -5 (extreme fear/bearish) to +5 (extreme greed/bullish)."
+        ),
+    ),
+    (
+        "openai/gpt-4o-mini",
+        "gpt",
+        1.0,
+        "general analyst",
+        (
+            "You are a crypto market analyst. "
+            "Given the market context and bot performance data, "
+            "reply with exactly: 'Score: X. Reason: <one sentence>.' "
+            "where X is an integer -5 (very bearish) to +5 (very bullish)."
         ),
     ),
 ]
@@ -312,7 +324,6 @@ def get_market_intelligence(pairs: list, bot_context: dict = None) -> dict:
 
     context = _build_market_context(pairs, bot_context)
     or_key  = os.getenv("OPENROUTER_API_KEY", "")
-    ai_key  = os.getenv("OPENAI_API_KEY", "")
 
     model_scores:  dict = {}
     model_outputs: dict = {}
@@ -335,33 +346,12 @@ def get_market_intelligence(pairs: list, bot_context: dict = None) -> dict:
         threads.append(t)
         t.start()
 
-    # GPT-4o-mini on OpenAI in parallel
-    def _run_gpt():
-        system = (
-            "You are a crypto market analyst. "
-            "Given the market context and bot performance data, "
-            "reply with exactly: 'Score: X. Reason: <one sentence>.' "
-            "where X is an integer -5 (very bearish) to +5 (very bullish)."
-        )
-        text = _call_model("gpt-4o-mini", system, context, ai_key,
-                           base_url="https://api.openai.com/v1")
-        score = _parse_score(text)
-        with _lock:
-            model_outputs["gpt"] = text or "unavailable"
-            model_scores["gpt"]  = score
-        logger.debug("Model gpt → score=%.1f", score)
-
-    gpt_thread = threading.Thread(target=_run_gpt, daemon=True)
-    threads.append(gpt_thread)
-    gpt_thread.start()
-
     # Wait for all (max 20s so we never block the trading loop)
     for t in threads:
         t.join(timeout=20)
 
     # Weighted average over models that responded
     weight_map = {name: w for _, name, w, _, _ in _OPENROUTER_MODELS}
-    weight_map["gpt"] = 1.0
 
     total_weight = 0.0
     weighted_sum = 0.0
