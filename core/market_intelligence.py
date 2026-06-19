@@ -22,6 +22,7 @@ Required env vars (set in Railway Variables):
   OPENAI_API_KEY       — optional, covers gpt-4o-mini
 """
 
+import json
 import os
 import re
 import time
@@ -31,6 +32,38 @@ import requests
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+_INTEL_LOG = os.path.join(os.path.dirname(__file__), "..", "data", "intelligence_log.jsonl")
+_INTEL_LOG_KEEP = 200   # max entries to retain
+
+
+def _load_recent_intel(n: int = 5) -> list:
+    """Return the last N intelligence log entries."""
+    entries = []
+    try:
+        with open(_INTEL_LOG, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except Exception:
+                        pass
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        logger.debug("Intel log read failed: %s", exc)
+    return entries[-n:]
+
+
+def _append_intel_log(entry: dict) -> None:
+    """Append one result to the intelligence log (plain append, no lock needed — single writer)."""
+    try:
+        os.makedirs(os.path.dirname(_INTEL_LOG), exist_ok=True)
+        with open(_INTEL_LOG, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception as exc:
+        logger.debug("Intel log write failed: %s", exc)
 
 # ── Model registry ─────────────────────────────────────────────────────────────
 # (id, display_name, weight, role, system_prompt)
@@ -145,6 +178,19 @@ def _build_market_context(pairs: list, bot_context: dict) -> str:
             lines.append(f"  • {art.get('title', '')}")
 
     lines.append(f"\nBot pairs: {', '.join(pairs)}")
+
+    # ── Recent AI panel history (so models can calibrate against past calls) ──
+    recent_intel = _load_recent_intel(n=5)
+    if recent_intel:
+        lines.append("\n--- RECENT AI PANEL HISTORY ---")
+        lines.append("(Use this to judge whether past calls were accurate and calibrate accordingly)")
+        for entry in recent_intel:
+            ts_str  = entry.get("ts", "")[:16].replace("T", " ")
+            score   = entry.get("combined_score", 0.0)
+            scores  = entry.get("model_scores", {})
+            outcome = entry.get("market_outcome", "unknown")
+            score_parts = " | ".join(f"{k}:{v:+.1f}" for k, v in scores.items() if v is not None)
+            lines.append(f"  {ts_str}  combined={score:+.2f}  [{score_parts}]  outcome={outcome}")
 
     # ── Bot performance context ────────────────────────────────────────────────
     lines.append("\n--- BOT PERFORMANCE CONTEXT ---")
@@ -341,4 +387,24 @@ def get_market_intelligence(pairs: list, bot_context: dict = None) -> dict:
         combined, sources,
         {k: f"{v:+.1f}" for k, v in model_scores.items()},
     )
+
+    # ── Persist to intelligence log ────────────────────────────────────────────
+    # market_outcome is filled in retrospectively by the next entry's context
+    # (we record what the bot was told, and the next call can note what happened)
+    _log_entry = {
+        "ts":            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "combined_score":combined,
+        "model_scores":  model_scores,
+        "model_outputs": {k: v[:200] if v else None for k, v in model_outputs.items()},
+        "sources_used":  sources,
+        "bot_snapshot": {
+            "sharpe":       bot_context.get("sharpe"),
+            "trade_count":  bot_context.get("trade_count"),
+            "balance_eur":  bot_context.get("balance_eur"),
+            "pair_signals": bot_context.get("pair_signals"),
+        },
+        "market_outcome": "pending",   # updated retrospectively via next entry
+    }
+    _append_intel_log(_log_entry)
+
     return result

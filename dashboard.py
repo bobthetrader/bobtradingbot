@@ -161,6 +161,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {trades_html}
     </div>
 
+    <!-- Intelligence log card -->
+    <div class="card full">
+      <h2>AI Panel History &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">last 10 assessments</span></h2>
+      {intel_log_html}
+    </div>
+
   </div>
 
   <div style="color:#30363d;font-size:11px;margin-top:8px">
@@ -293,6 +299,43 @@ def _build_page() -> str:
     else:
         trades_html = '<div class="grey" style="padding:8px 0">No trades yet</div>'
 
+    # ── Intelligence log ──────────────────────────────────────────────────────
+    intel_entries = _read_jsonl_tail("intelligence_log.jsonl", n=10)
+    if intel_entries:
+        _MCOLS = ["hermes", "sonar", "deepseek", "mistral", "gpt"]
+        _MCOLOURS = {"hermes":"#7c3aed","sonar":"#0ea5e9","deepseek":"#f59e0b","mistral":"#10b981","gpt":"#6366f1"}
+        header_cells = "".join(f"<th>{m}</th>" for m in _MCOLS)
+        il_rows = ""
+        for entry in reversed(intel_entries):
+            ts_str   = entry.get("ts", "")[:16].replace("T", " ")
+            combined = entry.get("combined_score", 0.0)
+            mscores  = entry.get("model_scores", {})
+            outcome  = entry.get("market_outcome", "pending")
+            comb_col = "#00c851" if combined >= 1 else ("#ff4444" if combined <= -1 else "#ffbb33")
+            out_col  = "#00c851" if "WIN" in outcome else ("#ff4444" if "LOSS" in outcome else "#8b949e")
+            score_cells = ""
+            for m in _MCOLS:
+                s = mscores.get(m)
+                if s is None:
+                    score_cells += '<td class="grey">—</td>'
+                else:
+                    col = "#00c851" if s >= 1 else ("#ff4444" if s <= -1 else "#ffbb33")
+                    score_cells += f'<td style="color:{col}">{s:+.1f}</td>'
+            il_rows += (
+                f'<tr>'
+                f'<td class="grey" style="font-size:11px">{ts_str}</td>'
+                f'<td style="color:{comb_col};font-weight:bold">{combined:+.2f}</td>'
+                f'{score_cells}'
+                f'<td style="color:{out_col};font-size:11px">{outcome}</td>'
+                f'</tr>'
+            )
+        intel_log_html = (
+            f'<table><tr><th>Time</th><th>Combined</th>{header_cells}<th>Outcome</th></tr>'
+            + il_rows + '</table>'
+        )
+    else:
+        intel_log_html = '<div class="grey" style="padding:8px 0">No AI panel history yet — first entry appears after the next 10-minute refresh.</div>'
+
     # ── Render ────────────────────────────────────────────────────────────────
     ts_raw  = status.get("ts", "")
     mode    = "&#x1F4C4; PAPER MODE" if status.get("paper_mode", True) else "&#x1F7E2; LIVE MODE"
@@ -317,7 +360,8 @@ def _build_page() -> str:
         signal_rows   = signal_rows,
         model_html    = model_html,
         positions_html= positions_html,
-        trades_html   = trades_html,
+        trades_html    = trades_html,
+        intel_log_html = intel_log_html,
     )
 
 

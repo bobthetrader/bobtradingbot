@@ -230,8 +230,11 @@ class TradingBot:
                 t.start()
         except Exception:
             pass
-        # structured JSONL trade log for observability
-        self.json_journal_path = os.path.join(os.path.dirname(__file__), 'data', 'trade_events.jsonl')
+        # structured JSONL trade log — separate files for paper and live
+        # so live Sharpe is never diluted by simulated paper fills
+        _is_paper = bool(getattr(self.api_client, 'paper_mode', False))
+        _journal_name = 'trade_events_paper.jsonl' if _is_paper else 'trade_events_live.jsonl'
+        self.json_journal_path = os.path.join(os.path.dirname(__file__), 'data', _journal_name)
         os.makedirs(os.path.dirname(self.json_journal_path), exist_ok=True)
         # manual kill-switch file: if present, bot will pause buys
         self.kill_switch_path = os.path.join(os.path.dirname(__file__), 'PAUSE')
@@ -3037,6 +3040,24 @@ class TradingBot:
                         jf.write(json.dumps(j) + "\n")
                 except Exception as e:
                     self.logger.error(f"Error writing JSON trade log fallback: {e}")
+
+            # ── Retrospectively mark the last intelligence log entry ──────────
+            if ttype in ('SELL', 'SHORT_CLOSE'):
+                try:
+                    _intel_log_path = os.path.join(os.path.dirname(__file__), 'data', 'intelligence_log.jsonl')
+                    if os.path.exists(_intel_log_path):
+                        with open(_intel_log_path, 'r', encoding='utf-8') as _ilf:
+                            _il_lines = _ilf.readlines()
+                        if _il_lines:
+                            _last = json.loads(_il_lines[-1])
+                            if _last.get('market_outcome') == 'pending':
+                                _outcome = f"{'WIN' if pnl_eur > 0 else 'LOSS' if pnl_eur < 0 else 'FLAT'} {pnl_eur:+.4f}EUR on {pair}"
+                                _last['market_outcome'] = _outcome
+                                _il_lines[-1] = json.dumps(_last) + '\n'
+                                with open(_intel_log_path, 'w', encoding='utf-8') as _ilf:
+                                    _ilf.writelines(_il_lines)
+                except Exception:
+                    pass
 
             # ── Sharpe + optimizer update on closed trades ────────────────────
             if ttype in ('SELL', 'SHORT_CLOSE') and _OPTIMIZER_AVAILABLE:
