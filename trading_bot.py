@@ -2692,7 +2692,7 @@ class TradingBot:
                         _status = {
                             "ts":             datetime.utcnow().isoformat(),
                             "loop":           iteration,
-                            "paper_mode":     bool(getattr(self.api, 'paper_mode', True)),
+                            "paper_mode":     bool(getattr(self.api_client, 'paper_mode', True)),
                             "balance_eur":    round(float(current_balance), 2),
                             "initial_balance":round(float(getattr(self, 'initial_balance_eur', 100.0)), 2),
                             "adjusted_pnl":   round(float(adjusted_pnl), 4),
