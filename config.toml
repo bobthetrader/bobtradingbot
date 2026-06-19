@@ -131,7 +131,7 @@ short_stop_loss_percent = 5.0
 [logging]
 log_level = "INFO"
 log_to_file = true
-log_file_path = "logs/bot_activity.log"
+log_file_path = "data/bot_activity.log"
 fresh_log_on_start = false
 
 [backtesting]

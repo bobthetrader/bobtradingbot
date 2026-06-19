@@ -210,7 +210,7 @@ class TradingBot:
         # stop info per pair (stop_price, type)
         self.stop_info = {}
         # journaling path
-        self.journal_path = os.path.join(os.path.dirname(__file__), 'reports', 'trade_journal.csv')
+        self.journal_path = os.path.join(os.path.dirname(__file__), 'data', 'trade_journal.csv')
 
         # Start a watchdog heartbeat thread to reliably send WATCHDOG=1 pings
         # This prevents systemd watchdog kills when the main loop blocks on I/O.
@@ -231,7 +231,7 @@ class TradingBot:
         except Exception:
             pass
         # structured JSONL trade log for observability
-        self.json_journal_path = os.path.join(os.path.dirname(__file__), 'logs', 'trade_events.jsonl')
+        self.json_journal_path = os.path.join(os.path.dirname(__file__), 'data', 'trade_events.jsonl')
         os.makedirs(os.path.dirname(self.json_journal_path), exist_ok=True)
         # manual kill-switch file: if present, bot will pause buys
         self.kill_switch_path = os.path.join(os.path.dirname(__file__), 'PAUSE')

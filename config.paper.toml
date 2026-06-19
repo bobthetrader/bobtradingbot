@@ -29,7 +29,7 @@ ema_slow_period = 21
 [logging]
 log_level = "INFO"
 log_to_file = true
-log_file_path = "logs/bot_activity_paper.log"
+log_file_path = "data/bot_activity_paper.log"
 [backtesting]
 historical_data_path = "data/historical_prices.csv"
 results_output_path = "backtest_results/"
