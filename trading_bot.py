@@ -242,6 +242,9 @@ class TradingBot:
         self._intelligence_last_ts: float = 0.0
         self._intelligence_refresh_secs: int = int(_intel_cfg.get('refresh_seconds', 600))
         self._intelligence_score_weight: float = float(_intel_cfg.get('score_weight', 2.0))
+        self._intelligence_model_scores: dict = {}
+        self._intelligence_model_outputs: dict = {}
+        self._last_balance_eur: float = 0.0
 
         # ── Sharpe + scientific-method optimizer ─────────────────────────────
         _opt_cfg = self.config.get('optimizer', {})
@@ -2560,10 +2563,45 @@ class TradingBot:
                         if _now - self._intelligence_last_ts >= self._intelligence_refresh_secs:
                             try:
                                 import threading as _threading
-                                def _refresh_intel():
+                                # Snapshot bot context for the AI panel
+                                _bot_ctx = {
+                                    "sharpe":          self._sharpe_result.get("sharpe"),
+                                    "sharpe_verdict":  self._sharpe_result.get("verdict", "insufficient_data"),
+                                    "sharpe_trending": self._sharpe_result.get("trending", "stable"),
+                                    "trade_count":     getattr(self, "trade_count", 0),
+                                    "balance_eur":     getattr(self, "_last_balance_eur", None),
+                                    "pair_signals":    dict(getattr(self, "pair_signals", {})),
+                                    "pair_scores":     dict(getattr(self, "pair_scores", {})),
+                                    "open_positions":  {
+                                        p: {"qty": float(getattr(self, "holdings", {}).get(p, 0)),
+                                            "entry": float(getattr(self, "purchase_prices", {}).get(p, 0))}
+                                        for p in getattr(self, "trade_pairs", [])
+                                        if float(getattr(self, "holdings", {}).get(p, 0)) > 0
+                                    },
+                                    "open_shorts": {
+                                        p: {"qty": float(getattr(self, "short_qty", {}).get(p, 0)),
+                                            "entry": float(getattr(self, "short_entry_prices", {}).get(p, 0))}
+                                        for p in getattr(self, "trade_pairs", [])
+                                        if float(getattr(self, "short_qty", {}).get(p, 0)) > 0
+                                    },
+                                }
+                                # Read last 5 trades from journal for context
+                                try:
+                                    import json as _json
+                                    _jpath = getattr(self, "json_journal_path", "")
+                                    if _jpath and os.path.exists(_jpath):
+                                        with open(_jpath, "r") as _jf:
+                                            _lines = [l.strip() for l in _jf if l.strip()][-10:]
+                                        _bot_ctx["recent_trades"] = [_json.loads(l) for l in _lines if l]
+                                except Exception:
+                                    pass
+
+                                def _refresh_intel(_ctx=_bot_ctx):
                                     try:
-                                        result = _get_market_intelligence(self.trade_pairs)
-                                        self._intelligence_score = result.get('score', 0.0)
+                                        result = _get_market_intelligence(self.trade_pairs, _ctx)
+                                        self._intelligence_score = result.get("score", 0.0)
+                                        self._intelligence_model_scores = result.get("model_scores", {})
+                                        self._intelligence_model_outputs = result.get("model_outputs", {})
                                         self._intelligence_last_ts = time.time()
                                     except Exception as _ie:
                                         self.logger.debug(f"Intelligence refresh error: {_ie}")
@@ -2573,6 +2611,7 @@ class TradingBot:
                                 pass
 
                     current_balance = self.get_eur_balance()
+                    self._last_balance_eur = current_balance
 
                     # Daily reset of daily_start_balance
                     now = datetime.now()
@@ -2702,7 +2741,9 @@ class TradingBot:
                             "best_pair":      str(best_pair) if best_pair else None,
                             "best_signal":    str(best_signal) if best_signal else None,
                             "regime":         str(regime_state),
-                            "intelligence_score": round(float(getattr(self, '_intelligence_score', 0.0)), 2),
+                            "intelligence_score":  round(float(getattr(self, '_intelligence_score', 0.0)), 2),
+                            "model_scores":        {k: round(float(v), 2) for k, v in getattr(self, '_intelligence_model_scores', {}).items()},
+                            "model_outputs":       {k: str(v)[:120] for k, v in getattr(self, '_intelligence_model_outputs', {}).items()},
                             "sharpe":         getattr(self, '_sharpe_result', {}).get('sharpe'),
                             "sharpe_verdict": getattr(self, '_sharpe_result', {}).get('verdict', 'insufficient_data'),
                             "sharpe_trending":getattr(self, '_sharpe_result', {}).get('trending', 'stable'),

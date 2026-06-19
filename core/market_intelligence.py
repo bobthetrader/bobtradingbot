@@ -1,46 +1,102 @@
 """
-Market Intelligence Module
-===========================
-Pulls live external market data (Fear & Greed index, global market stats,
-news headlines) and queries two AI agents:
+Market Intelligence Module — Multi-Model Panel
+================================================
+Runs a panel of specialist AI models in parallel via OpenRouter (+ OpenAI).
+Each model has a distinct role so they don't just repeat each other.
+Their scores are aggregated into a single `intelligence_score` [-5, +5]
+that adjusts the bot's buy gate each loop.
 
-  - OpenAI GPT-4o-mini  (OPENAI_API_KEY)
-  - Nous Hermes via OpenRouter  (OPENROUTER_API_KEY)
+Models
+------
+  hermes    nousresearch/hermes-3-llama-3.1-70b     Strategy & positioning
+  sonar     perplexity/llama-3.1-sonar-small-128k-online  Live web search (real news)
+  deepseek  deepseek/deepseek-r1-distill-llama-70b  Technical pattern reasoning
+  mistral   mistralai/mistral-7b-instruct            Fast sentiment cross-check
+  gpt       gpt-4o-mini (OpenAI)                     General sentiment
 
-Each agent returns a score in [-5, +5]. The average is the
-`intelligence_score` fed back into the bot to tighten or loosen buy gates.
+Bot performance context is injected into every prompt so models reason
+about how *this bot* is actually doing, not just the market in abstract.
 
-Positive score  → market looks bullish  → lowers effective min_buy_score
-Negative score  → market looks bearish  → raises effective min_buy_score
-
-Data sources (all free, no API key needed for basic endpoints):
-  - https://api.alternative.me/fng/     Fear & Greed index
-  - https://api.coingecko.com/api/v3/   Global market caps
-  - https://min-api.cryptocompare.com/  Recent news headlines
+Required env vars (set in Railway Variables):
+  OPENROUTER_API_KEY   — covers hermes, sonar, deepseek, mistral
+  OPENAI_API_KEY       — optional, covers gpt-4o-mini
 """
 
 import os
 import re
 import time
 import logging
+import threading
 import requests
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ── AI model config ────────────────────────────────────────────────────────────
-OPENAI_MODEL = "gpt-4o-mini"
-HERMES_MODEL = "nousresearch/hermes-3-llama-3.1-70b"
+# ── Model registry ─────────────────────────────────────────────────────────────
+# (id, display_name, weight, role, system_prompt)
+_OPENROUTER_MODELS = [
+    (
+        "nousresearch/hermes-3-llama-3.1-70b",
+        "hermes",
+        1.0,
+        "crypto trading strategist",
+        (
+            "You are Hermes, an expert crypto trading strategist. "
+            "A short-term bot (< 2-hour holds, pairs vs EUR) needs your positioning advice. "
+            "Consider market context AND the bot's recent performance. "
+            "Reply with exactly: 'Score: X. Strategy: <one sentence>.' "
+            "where X is an integer -5 (strongly reduce exposure) to +5 (strongly increase exposure)."
+        ),
+    ),
+    (
+        "perplexity/llama-3.1-sonar-small-128k-online",
+        "sonar",
+        1.5,   # higher weight — has live web access
+        "live news analyst",
+        (
+            "You are a real-time crypto news analyst with live internet access. "
+            "Search for the latest breaking news, regulatory updates, and market-moving events "
+            "for Bitcoin, Ethereum, Solana, and XRP right now. "
+            "Based on what you find, reply with exactly: 'Score: X. News: <one sentence summary>.' "
+            "where X is an integer -5 (very negative news) to +5 (very positive news)."
+        ),
+    ),
+    (
+        "deepseek/deepseek-r1-distill-llama-70b",
+        "deepseek",
+        1.0,
+        "technical analyst",
+        (
+            "You are a cryptocurrency technical analyst specialising in short-term price patterns. "
+            "Given the market data and bot signal scores provided, reason about likely price direction "
+            "for BTC, ETH, SOL, XRP over the next 1-2 hours. "
+            "Reply with exactly: 'Score: X. Analysis: <one sentence>.' "
+            "where X is an integer -5 (strongly bearish technically) to +5 (strongly bullish technically)."
+        ),
+    ),
+    (
+        "mistralai/mistral-7b-instruct",
+        "mistral",
+        0.75,  # fast cheap cross-check, lower weight
+        "sentiment checker",
+        (
+            "You are a crypto market sentiment checker. "
+            "Quickly assess overall market mood from the data provided. "
+            "Reply with exactly: 'Score: X. Sentiment: <three words>.' "
+            "where X is an integer -5 (extreme fear/bearish) to +5 (extreme greed/bullish)."
+        ),
+    ),
+]
 
 # ── External data endpoints ────────────────────────────────────────────────────
-_FEAR_GREED_URL = "https://api.alternative.me/fng/?limit=1"
+_FEAR_GREED_URL = "https://api.alternative.me/fng/?limit=3"
 _COINGECKO_URL  = "https://api.coingecko.com/api/v3/global"
-_NEWS_URL       = (
+_NEWS_URL = (
     "https://min-api.cryptocompare.com/data/v2/news/"
     "?lang=EN&categories=BTC,ETH,Trading&limit=8"
 )
 
-# ── Simple in-process cache (10 min TTL) ──────────────────────────────────────
+# ── Cache ──────────────────────────────────────────────────────────────────────
 _cache: dict = {}
 _CACHE_TTL = 600
 
@@ -61,18 +117,16 @@ def _cached_get(url: str, timeout: int = 8) -> Optional[dict]:
         return None
 
 
-def _build_market_context(pairs: list) -> str:
-    """Assemble a text summary of current market conditions."""
-    lines: list[str] = []
+# ── Market context builder ─────────────────────────────────────────────────────
 
-    # Fear & Greed
+def _build_market_context(pairs: list, bot_context: dict) -> str:
+    lines = []
+
+    # Fear & Greed (last 3 days to show trend)
     fg = _cached_get(_FEAR_GREED_URL)
     if fg and fg.get("data"):
-        d = fg["data"][0]
-        lines.append(
-            f"Crypto Fear & Greed: {d.get('value', '?')}/100 "
-            f"({d.get('value_classification', '?')})"
-        )
+        vals = [f"{d.get('value')}/100 ({d.get('value_classification')})" for d in fg["data"][:3]]
+        lines.append(f"Fear & Greed (today→2d ago): {' | '.join(vals)}")
 
     # CoinGecko global
     cg = _cached_get(_COINGECKO_URL)
@@ -80,138 +134,211 @@ def _build_market_context(pairs: list) -> str:
         d = cg["data"]
         btc_dom = round(d.get("market_cap_percentage", {}).get("btc", 0), 1)
         chg_24h = round(d.get("market_cap_change_percentage_24h_usd", 0), 2)
-        lines.append(f"BTC dominance: {btc_dom}% | Global 24h cap change: {chg_24h}%")
+        active  = d.get("active_cryptocurrencies", "?")
+        lines.append(f"BTC dominance: {btc_dom}% | Global 24h change: {chg_24h}% | Active coins: {active}")
 
     # News headlines
     news = _cached_get(_NEWS_URL)
     if news and news.get("Data"):
-        lines.append("Recent headlines:")
+        lines.append("Recent crypto headlines:")
         for art in news["Data"][:6]:
             lines.append(f"  • {art.get('title', '')}")
 
-    if not lines:
-        lines.append("External market data currently unavailable.")
+    lines.append(f"\nBot pairs: {', '.join(pairs)}")
 
-    lines.append(f"\nBot is trading: {', '.join(pairs)}")
+    # ── Bot performance context ────────────────────────────────────────────────
+    lines.append("\n--- BOT PERFORMANCE CONTEXT ---")
+
+    sharpe = bot_context.get("sharpe")
+    verdict = bot_context.get("sharpe_verdict", "insufficient_data")
+    trending = bot_context.get("sharpe_trending", "stable")
+    if sharpe is not None:
+        lines.append(f"Current Sharpe ratio: {sharpe:.3f} ({verdict}, {trending})")
+        lines.append("  (Target: Sharpe >3.0 = success | Sharpe <1.0 = failure)")
+    else:
+        lines.append("Sharpe ratio: not yet available (need 10+ closed trades)")
+
+    trade_count = bot_context.get("trade_count", 0)
+    lines.append(f"Total closed trades: {trade_count}")
+
+    recent = bot_context.get("recent_trades", [])
+    if recent:
+        lines.append("Last 5 trades:")
+        for t in recent[-5:]:
+            pnl = t.get("pnl_eur", 0)
+            outcome = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "FLAT")
+            lines.append(f"  {t.get('type','?')} {t.get('pair','?')} → {outcome} ({pnl:+.4f} EUR)")
+
+    open_pos = bot_context.get("open_positions", {})
+    open_shorts = bot_context.get("open_shorts", {})
+    if open_pos or open_shorts:
+        lines.append("Current open positions:")
+        for pair, info in open_pos.items():
+            lines.append(f"  LONG  {pair}: {info.get('qty')} @ €{info.get('entry')}")
+        for pair, info in open_shorts.items():
+            lines.append(f"  SHORT {pair}: {info.get('qty')} @ €{info.get('entry')}")
+    else:
+        lines.append("No open positions.")
+
+    signals = bot_context.get("pair_signals", {})
+    scores  = bot_context.get("pair_scores", {})
+    if signals:
+        lines.append("Current technical signals:")
+        for pair in signals:
+            lines.append(f"  {pair}: {signals[pair]} (score {scores.get(pair, 0):+.2f})")
+
+    balance = bot_context.get("balance_eur")
+    if balance is not None:
+        lines.append(f"Simulated balance: €{balance:.2f}")
+
     return "\n".join(lines)
 
 
-def _call_openai(context: str) -> Optional[str]:
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    if not api_key:
-        return None
-    try:
-        import openai
-        client = openai.OpenAI(api_key=api_key)
-        resp = client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a crypto market sentiment analyst for a short-term algorithmic "
-                        "trading bot (hold time < 2 hours). Analyse the market context provided "
-                        "and reply with exactly: 'Score: X. Reason: <one sentence>.' "
-                        "where X is an integer from -5 (very bearish) to +5 (very bullish)."
-                    ),
-                },
-                {"role": "user", "content": context},
-            ],
-            max_tokens=120,
-            temperature=0.1,
-        )
-        return resp.choices[0].message.content.strip()
-    except Exception as exc:
-        logger.debug("OpenAI call failed: %s", exc)
-        return None
+# ── Score parser ───────────────────────────────────────────────────────────────
+
+def _parse_score(text: Optional[str]) -> float:
+    if not text:
+        return 0.0
+    m = re.search(r"score[:\s]+([+-]?\d+(?:\.\d+)?)", text, re.IGNORECASE)
+    if not m:
+        m = re.search(r"([+-]?\d+(?:\.\d+)?)\s*/\s*5", text)
+    if not m:
+        # last resort: first number in the text
+        m = re.search(r"([+-]?\d+(?:\.\d+)?)", text)
+    if m:
+        return max(-5.0, min(5.0, float(m.group(1))))
+    return 0.0
 
 
-def _call_hermes(context: str) -> Optional[str]:
-    api_key = os.getenv("OPENROUTER_API_KEY", "")
+# ── Single model caller ────────────────────────────────────────────────────────
+
+def _call_model(model_id: str, system: str, user: str, api_key: str,
+                base_url: str = "https://openrouter.ai/api/v1") -> Optional[str]:
     if not api_key:
         return None
     try:
         import openai
         client = openai.OpenAI(
             api_key=api_key,
-            base_url="https://openrouter.ai/api/v1",
+            base_url=base_url,
             default_headers={"HTTP-Referer": "https://github.com/tradingbot"},
         )
         resp = client.chat.completions.create(
-            model=HERMES_MODEL,
+            model=model_id,
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are Hermes, an expert crypto trading strategist. "
-                        "A short-term bot (< 2-hour holds) needs your assessment. "
-                        "Given current market conditions, output exactly: "
-                        "'Score: X. Strategy: <one sentence>.' "
-                        "where X is an integer from -5 (reduce all exposure) to +5 (increase exposure)."
-                    ),
-                },
-                {"role": "user", "content": context},
+                {"role": "system", "content": system},
+                {"role": "user",   "content": user},
             ],
-            max_tokens=150,
+            max_tokens=200,
             temperature=0.1,
         )
         return resp.choices[0].message.content.strip()
     except Exception as exc:
-        logger.debug("Hermes/OpenRouter call failed: %s", exc)
+        logger.debug("Model %s failed: %s", model_id, exc)
         return None
 
 
-def _parse_score(text: Optional[str], default: float = 0.0) -> float:
-    """Extract a numeric score in [-5, 5] from model output."""
-    if not text:
-        return default
-    m = re.search(r"score[:\s]+([+-]?\d+(?:\.\d+)?)", text, re.IGNORECASE)
-    if not m:
-        m = re.search(r"([+-]?\d+(?:\.\d+)?)\s*/\s*5", text)
-    if not m:
-        m = re.search(r"([+-]?\d+(?:\.\d+)?)", text)
-    if m:
-        return max(-5.0, min(5.0, float(m.group(1))))
-    return default
+# ── Public API ─────────────────────────────────────────────────────────────────
 
-
-def get_market_intelligence(pairs: list) -> dict:
+def get_market_intelligence(pairs: list, bot_context: dict = None) -> dict:
     """
-    Query external data + AI agents and return a combined market intelligence dict.
+    Query all AI models in parallel and return aggregated market intelligence.
 
-    Return shape:
-      {
-        "score":             float,   # -5.0 … +5.0
-        "gpt_score":         float,
-        "hermes_score":      float,
-        "gpt_reasoning":     str,
-        "hermes_reasoning":  str,
-        "market_context":    str,
-        "sources_used":      int,     # 0, 1, or 2
-      }
+    Parameters
+    ----------
+    pairs       : list of trading pair strings
+    bot_context : dict with keys sharpe, sharpe_verdict, sharpe_trending,
+                  trade_count, recent_trades, open_positions, open_shorts,
+                  pair_signals, pair_scores, balance_eur
+
+    Returns
+    -------
+    {
+      "score":          float,          # weighted combined score -5..+5
+      "model_scores":   dict,           # {name: score} per model
+      "model_outputs":  dict,           # {name: raw text} per model
+      "sources_used":   int,
+      "market_context": str,
+    }
     """
-    context = _build_market_context(pairs)
-    gpt_text    = _call_openai(context)
-    hermes_text = _call_hermes(context)
+    if bot_context is None:
+        bot_context = {}
 
-    gpt_score    = _parse_score(gpt_text)
-    hermes_score = _parse_score(hermes_text)
+    context = _build_market_context(pairs, bot_context)
+    or_key  = os.getenv("OPENROUTER_API_KEY", "")
+    ai_key  = os.getenv("OPENAI_API_KEY", "")
 
-    available = [(gpt_score, gpt_text), (hermes_score, hermes_text)]
-    valid = [(s, t) for s, t in available if t is not None]
-    combined = round(sum(s for s, _ in valid) / len(valid), 2) if valid else 0.0
+    model_scores:  dict = {}
+    model_outputs: dict = {}
+    _lock = threading.Lock()
+
+    def _run(model_id, name, system):
+        key = or_key
+        base = "https://openrouter.ai/api/v1"
+        text = _call_model(model_id, system, context, key, base)
+        score = _parse_score(text)
+        with _lock:
+            model_outputs[name] = text or "unavailable"
+            model_scores[name]  = score
+        logger.debug("Model %s → score=%.1f text=%s", name, score, (text or "")[:80])
+
+    # Launch all OpenRouter models in parallel
+    threads = []
+    for model_id, name, _weight, _role, system in _OPENROUTER_MODELS:
+        t = threading.Thread(target=_run, args=(model_id, name, system), daemon=True)
+        threads.append(t)
+        t.start()
+
+    # GPT-4o-mini on OpenAI in parallel
+    def _run_gpt():
+        system = (
+            "You are a crypto market analyst. "
+            "Given the market context and bot performance data, "
+            "reply with exactly: 'Score: X. Reason: <one sentence>.' "
+            "where X is an integer -5 (very bearish) to +5 (very bullish)."
+        )
+        text = _call_model("gpt-4o-mini", system, context, ai_key,
+                           base_url="https://api.openai.com/v1")
+        score = _parse_score(text)
+        with _lock:
+            model_outputs["gpt"] = text or "unavailable"
+            model_scores["gpt"]  = score
+        logger.debug("Model gpt → score=%.1f", score)
+
+    gpt_thread = threading.Thread(target=_run_gpt, daemon=True)
+    threads.append(gpt_thread)
+    gpt_thread.start()
+
+    # Wait for all (max 20s so we never block the trading loop)
+    for t in threads:
+        t.join(timeout=20)
+
+    # Weighted average over models that responded
+    weight_map = {name: w for _, name, w, _, _ in _OPENROUTER_MODELS}
+    weight_map["gpt"] = 1.0
+
+    total_weight = 0.0
+    weighted_sum = 0.0
+    for name, score in model_scores.items():
+        if model_outputs.get(name) and model_outputs[name] != "unavailable":
+            w = weight_map.get(name, 1.0)
+            weighted_sum += score * w
+            total_weight  += w
+
+    combined = round(weighted_sum / total_weight, 2) if total_weight > 0 else 0.0
+    sources  = sum(1 for v in model_outputs.values() if v != "unavailable")
 
     result = {
-        "score":            combined,
-        "gpt_score":        gpt_score,
-        "hermes_score":     hermes_score,
-        "gpt_reasoning":    gpt_text    or "unavailable",
-        "hermes_reasoning": hermes_text or "unavailable",
-        "market_context":   context,
-        "sources_used":     len(valid),
+        "score":          combined,
+        "model_scores":   model_scores,
+        "model_outputs":  model_outputs,
+        "sources_used":   sources,
+        "market_context": context,
     }
+
     logger.info(
-        "MarketIntelligence: combined=%.2f gpt=%.2f hermes=%.2f sources=%d",
-        combined, gpt_score, hermes_score, len(valid),
+        "MarketIntelligence: combined=%.2f sources=%d/5 scores=%s",
+        combined, sources,
+        {k: f"{v:+.1f}" for k, v in model_scores.items()},
     )
     return result

@@ -136,7 +136,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <!-- Signals card -->
     <div class="card">
-      <h2>Pair Signals &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">AI Intel: {intel_score:+.1f}</span></h2>
+      <h2>Pair Signals &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">AI Panel: {intel_score:+.1f}</span></h2>
       <table>
         <tr><th>Pair</th><th>Signal</th><th>Score</th></tr>
         {signal_rows}
@@ -149,6 +149,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {positions_html}
     </div>
 
+    <!-- AI model panel card -->
+    <div class="card full">
+      <h2>AI Model Panel &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Combined: {intel_score:+.1f} / 5</span></h2>
+      {model_html}
+    </div>
+
     <!-- Recent trades card -->
     <div class="card full">
       <h2>Recent Trades</h2>
@@ -158,7 +164,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
 
   <div style="color:#30363d;font-size:11px;margin-top:8px">
-    Sharpe success &ge;3.0 &nbsp;&#x2022;&nbsp; Optimizer runs every 10 closed trades &nbsp;&#x2022;&nbsp; Hermes + GPT-4o-mini market intelligence
+    Sharpe success &ge;3.0 &nbsp;&#x2022;&nbsp; Optimizer runs every 10 closed trades &nbsp;&#x2022;&nbsp; 4-model AI panel via OpenRouter + OpenAI
   </div>
 </body>
 </html>"""
@@ -194,6 +200,48 @@ def _build_page() -> str:
         )
     if not signal_rows:
         signal_rows = '<tr><td colspan="3" class="grey">Waiting for signals…</td></tr>'
+
+    # ── AI model panel ────────────────────────────────────────────────────────
+    model_scores  = status.get("model_scores", {})
+    model_outputs = status.get("model_outputs", {})
+    _MODEL_META = {
+        "hermes":   ("Hermes 3 70B",    "Strategy & positioning",     "#7c3aed"),
+        "sonar":    ("Perplexity Sonar", "Live web search",            "#0ea5e9"),
+        "deepseek": ("DeepSeek R1",      "Technical pattern reasoning","#f59e0b"),
+        "mistral":  ("Mistral 7B",       "Fast sentiment check",       "#10b981"),
+        "gpt":      ("GPT-4o-mini",      "General sentiment",          "#6366f1"),
+    }
+    if model_scores:
+        model_rows = ""
+        for key, (name, role, colour) in _MODEL_META.items():
+            score = model_scores.get(key)
+            text  = model_outputs.get(key, "—")
+            if score is None:
+                score_html = '<span class="grey">—</span>'
+                bar_w = 0
+                bar_col = "#30363d"
+            else:
+                bar_w   = int(abs(score) / 5.0 * 100)
+                bar_col = "#00c851" if score >= 0 else "#ff4444"
+                score_html = f'<span style="color:{bar_col};font-weight:bold">{score:+.1f}</span>'
+            short_text = text[:80] + "…" if len(text) > 80 else text
+            model_rows += (
+                f'<tr>'
+                f'<td><span style="color:{colour};font-weight:bold">{name}</span>'
+                f'<br><span class="grey" style="font-size:11px">{role}</span></td>'
+                f'<td>{score_html}'
+                f'<div style="background:#21262d;border-radius:3px;height:4px;margin-top:4px">'
+                f'<div style="background:{bar_col};width:{bar_w}%;height:4px;border-radius:3px"></div>'
+                f'</div></td>'
+                f'<td style="font-size:11px;color:#8b949e">{short_text}</td>'
+                f'</tr>'
+            )
+        model_html = (
+            '<table><tr><th>Model</th><th style="width:80px">Score</th><th>Reasoning</th></tr>'
+            + model_rows + '</table>'
+        )
+    else:
+        model_html = '<div class="grey" style="padding:8px 0">Waiting for first AI panel refresh (up to 10 min)…</div>'
 
     # ── Open positions ────────────────────────────────────────────────────────
     positions = {**status.get("open_positions", {})}
@@ -267,6 +315,7 @@ def _build_page() -> str:
         trending      = trending.replace("_", " "),
         intel_score   = status.get("intelligence_score", 0.0),
         signal_rows   = signal_rows,
+        model_html    = model_html,
         positions_html= positions_html,
         trades_html   = trades_html,
     )
