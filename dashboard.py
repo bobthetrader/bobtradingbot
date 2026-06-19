@@ -214,7 +214,7 @@ def _build_page() -> str:
         "hermes":   ("Hermes 3 70B",    "Strategy & positioning",     "#7c3aed"),
         "sonar":    ("Perplexity Sonar", "Live web search",            "#0ea5e9"),
         "deepseek": ("DeepSeek R1",      "Technical pattern reasoning","#f59e0b"),
-        "mistral":  ("Mistral 7B",       "Fast sentiment check",       "#10b981"),
+        "mistral":  ("Llama 3.1 8B",      "Fast sentiment check",       "#10b981"),
         "gpt":      ("GPT-4o-mini",      "General sentiment",          "#6366f1"),
     }
     if model_scores:
