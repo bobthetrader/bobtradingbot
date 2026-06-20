@@ -43,7 +43,7 @@ nas_root = "/mnt/fritz_nas/Volume/kraken"
 bot_token = ""
 chat_id = ""
 [bot_settings.trade_amounts]
-trade_amount_eur = 20.0
+trade_amount_eur = 10.0
 initial_balance = 100.0
 [shorting]
 enabled = true
