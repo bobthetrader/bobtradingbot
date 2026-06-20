@@ -410,6 +410,7 @@ def _build_page() -> str:
         positions_html= positions_html,
         trades_html    = trades_html,
         intel_log_html = intel_log_html,
+        db_summary     = db_summary,
     )
 
 
