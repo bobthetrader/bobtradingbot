@@ -217,30 +217,32 @@ def _build_market_context(pairs: list, bot_context: dict, sharpe_data: dict = No
                         "negative rate = shorts crowded = bullish contrarian signal."
                     )
 
-                # Insider selling
+                # Insider selling — top flagged tokens across market
                 ins = sharpe.get("insider", {})
-                if ins.get("coin_scores"):
-                    parts = [f"{c}: {s:.1f}/10" for c, s in ins["coin_scores"].items()]
-                    lines.append(f"Insider selling pressure (0=none, 10=extreme): {' | '.join(parts)}")
-
-                # Pump & dump
-                pd = sharpe.get("pump_dump", {})
-                if pd:
-                    pd_parts = [f"{c}: score={v['score']:.1f} phase={v['phase']}"
-                                for c, v in pd.items()]
-                    lines.append(f"Pump & dump detection: {' | '.join(pd_parts)}")
+                if ins.get("summary"):
+                    lines.append(ins["summary"])
 
                 # Derivatives overview
                 deriv = sharpe.get("derivatives", {})
-                if deriv.get("oi_weighted_funding") is not None:
+                if deriv.get("total_oi_usd"):
+                    oi_b = round(deriv["total_oi_usd"] / 1e9, 1)
+                    oi_fund = deriv.get("oi_weighted_funding_rate")
                     lines.append(
-                        f"Market-wide OI-weighted funding: {deriv['oi_weighted_funding']:.6f}"
+                        f"Market-wide perp OI: ${oi_b}B | OI-weighted funding: "
+                        f"{oi_fund:.6f}" if oi_fund else f"Market-wide perp OI: ${oi_b}B"
                     )
+                    top_oi = deriv.get("top_coins_oi", [])
+                    if top_oi:
+                        top_str = ", ".join(
+                            f"{c.get('coin')} (${round(c.get('open_interest_usd',0)/1e9,1)}B)"
+                            for c in top_oi[:3]
+                        )
+                        lines.append(f"Top OI coins: {top_str}")
 
-                # Curated news (replace CryptoCompare news if available)
+                # News from Sharpe.ai feed
                 sharpe_news = sharpe.get("news", [])
                 if sharpe_news:
-                    lines.append("Sharpe.ai curated news (AI-selected):")
+                    lines.append("Sharpe.ai news feed:")
                     for h in sharpe_news:
                         lines.append(f"  • {h}")
         except Exception as _se:
@@ -434,7 +436,7 @@ def get_market_intelligence(pairs: list, bot_context: dict = None) -> dict:
         "sources_used":     sources,
         "market_context":   context,
         "sharpe_funding":   _sharpe.get("funding", {}).get("coin_scores", {}),
-        "sharpe_insider":   _sharpe.get("insider", {}).get("signal_scores", {}),
+        "sharpe_insider":   _sharpe.get("insider", {}).get("market_signal", 0),
     }
 
     logger.info(

@@ -214,24 +214,28 @@ def _build_page() -> str:
         signal_rows = '<tr><td colspan="3" class="grey">Waiting for signals…</td></tr>'
 
     # ── Sharpe.ai derivatives ─────────────────────────────────────────────────
-    funding  = status.get("sharpe_funding", {})
-    insider  = status.get("sharpe_insider", {})
-    if funding or insider:
+    funding       = status.get("sharpe_funding", {})
+    insider_sig   = status.get("sharpe_insider", None)
+    if funding:
         sharpe_rows = ""
-        all_coins = sorted(set(list(funding.keys()) + list(insider.keys())))
-        for coin in all_coins:
-            f_score = funding.get(coin)
-            i_score = insider.get(coin)
-            f_col = "#ff4444" if f_score and f_score < -1 else ("#00c851" if f_score and f_score > 1 else "#ffbb33")
-            i_col = "#ff4444" if i_score and i_score < -1 else "#8b949e"
-            f_str = f'<span style="color:{f_col}">{f_score:+.1f}</span>' if f_score is not None else "—"
-            i_str = f'<span style="color:{i_col}">{i_score:+.1f}</span>' if i_score is not None else "—"
-            sharpe_rows += f'<tr><td>{coin}</td><td>{f_str}</td><td>{i_str}</td></tr>'
+        for coin, f_score in sorted(funding.items()):
+            f_col = "#ff4444" if f_score < -1 else ("#00c851" if f_score > 1 else "#ffbb33")
+            f_str = f'<span style="color:{f_col};font-weight:bold">{f_score:+.1f}</span>'
+            sharpe_rows += f'<tr><td>{coin}</td><td>{f_str}</td></tr>'
+        ins_str = ""
+        if insider_sig is not None:
+            ins_col = "#ff4444" if insider_sig < -1 else ("#00c851" if insider_sig > 0 else "#8b949e")
+            ins_str = (
+                f'<div style="margin-top:10px;font-size:12px">'
+                f'Market insider signal: <span style="color:{ins_col};font-weight:bold">{float(insider_sig):+.1f}</span>'
+                f'<span class="grey"> (negative = altcoin short pressure detected)</span></div>'
+            )
         sharpe_html = (
-            '<table><tr><th>Coin</th>'
-            '<th>Funding Signal<br><span class="grey" style="font-size:10px">(-=bearish +ve rate, +=bullish -ve rate)</span></th>'
-            '<th>Insider Selling<br><span class="grey" style="font-size:10px">(0-10 → signal, lower=better)</span></th></tr>'
-            + sharpe_rows + '</table>'
+            '<table><tr>'
+            '<th>Pair</th>'
+            '<th>Funding Signal<br><span class="grey" style="font-size:10px">- = longs crowded (bearish) | + = shorts crowded (bullish)</span></th>'
+            '</tr>'
+            + sharpe_rows + '</table>' + ins_str
         )
     else:
         sharpe_html = '<div class="grey" style="padding:8px 0">Add SHARPE_API_KEY to Railway Variables to enable institutional derivatives data.</div>'
