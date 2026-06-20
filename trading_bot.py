@@ -2900,6 +2900,10 @@ class TradingBot:
                                             continue
                                 except Exception as _e:
                                     self.logger.debug(f"Re-entry guard check error for {best_pair}: {_e}")
+                                # Block long if an open short exists on this pair
+                                if float(getattr(self, 'short_qty', {}).get(best_pair, 0)) > 0:
+                                    self.logger.info(f"BUY blocked for {best_pair}: open short position exists — close short first")
+                                    continue
                                 self.execute_buy_order(best_pair, price)
                         elif best_signal == "SELL":
                             min_vol = self._get_min_volume(best_pair)
