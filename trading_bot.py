@@ -2610,6 +2610,8 @@ class TradingBot:
                                         self._intelligence_score = result.get("score", 0.0)
                                         self._intelligence_model_scores = result.get("model_scores", {})
                                         self._intelligence_model_outputs = result.get("model_outputs", {})
+                                        self._sharpe_funding_scores = result.get("sharpe_funding", {})
+                                        self._sharpe_insider_scores = result.get("sharpe_insider", {})
                                         self.logger.info(
                                             "Intelligence refresh complete: score=%.2f sources=%d/5",
                                             self._intelligence_score,

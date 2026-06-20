@@ -174,7 +174,7 @@ def _cached_get(url: str, timeout: int = 8) -> Optional[dict]:
 
 # ── Market context builder ─────────────────────────────────────────────────────
 
-def _build_market_context(pairs: list, bot_context: dict) -> str:
+def _build_market_context(pairs: list, bot_context: dict, sharpe_data: dict = None) -> str:
     lines = []
 
     # Fear & Greed (last 3 days to show trend)
@@ -204,7 +204,7 @@ def _build_market_context(pairs: list, bot_context: dict) -> str:
     # ── Sharpe.ai institutional data ──────────────────────────────────────────
     if _SHARPE_AVAILABLE:
         try:
-            sharpe = _sharpe_fetch_all(pairs)
+            sharpe = sharpe_data if sharpe_data else _sharpe_fetch_all(pairs)
             if sharpe.get("available"):
                 lines.append("\n--- SHARPE.AI DERIVATIVES DATA ---")
 
@@ -377,7 +377,15 @@ def get_market_intelligence(pairs: list, bot_context: dict = None) -> dict:
     if bot_context is None:
         bot_context = {}
 
-    context = _build_market_context(pairs, bot_context)
+    # Fetch Sharpe.ai data first so it's available in context AND return dict
+    _sharpe = {}
+    if _SHARPE_AVAILABLE:
+        try:
+            _sharpe = _sharpe_fetch_all(pairs)
+        except Exception as _se:
+            logger.debug("Sharpe.ai pre-fetch failed: %s", _se)
+
+    context = _build_market_context(pairs, bot_context, sharpe_data=_sharpe)
     or_key  = os.getenv("OPENROUTER_API_KEY", "")
 
     model_scores:  dict = {}
@@ -420,11 +428,13 @@ def get_market_intelligence(pairs: list, bot_context: dict = None) -> dict:
     sources  = sum(1 for v in model_outputs.values() if v != "unavailable")
 
     result = {
-        "score":          combined,
-        "model_scores":   model_scores,
-        "model_outputs":  model_outputs,
-        "sources_used":   sources,
-        "market_context": context,
+        "score":            combined,
+        "model_scores":     model_scores,
+        "model_outputs":    model_outputs,
+        "sources_used":     sources,
+        "market_context":   context,
+        "sharpe_funding":   _sharpe.get("funding", {}).get("coin_scores", {}),
+        "sharpe_insider":   _sharpe.get("insider", {}).get("signal_scores", {}),
     }
 
     logger.info(
