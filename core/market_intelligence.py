@@ -41,6 +41,24 @@ except ImportError:
     except ImportError:
         _SHARPE_AVAILABLE = False
 
+try:
+    from core.history_db import (
+        record_ai_panel as _record_ai_panel,
+        record_sharpe_snapshot as _record_sharpe_snapshot,
+        build_history_context as _build_history_context,
+    )
+    _HISTORY_DB_AVAILABLE = True
+except ImportError:
+    try:
+        from history_db import (
+            record_ai_panel as _record_ai_panel,
+            record_sharpe_snapshot as _record_sharpe_snapshot,
+            build_history_context as _build_history_context,
+        )
+        _HISTORY_DB_AVAILABLE = True
+    except ImportError:
+        _HISTORY_DB_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 _INTEL_LOG = os.path.join(os.path.dirname(__file__), "..", "data", "intelligence_log.jsonl")
@@ -248,6 +266,15 @@ def _build_market_context(pairs: list, bot_context: dict, sharpe_data: dict = No
         except Exception as _se:
             logger.debug("Sharpe.ai context injection failed: %s", _se)
 
+    # ── Persistent history from DB (trades, past AI calls, funding trends) ───
+    if _HISTORY_DB_AVAILABLE:
+        try:
+            history_block = _build_history_context()
+            if history_block:
+                lines.append(history_block)
+        except Exception as _he:
+            logger.debug("History context build failed: %s", _he)
+
     # ── Recent AI panel history (so models can calibrate against past calls) ──
     recent_intel = _load_recent_intel(n=5)
     if recent_intel:
@@ -444,6 +471,27 @@ def get_market_intelligence(pairs: list, bot_context: dict = None) -> dict:
         combined, sources,
         {k: f"{v:+.1f}" for k, v in model_scores.items()},
     )
+
+    # ── Write to persistent history DB ────────────────────────────────────────
+    if _HISTORY_DB_AVAILABLE:
+        try:
+            _record_ai_panel(
+                ts=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                scores={**model_scores, "combined": combined},
+                texts=model_outputs,
+                sharpe=bot_context.get("sharpe"),
+            )
+            # Write Sharpe snapshot if available
+            if _sharpe.get("available"):
+                _record_sharpe_snapshot(
+                    ts=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    funding_scores=_sharpe.get("funding", {}).get("coin_scores", {}),
+                    insider_signal=float(_sharpe.get("insider", {}).get("market_signal") or 0),
+                    total_oi=_sharpe.get("derivatives", {}).get("total_oi_usd"),
+                    oi_weighted=_sharpe.get("derivatives", {}).get("oi_weighted_funding_rate"),
+                )
+        except Exception as _dbe:
+            logger.debug("History DB write failed: %s", _dbe)
 
     # ── Persist to intelligence log ────────────────────────────────────────────
     # market_outcome is filled in retrospectively by the next entry's context

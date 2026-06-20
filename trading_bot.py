@@ -117,6 +117,18 @@ except ImportError:
     _INTELLIGENCE_AVAILABLE = False
 
 try:
+    from core.history_db import (
+        init_db as _init_db,
+        record_trade as _record_trade,
+        record_bot_snapshot as _record_bot_snapshot,
+        update_ai_outcome as _update_ai_outcome,
+        get_db_stats as _get_db_stats,
+    )
+    _HISTORY_DB_AVAILABLE = True
+except ImportError:
+    _HISTORY_DB_AVAILABLE = False
+
+try:
     from core.sharpe_calculator import calculate_sharpe as _calculate_sharpe
     from core.param_optimizer import run_optimizer as _run_optimizer, get_optimizer_history as _get_optimizer_history
     _OPTIMIZER_AVAILABLE = True
@@ -230,6 +242,13 @@ class TradingBot:
                 t.start()
         except Exception:
             pass
+        # Initialise persistent history DB
+        if _HISTORY_DB_AVAILABLE:
+            try:
+                _init_db()
+            except Exception:
+                pass
+
         # structured JSONL trade log — separate files for paper and live
         # so live Sharpe is never diluted by simulated paper fills
         _is_paper = bool(getattr(self.api_client, 'paper_mode', False))
@@ -2784,8 +2803,31 @@ class TradingBot:
                         with open(_status_path, 'w') as _sf:
                             json.dump(_status, _sf)
                         self.logger.debug("Dashboard status written (loop %d)", iteration)
+                        # DB stats for dashboard
+                        if _HISTORY_DB_AVAILABLE:
+                            try:
+                                _status["db_stats"] = _get_db_stats()
+                            except Exception:
+                                pass
                     except Exception as _se:
                         self.logger.warning("bot_status.json write failed: %s", _se)
+
+                    if iteration % 10 == 0 and _HISTORY_DB_AVAILABLE:
+                        try:
+                            _record_bot_snapshot(
+                                ts=datetime.utcnow().isoformat(),
+                                loop=iteration,
+                                balance=float(current_balance),
+                                trade_count=int(getattr(self, 'trade_count', 0)),
+                                sharpe=self._sharpe_result.get('sharpe'),
+                                verdict=self._sharpe_result.get('verdict', 'insufficient_data'),
+                                regime=str(regime_state),
+                                intel_score=float(getattr(self, '_intelligence_score', 0.0)),
+                                signals=dict(getattr(self, 'pair_signals', {})),
+                                paper_mode=bool(getattr(self.api_client, 'paper_mode', True)),
+                            )
+                        except Exception:
+                            pass
 
                     if iteration % 10 == 0:
                         metric_parts = []
@@ -3057,6 +3099,26 @@ class TradingBot:
                         jf.write(json.dumps(j) + "\n")
                 except Exception as e:
                     self.logger.error(f"Error writing JSON trade log fallback: {e}")
+
+            # ── Write to persistent history DB ────────────────────────────────
+            if _HISTORY_DB_AVAILABLE:
+                try:
+                    _record_trade(
+                        ts=j.get('ts', ''),
+                        ttype=ttype,
+                        pair=pair,
+                        qty=float(volume),
+                        price=float(price),
+                        pnl_eur=float(pnl_eur),
+                        balance_after=float(j.get('balance_eur', 0)),
+                        paper_mode=bool(getattr(self.api_client, 'paper_mode', True)),
+                        reason=reason or '',
+                    )
+                    if ttype in ('SELL', 'SHORT_CLOSE') and pnl_eur != 0:
+                        _outcome = f"{'WIN' if pnl_eur > 0 else 'LOSS'} {pnl_eur:+.4f}EUR on {pair}"
+                        _update_ai_outcome(_outcome)
+                except Exception:
+                    pass
 
             # ── Retrospectively mark the last intelligence log entry ──────────
             if ttype in ('SELL', 'SHORT_CLOSE'):

@@ -27,6 +27,16 @@ from typing import Optional
 
 import toml
 
+try:
+    from core.history_db import record_optimizer_decision as _record_optimizer_decision
+    _HISTORY_DB_AVAILABLE = True
+except ImportError:
+    try:
+        from history_db import record_optimizer_decision as _record_optimizer_decision
+        _HISTORY_DB_AVAILABLE = True
+    except ImportError:
+        _HISTORY_DB_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -179,6 +189,22 @@ def run_optimizer(config_path: str, sharpe_result: dict) -> dict:
                 exp["key"], exp["original"], exp["tested"],
                 exp["sharpe_at_start"], curr_sharpe,
             )
+
+        # Write to persistent history DB
+        if _HISTORY_DB_AVAILABLE:
+            try:
+                _record_optimizer_decision(
+                    ts=datetime.now(timezone.utc).isoformat(),
+                    param_key=exp["key"],
+                    section=exp["section"],
+                    old_val=exp["original"],
+                    new_val=exp["tested"],
+                    sharpe_before=exp["sharpe_at_start"],
+                    sharpe_after=curr_sharpe,
+                    verdict=verdict,
+                )
+            except Exception:
+                pass
 
         # Record in history (cap at 200 entries)
         state["history"].append({

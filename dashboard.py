@@ -177,6 +177,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   <div style="color:#30363d;font-size:11px;margin-top:8px">
     Sharpe success &ge;3.0 &nbsp;&#x2022;&nbsp; Optimizer runs every 10 closed trades &nbsp;&#x2022;&nbsp; 4-model AI panel via OpenRouter + OpenAI
+    &nbsp;&#x2022;&nbsp; {db_summary}
   </div>
 </body>
 </html>"""
@@ -368,6 +369,19 @@ def _build_page() -> str:
         )
     else:
         intel_log_html = '<div class="grey" style="padding:8px 0">No AI panel history yet — first entry appears after the next 10-minute refresh.</div>'
+
+    # ── DB stats ──────────────────────────────────────────────────────────────
+    db_stats = status.get("db_stats", {})
+    if db_stats:
+        oldest = db_stats.get("oldest_trade", "")[:10] or "today"
+        db_summary = (
+            f"History DB: {db_stats.get('trades', 0)} trades | "
+            f"{db_stats.get('ai_panels', 0)} AI panels | "
+            f"{db_stats.get('sharpe_snapshots', 0)} Sharpe snapshots | "
+            f"since {oldest}"
+        )
+    else:
+        db_summary = "History DB: initialising…"
 
     # ── Render ────────────────────────────────────────────────────────────────
     ts_raw  = status.get("ts", "")
