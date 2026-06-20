@@ -149,6 +149,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {positions_html}
     </div>
 
+    <!-- Sharpe.ai derivatives card -->
+    <div class="card full">
+      <h2>Sharpe.ai Derivatives</h2>
+      {sharpe_html}
+    </div>
+
     <!-- AI model panel card -->
     <div class="card full">
       <h2>AI Model Panel &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Combined: {intel_score:+.1f} / 5</span></h2>
@@ -206,6 +212,29 @@ def _build_page() -> str:
         )
     if not signal_rows:
         signal_rows = '<tr><td colspan="3" class="grey">Waiting for signals…</td></tr>'
+
+    # ── Sharpe.ai derivatives ─────────────────────────────────────────────────
+    funding  = status.get("sharpe_funding", {})
+    insider  = status.get("sharpe_insider", {})
+    if funding or insider:
+        sharpe_rows = ""
+        all_coins = sorted(set(list(funding.keys()) + list(insider.keys())))
+        for coin in all_coins:
+            f_score = funding.get(coin)
+            i_score = insider.get(coin)
+            f_col = "#ff4444" if f_score and f_score < -1 else ("#00c851" if f_score and f_score > 1 else "#ffbb33")
+            i_col = "#ff4444" if i_score and i_score < -1 else "#8b949e"
+            f_str = f'<span style="color:{f_col}">{f_score:+.1f}</span>' if f_score is not None else "—"
+            i_str = f'<span style="color:{i_col}">{i_score:+.1f}</span>' if i_score is not None else "—"
+            sharpe_rows += f'<tr><td>{coin}</td><td>{f_str}</td><td>{i_str}</td></tr>'
+        sharpe_html = (
+            '<table><tr><th>Coin</th>'
+            '<th>Funding Signal<br><span class="grey" style="font-size:10px">(-=bearish +ve rate, +=bullish -ve rate)</span></th>'
+            '<th>Insider Selling<br><span class="grey" style="font-size:10px">(0-10 → signal, lower=better)</span></th></tr>'
+            + sharpe_rows + '</table>'
+        )
+    else:
+        sharpe_html = '<div class="grey" style="padding:8px 0">Add SHARPE_API_KEY to Railway Variables to enable institutional derivatives data.</div>'
 
     # ── AI model panel ────────────────────────────────────────────────────────
     model_scores  = status.get("model_scores", {})
@@ -358,6 +387,7 @@ def _build_page() -> str:
         trending      = trending.replace("_", " "),
         intel_score   = status.get("intelligence_score", 0.0),
         signal_rows   = signal_rows,
+        sharpe_html   = sharpe_html,
         model_html    = model_html,
         positions_html= positions_html,
         trades_html    = trades_html,

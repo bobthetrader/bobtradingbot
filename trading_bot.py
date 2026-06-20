@@ -247,6 +247,8 @@ class TradingBot:
         self._intelligence_score_weight: float = float(_intel_cfg.get('score_weight', 2.0))
         self._intelligence_model_scores: dict = {}
         self._intelligence_model_outputs: dict = {}
+        self._sharpe_funding_scores: dict = {}
+        self._sharpe_insider_scores: dict = {}
         self._last_balance_eur: float = 0.0
 
         # ── Sharpe + scientific-method optimizer ─────────────────────────────
@@ -2754,6 +2756,8 @@ class TradingBot:
                             "intelligence_score":  round(float(getattr(self, '_intelligence_score', 0.0)), 2),
                             "model_scores":        {k: round(float(v), 2) for k, v in getattr(self, '_intelligence_model_scores', {}).items()},
                             "model_outputs":       {k: str(v)[:120] for k, v in getattr(self, '_intelligence_model_outputs', {}).items()},
+                            "sharpe_funding":      getattr(self, '_sharpe_funding_scores', {}),
+                            "sharpe_insider":      getattr(self, '_sharpe_insider_scores', {}),
                             "sharpe":         getattr(self, '_sharpe_result', {}).get('sharpe'),
                             "sharpe_verdict": getattr(self, '_sharpe_result', {}).get('verdict', 'insufficient_data'),
                             "sharpe_trending":getattr(self, '_sharpe_result', {}).get('trending', 'stable'),

@@ -31,6 +31,16 @@ import threading
 import requests
 from typing import Optional
 
+try:
+    from core.sharpe_data import fetch_all as _sharpe_fetch_all
+    _SHARPE_AVAILABLE = True
+except ImportError:
+    try:
+        from sharpe_data import fetch_all as _sharpe_fetch_all
+        _SHARPE_AVAILABLE = True
+    except ImportError:
+        _SHARPE_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 _INTEL_LOG = os.path.join(os.path.dirname(__file__), "..", "data", "intelligence_log.jsonl")
@@ -190,6 +200,51 @@ def _build_market_context(pairs: list, bot_context: dict) -> str:
             lines.append(f"  • {art.get('title', '')}")
 
     lines.append(f"\nBot pairs: {', '.join(pairs)}")
+
+    # ── Sharpe.ai institutional data ──────────────────────────────────────────
+    if _SHARPE_AVAILABLE:
+        try:
+            sharpe = _sharpe_fetch_all(pairs)
+            if sharpe.get("available"):
+                lines.append("\n--- SHARPE.AI DERIVATIVES DATA ---")
+
+                # Funding rates
+                fd = sharpe.get("funding", {})
+                if fd.get("summary"):
+                    lines.append(fd["summary"])
+                    lines.append(
+                        "  Interpretation: positive rate = longs crowded = bearish contrarian signal; "
+                        "negative rate = shorts crowded = bullish contrarian signal."
+                    )
+
+                # Insider selling
+                ins = sharpe.get("insider", {})
+                if ins.get("coin_scores"):
+                    parts = [f"{c}: {s:.1f}/10" for c, s in ins["coin_scores"].items()]
+                    lines.append(f"Insider selling pressure (0=none, 10=extreme): {' | '.join(parts)}")
+
+                # Pump & dump
+                pd = sharpe.get("pump_dump", {})
+                if pd:
+                    pd_parts = [f"{c}: score={v['score']:.1f} phase={v['phase']}"
+                                for c, v in pd.items()]
+                    lines.append(f"Pump & dump detection: {' | '.join(pd_parts)}")
+
+                # Derivatives overview
+                deriv = sharpe.get("derivatives", {})
+                if deriv.get("oi_weighted_funding") is not None:
+                    lines.append(
+                        f"Market-wide OI-weighted funding: {deriv['oi_weighted_funding']:.6f}"
+                    )
+
+                # Curated news (replace CryptoCompare news if available)
+                sharpe_news = sharpe.get("news", [])
+                if sharpe_news:
+                    lines.append("Sharpe.ai curated news (AI-selected):")
+                    for h in sharpe_news:
+                        lines.append(f"  • {h}")
+        except Exception as _se:
+            logger.debug("Sharpe.ai context injection failed: %s", _se)
 
     # ── Recent AI panel history (so models can calibrate against past calls) ──
     recent_intel = _load_recent_intel(n=5)
