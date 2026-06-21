@@ -2748,7 +2748,7 @@ class TradingBot:
                                 _fprice = self.pair_prices.get(_fp, 0)
                                 if _fqty > 0 and _fprice > 0:
                                     self.logger.info(f"FORCE_SELL triggered for {_fp} @ {_fprice:.4f}")
-                                    self.execute_sell_order(_fp, _fprice)
+                                    self.execute_sell_order(_fp, _fprice, require_profit_target=False)
                         except Exception as _fe:
                             self.logger.warning(f"FORCE_SELL error: {_fe}")
 
@@ -3492,7 +3492,9 @@ class TradingBot:
         Clears position state, updates trade metrics, and journals the trade.
         """
         try:
-            volume = self.holdings.get(pair, 0)
+            # Use position_qty as primary source — holdings can be zeroed by
+            # _sync_account_state in paper mode even when a position exists
+            volume = self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)
             min_vol = self._get_min_volume(pair)
             if volume < min_vol:
                 self.logger.info(f"SELL skipped for {pair}: no holdings")
