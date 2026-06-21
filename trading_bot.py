@@ -269,6 +269,10 @@ class TradingBot:
         self._sharpe_funding_scores: dict = {}
         self._sharpe_insider_scores: dict = {}
         self._last_balance_eur: float = 0.0
+        # Lock protecting all _intelligence_* and _sharpe_* fields so the
+        # background intel-refresh thread doesn't race with main-loop reads.
+        import threading as _th_init
+        self._intel_lock = _th_init.Lock()
 
         # ── TR-GC inspired features ───────────────────────────────────────────
         self._btc_downtrend: bool = False
@@ -2492,37 +2496,21 @@ class TradingBot:
         except Exception:
             pass
 
-    def analyze_all_pairs(self):
-        """Fetch live prices, generate signals, and pick the best actionable pair.
+    # ── Three-phase pair analysis ─────────────────────────────────────────────
 
-        For every pair in ``self.trade_pairs``:
-        1. Fetch current ticker price from Kraken.
-        2. If price history is too sparse (<50 ticks), seed it from 60m OHLC candles.
-        3. Update the flash-crash airbag history; trigger emergency sell if tripped.
-        4. Call ``TechnicalAnalysis.generate_signal_with_score()`` to get
-           a (signal, score) tuple.
+    def _fetch_market_data(self) -> None:
+        """Phase 1 — Fetch live prices and run safety checks for every pair.
 
-        Returns (best_pair, best_signal, best_score) where *best_pair* is the
-        pair with the highest |score| among actionable BUY/SELL signals.
-        Returns (None, "HOLD", 0) when no pair has an actionable signal.
+        For each pair:
+        - Prefer WebSocket price; fall back to REST ticker.
+        - Seed price history from OHLC candles if the buffer is sparse.
+        - Update flash-crash airbag history; trigger emergency sell if tripped.
+
+        Updates ``self.pair_prices`` in-place. No return value.
         """
-        best_pair = None
-        best_signal = "HOLD"
-        best_score = 0
-        # Refresh hourly signals at configured interval to reduce noisy tick signals
-        try:
-            now = time.time()
-            if (now - self._last_signal_refresh_ts) >= self.signal_refresh_interval:
-                self._refresh_hourly_signals()
-                self._last_signal_refresh_ts = now
-        except Exception:
-            pass
-
         for pair in self.trade_pairs:
             try:
-                # Ensure pair_key is always defined (fallback when using WS prices)
                 pair_key = pair
-                # Prefer WebSocket price (zero API calls); fall back to REST
                 ws_price = None
                 if self.ws_feed is not None:
                     try:
@@ -2542,38 +2530,78 @@ class TradingBot:
                     else:
                         current_price = self.pair_prices.get(pair, 0)
 
-                # Seed history from NAS/API OHLC if buffer isn't full yet
+                # Seed price-history buffer from OHLC candles if too sparse
                 if len(self.analysis_tool._get_price_history(pair_key)) < self.analysis_tool.max_history:
                     self._warmup_pair_history(pair)
-                
-                # Update airbag history and check for crash
+
+                # Airbag: update history and panic-sell on flash crash
                 self._update_airbag_history(pair, current_price)
                 if self._check_airbag_trigger(pair):
-                    # Panic sell if holding
                     if (self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)) >= self._get_min_volume(pair):
-                        self.execute_sell_order(pair, current_price, require_profit_target=False, reason="CRASH_AIRBAG")
+                        self.execute_sell_order(pair, current_price,
+                                                require_profit_target=False, reason="CRASH_AIRBAG")
+            except Exception as exc:
+                self.logger.error("_fetch_market_data error for %s: %s", pair, exc)
 
-                # Use cached hourly signals (refreshed periodically) when present
-                sig = self.pair_signals.get(pair)
-                score = self.pair_scores.get(pair, 0)
-                signal = sig if sig is not None else "HOLD"
+    def _generate_signals(self) -> None:
+        """Phase 2 — Refresh pair signals and scores if the interval has elapsed.
 
-                # Log every pair's signal+score so operator sees all signals in the logs
-                try:
-                    self.logger.info(f"PAIR {pair}: {signal} | score {float(score):.2f}")
-                except Exception:
-                    pass
+        Calls ``_refresh_hourly_signals()`` which runs the full technical-analysis
+        engine (RSI, Bollinger Bands, ATR, etc.) for each pair and stores results
+        in ``self.pair_signals`` and ``self.pair_scores``.
 
-                if signal in ["BUY", "SELL"] and abs(score) > abs(best_score):
-                    best_pair = pair
+        Reads from ``self.pair_prices`` populated by ``_fetch_market_data()``.
+        """
+        try:
+            now = time.time()
+            if (now - self._last_signal_refresh_ts) >= self.signal_refresh_interval:
+                self._refresh_hourly_signals()
+                self._last_signal_refresh_ts = now
+        except Exception as exc:
+            self.logger.error("_generate_signals error: %s", exc)
+
+    def _select_best_pair(self) -> tuple:
+        """Phase 3 — Read cached signals and select the best actionable pair.
+
+        Iterates ``self.pair_signals`` / ``self.pair_scores`` (written by
+        ``_generate_signals``) and returns the pair with the highest absolute
+        score that has an actionable BUY or SELL signal.
+
+        Returns:
+            (best_pair, best_signal, best_score) or (None, "HOLD", 0).
+        """
+        best_pair   = None
+        best_signal = "HOLD"
+        best_score  = 0
+
+        for pair in self.trade_pairs:
+            try:
+                signal = self.pair_signals.get(pair) or "HOLD"
+                score  = float(self.pair_scores.get(pair, 0))
+                self.logger.info("PAIR %s: %s | score %.2f", pair, signal, score)
+                if signal in ("BUY", "SELL") and abs(score) > abs(best_score):
+                    best_pair   = pair
                     best_signal = signal
-                    best_score = score
-
+                    best_score  = score
                 time.sleep(0.25)
-            except Exception as e:
-                self.logger.error(f"Error analyzing {pair}: {e}")
+            except Exception as exc:
+                self.logger.error("_select_best_pair error for %s: %s", pair, exc)
 
         return best_pair, best_signal, best_score
+
+    def analyze_all_pairs(self) -> tuple:
+        """Orchestrate the three-phase pair analysis pipeline.
+
+        Calls:
+          1. ``_fetch_market_data()``  — prices + airbag
+          2. ``_generate_signals()``   — RSI / BB / ATR signal engine
+          3. ``_select_best_pair()``   — pick highest-score actionable pair
+
+        Returns (best_pair, best_signal, best_score).
+        """
+        self._fetch_market_data()
+        self._generate_signals()
+        return self._select_best_pair()
 
     def start_trading(self, max_runtime_seconds=None):
         """Run the main trading loop until the target balance is reached,
@@ -2695,11 +2723,14 @@ class TradingBot:
                                 def _refresh_intel(_ctx=_bot_ctx):
                                     try:
                                         result = _get_market_intelligence(self.trade_pairs, _ctx)
-                                        self._intelligence_score = result.get("score", 0.0)
-                                        self._intelligence_model_scores = result.get("model_scores", {})
-                                        self._intelligence_model_outputs = result.get("model_outputs", {})
-                                        self._sharpe_funding_scores = result.get("sharpe_funding", {})
-                                        self._sharpe_insider_scores = result.get("sharpe_insider", {})
+                                        # Acquire lock before writing — main loop may be
+                                        # reading these values concurrently.
+                                        with self._intel_lock:
+                                            self._intelligence_score        = result.get("score", 0.0)
+                                            self._intelligence_model_scores = result.get("model_scores", {})
+                                            self._intelligence_model_outputs= result.get("model_outputs", {})
+                                            self._sharpe_funding_scores     = result.get("sharpe_funding", {})
+                                            self._sharpe_insider_scores     = result.get("sharpe_insider", {})
                                         self.logger.info(
                                             "Intelligence refresh complete: score=%.2f sources=%d/5",
                                             self._intelligence_score,
@@ -3034,9 +3065,12 @@ class TradingBot:
                                 self.logger.warning("BUY paused: daily loss limit reached")
                                 self.kelly_fraction = self._calculate_kelly_fraction()
                                 continue
-                            # Intelligence-adjusted buy gate: bullish AI reading lowers
-                            # the threshold; bearish reading raises it.
-                            _intel_adj = -(self._intelligence_score * self._intelligence_score_weight)
+                            # Intelligence-adjusted buy gate — read under lock so we
+                            # never see a half-written score from the refresh thread.
+                            with self._intel_lock:
+                                _iscore = self._intelligence_score
+                                _iweight = self._intelligence_score_weight
+                            _intel_adj = -(_iscore * _iweight)
                             _effective_min = self.min_buy_score + _intel_adj
                             if score < _effective_min:
                                 self.logger.info(
