@@ -2584,13 +2584,21 @@ class TradingBot:
                     time.sleep(0.25)
                     continue
 
-                # Filter non-actionable signals before scoring — prevents a strong
-                # SELL on an empty position from beating a weaker BUY this cycle.
+                # Filter contradictory signals: BUY must have positive score,
+                # SELL must have negative score. A BUY signal with score -13
+                # means RSI is oversold but trend is strongly bearish — skip it
+                # so a weaker-but-genuine BUY (positive score) can win instead.
+                if signal == "BUY" and score < 0:
+                    time.sleep(0.25)
+                    continue
+                if signal == "SELL" and score > 0:
+                    time.sleep(0.25)
+                    continue
+
+                # Filter non-actionable SELL on empty position
                 has_long  = (self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)) >= self._get_min_volume(pair)
                 has_short = self.short_qty.get(pair, 0.0) > 0
-
                 if signal == "SELL" and not has_long and not has_short and not self.enable_live_shorts:
-                    # No position to close and shorts disabled — not actionable
                     time.sleep(0.25)
                     continue
 
