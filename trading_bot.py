@@ -3142,14 +3142,11 @@ class TradingBot:
                                 if self._can_close_short_profit_target(best_pair, price):
                                     self.execute_close_short_order(best_pair, price)
                                 else:
-                                    # Note: best_signal == "SELL" here so BUY check removed (was dead code)
-                                    if False:
-                                    else:
-                                        se = self.short_entry_prices.get(best_pair, 0.0)
-                                        spp = ((se - price) / se * 100.0) if se > 0 else 0.0
-                                        self.logger.info(
-                                            f"SHORT CLOSE skipped for {best_pair}: net profit target not reached ({spp:.2f}% gross)"
-                                        )
+                                    se = self.short_entry_prices.get(best_pair, 0.0)
+                                    spp = ((se - price) / se * 100.0) if se > 0 else 0.0
+                                    self.logger.info(
+                                        f"SHORT CLOSE skipped for {best_pair}: net profit target not reached ({spp:.2f}% gross)"
+                                    )
                             else:
                                 self._log_empty_sell_signal_throttled(best_pair)
 
