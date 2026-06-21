@@ -3190,6 +3190,123 @@ class TradingBot:
             self.logger.info(f"Bot stopped by user. Final balance: {final_balance:.2f} EUR")
             print(f"\nTrading bot stopped. Final Balance: {final_balance:.2f} EUR")
 
+    # ── Trade finalisation helpers ────────────────────────────────────────────
+
+    def _persist_position_meta(self, meta: dict) -> None:
+        """Atomically write a position entry to the purchase-prices state file.
+        Replaces duplicated file-write logic in execute_buy_order and
+        execute_open_short_order."""
+        pair = meta.get('pair', '')
+        try:
+            os.makedirs(os.path.dirname(self.data_purchase_prices_path), exist_ok=True)
+            existing: dict = {}
+            if os.path.exists(self.data_purchase_prices_path):
+                try:
+                    with open(self.data_purchase_prices_path, 'r', encoding='utf-8') as fh:
+                        existing = json.load(fh)
+                except (json.JSONDecodeError, OSError):
+                    existing = {}
+            existing[pair] = meta
+            tmp = self.data_purchase_prices_path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as fh:
+                json.dump(existing, fh, separators=(',', ':'), ensure_ascii=False)
+            os.replace(tmp, self.data_purchase_prices_path)
+        except OSError as exc:
+            self.logger.warning("Could not persist position meta for %s: %s", pair, exc)
+
+    def _remove_position_meta(self, pair: str) -> None:
+        """Atomically remove a position entry from the purchase-prices state file.
+        Replaces duplicated removal logic in execute_sell_order and
+        execute_close_short_order."""
+        try:
+            if not os.path.exists(self.data_purchase_prices_path):
+                return
+            try:
+                with open(self.data_purchase_prices_path, 'r', encoding='utf-8') as fh:
+                    existing = json.load(fh)
+            except (json.JSONDecodeError, OSError):
+                return
+            if pair not in existing:
+                return
+            del existing[pair]
+            tmp = self.data_purchase_prices_path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as fh:
+                json.dump(existing, fh, separators=(',', ':'), ensure_ascii=False)
+            os.replace(tmp, self.data_purchase_prices_path)
+        except OSError as exc:
+            self.logger.warning("Could not remove position meta for %s: %s", pair, exc)
+
+    def _finalise_trade(self, ttype: str, pair: str, volume: float, price: float,
+                        pnl_eur: float = 0.0, reason: str = '',
+                        extra: dict = None) -> None:
+        """
+        Consolidate all post-execution steps common across every trade type:
+          1. Increment trade count and update cooldown timestamps
+          2. Journal to CSV + JSONL + history DB (via _journal_trade)
+          3. Log a summary line
+          4. Send Telegram notification
+
+        Call this AFTER all position-specific state updates are complete.
+        Replaces ~20 lines of duplicated boilerplate in each execute_* method.
+        """
+        now_ts = time.time()
+        self.trade_count += 1
+        self.last_trade_at[pair] = now_ts
+        self.last_global_trade_at = now_ts
+        self._save_cooldown_state()
+
+        # Journal (CSV + JSONL + history DB)
+        self._journal_trade(
+            ttype, pair, volume, price, pnl_eur,
+            reason or f'{ttype}_EXECUTED',
+            extra=extra or {},
+        )
+
+        # Console summary
+        notional  = volume * price
+        pnl_str   = f" | P&L: {pnl_eur:+.2f} EUR" if pnl_eur != 0 else ""
+        print(f"\n[{ttype}] {volume:.6f} {pair} (~{notional:.2f} EUR){pnl_str} - Trade #{self.trade_count}")
+        self.logger.info("%s FINALISED: %s %.6f @ %.4f EUR%s (trade #%d)",
+                         ttype, pair, volume, price, pnl_str, self.trade_count)
+
+        # Telegram notification — format varies by trade type
+        sign = "🟢" if pnl_eur >= 0 else "🔴"
+        lev  = getattr(self, 'short_leverage', '2')
+        ext  = extra or {}
+
+        if ttype == 'BUY':
+            msg = (f"🟢 <b>BUY</b> #{self.trade_count}\n"
+                   f"Pair: {pair}\n"
+                   f"Volume: {volume:.6f}  (~{notional:.2f} EUR)\n"
+                   f"Price: {price:.4f} EUR")
+        elif ttype == 'SELL':
+            msg = (f"{sign} <b>SELL</b> #{self.trade_count}\n"
+                   f"Pair: {pair}\n"
+                   f"Volume: {volume:.6f}  (~{notional:.2f} EUR)\n"
+                   f"Price: {price:.4f} EUR\n"
+                   f"P&amp;L est.: {pnl_eur:+.2f} EUR")
+        elif ttype == 'SHORT_OPEN':
+            msg = (f"🔻 <b>SHORT OPEN</b> #{self.trade_count}\n"
+                   f"Pair: {pair}\n"
+                   f"Volume: {volume:.6f}  (~{notional:.2f} EUR)\n"
+                   f"Price: {price:.4f} EUR  |  Leverage: {lev}x")
+        elif ttype == 'SHORT_CLOSE':
+            entry   = ext.get('entry', 0)
+            pnl_pct = ext.get('pnl_pct', 0)
+            msg = (f"{sign} <b>SHORT CLOSE</b> #{self.trade_count}\n"
+                   f"Pair: {pair}\n"
+                   f"Volume: {volume:.6f}  (~{notional:.2f} EUR)\n"
+                   f"Entry: {entry:.4f} EUR  |  Exit: {price:.4f} EUR\n"
+                   f"P&amp;L est.: {pnl_eur:+.2f} EUR ({pnl_pct:+.2f}%)")
+        else:
+            msg = (f"{sign} <b>{ttype}</b> #{self.trade_count}\n"
+                   f"Pair: {pair}\nVolume: {volume:.6f}\nPrice: {price:.4f} EUR")
+
+        try:
+            _notifier.send(msg)
+        except Exception:
+            pass
+
     def _journal_trade(self, ttype, pair, volume, price, pnl_eur, reason, extra=None):
         """Journal a trade: append CSV and JSONL entries with safety measures.
 
@@ -3424,61 +3541,31 @@ class TradingBot:
                     )
                     return
 
-                # Confirmed — now update state and journal
-                self.trade_count += 1
+                # Confirmed — update position-specific state
                 now_ts = time.time()
-                self.last_trade_at[pair] = now_ts
-                self.last_global_trade_at = now_ts
-                self._save_cooldown_state()
                 self.peak_prices[pair] = max(self.peak_prices.get(pair, 0.0), price)
                 if self.entry_timestamps.get(pair) is None:
-                    self.entry_timestamps[pair] = int(time.time())
-                self._partial_exit_done[pair] = False  # arm partial exit for this new entry
+                    self.entry_timestamps[pair] = int(now_ts)
+                self._partial_exit_done[pair] = False
                 self._sync_account_state(force_history=True)
-                self.logger.info(f"BUY ORDER SUCCESS: {result}")
-                self.logger.info(f"BUY SUMMARY: {pair} {volume:.6f} (~{volume*price:.2f} EUR)")
-                # initialize ATR stop if enabled
                 if self.enable_atr_stop:
                     atr = self._compute_atr(pair)
                     if atr is not None:
                         init_stop = max(0.0, price - (atr * self.atr_multiplier))
                         self.stop_info[pair] = {'stop_price': init_stop, 'type': 'ATR'}
-                        self.logger.info(f"Initialized ATR stop for {pair}: {init_stop:.4f} (atr={atr:.4f})")
-                # persist purchase + fees immediately so restarts keep entry data
-                buy_meta = {
-                    'pair': pair,
-                    'side': 'long',
+                        self.logger.info("ATR stop for %s: %.4f (atr=%.4f)", pair, init_stop, atr)
+                self._persist_position_meta({
+                    'pair': pair, 'side': 'long',
                     'qty': float(volume),
                     'entry_price_eur': float(fill_price or price),
                     'fees_eur': float(result.get('fee', 0) if isinstance(result, dict) else 0.0),
                     'notional_eur': float(volume * (fill_price or price)),
                     'entry_ts': int(now_ts),
-                }
-                try:
-                    os.makedirs(os.path.dirname(self.data_purchase_prices_path), exist_ok=True)
-                    # load existing, update, write atomically
-                    existing = {}
-                    if os.path.exists(self.data_purchase_prices_path):
-                        with open(self.data_purchase_prices_path, 'r', encoding='utf-8') as pf:
-                            try:
-                                existing = json.load(pf)
-                            except Exception:
-                                existing = {}
-                    existing[pair] = buy_meta
-                    with open(self.data_purchase_prices_path + '.tmp', 'w', encoding='utf-8') as pf:
-                        json.dump(existing, pf, separators=(',', ':'), ensure_ascii=False)
-                    os.replace(self.data_purchase_prices_path + '.tmp', self.data_purchase_prices_path)
-                except Exception as e:
-                    self.logger.warning(f"Could not persist purchase_prices to {self.data_purchase_prices_path}: {e}")
-                # Journal trade afterward
-                self._journal_trade('BUY', pair, volume, price, 0.0, 'BUY_EXECUTED', extra={'result': result, 'expected_price': price, 'fill_price': fill_price})
-                print(f"\n[BUY] {volume:.6f} {pair} (~{volume*price:.2f} EUR) - Trade #{self.trade_count}")
-                _notifier.send(
-                    f"🟢 <b>BUY</b> #{self.trade_count}\n"
-                    f"Pair: {pair}\n"
-                    f"Volume: {volume:.6f}  (~{volume*price:.2f} EUR)\n"
-                    f"Price: {price:.4f} EUR"
-                )
+                })
+                self.logger.info("BUY ORDER SUCCESS: %s", result)
+                self._finalise_trade('BUY', pair, volume, fill_price or price, 0.0,
+                                     'BUY_EXECUTED',
+                                     extra={'fill_price': fill_price, 'expected_price': price})
             else:
                 self.logger.error(f"BUY ORDER FAILED for {pair}")
         except Exception as e:
@@ -3558,34 +3645,22 @@ class TradingBot:
                     )
                     return
 
-                # Confirmed — apply state updates and journal
-                self.trade_count += 1
-                now_ts = time.time()
-                self.last_trade_at[pair] = now_ts
-                self.last_global_trade_at = now_ts
-                self._save_cooldown_state()
+                # Confirmed — update position-specific state then finalise
                 self.purchase_prices[pair] = 0.0
-                self.peak_prices[pair] = 0.0
+                self.position_qty[pair]    = 0.0
+                self.peak_prices[pair]     = 0.0
                 self.entry_timestamps[pair] = None
-                self._partial_exit_done[pair] = False  # reset for next trade cycle
-                if pair in self.stop_info:
-                    del self.stop_info[pair]
-                self.logger.info(f"SELL ORDER SUCCESS: {result}")
-                self.logger.info(f"SELL SUMMARY: {pair} {volume:.6f} (~{volume*price:.2f} EUR)")
-                self.logger.info(
-                    f"SELL PNL ESTIMATE {pair}: {est_profit_eur:.2f} EUR ({est_profit_pct if est_profit_pct is not None else 0:.2f}%)"
-                )
+                self._partial_exit_done[pair] = False
+                self.stop_info.pop(pair, None)
                 self._update_trade_metrics(pair, est_profit_eur)
-                self._journal_trade('SELL', pair, volume, price, est_profit_eur, reason or 'SELL_EXECUTED', extra={'result': result, 'expected_price': price, 'fill_price': fill_price})
-                print(f"\n[SELL] {volume:.6f} {pair} (~{volume*price:.2f} EUR) - Trade #{self.trade_count}")
-                pnl_sign = "🟢" if est_profit_eur >= 0 else "🔴"
-                _notifier.send(
-                    f"{pnl_sign} <b>SELL</b> #{self.trade_count}\n"
-                    f"Pair: {pair}\n"
-                    f"Volume: {volume:.6f}  (~{volume*price:.2f} EUR)\n"
-                    f"Price: {price:.4f} EUR\n"
-                    f"P&amp;L est.: {est_profit_eur:+.2f} EUR"
-                )
+                self._remove_position_meta(pair)
+                self.logger.info("SELL ORDER SUCCESS: %s", result)
+                self.logger.info("SELL PNL %s: %.2f EUR (%.2f%%)",
+                                 pair, est_profit_eur,
+                                 est_profit_pct if est_profit_pct is not None else 0)
+                self._finalise_trade('SELL', pair, volume, fill_price or price,
+                                     est_profit_eur, reason or 'SELL_EXECUTED',
+                                     extra={'fill_price': fill_price, 'expected_price': price})
             else:
                 self.logger.error(f"SELL ORDER FAILED for {pair}")
         except Exception as e:
@@ -3629,48 +3704,22 @@ class TradingBot:
             )
             result = self._place_live_order(pair=pair, direction='sell', volume=volume, leverage=self.short_leverage)
             if result:
-                self.trade_count += 1
                 now_ts = time.time()
-                self.last_trade_at[pair] = now_ts
-                self.last_global_trade_at = now_ts
-                self._save_cooldown_state()
                 self.short_qty[pair] = volume
                 self.short_entry_prices[pair] = price
-                # persist short entry so restarts keep short state
-                short_meta = {
-                    'pair': pair,
-                    'side': 'short',
+                self.entry_timestamps[pair] = int(now_ts)
+                self._persist_position_meta({
+                    'pair': pair, 'side': 'short',
                     'qty': float(volume),
                     'entry_price_eur': float(price),
                     'fees_eur': float(result.get('fee', 0) if isinstance(result, dict) else 0.0),
                     'notional_eur': float(volume * price),
                     'entry_ts': int(now_ts),
-                }
-                try:
-                    os.makedirs(os.path.dirname(self.data_purchase_prices_path), exist_ok=True)
-                    existing = {}
-                    if os.path.exists(self.data_purchase_prices_path):
-                        with open(self.data_purchase_prices_path, 'r', encoding='utf-8') as pf:
-                            try:
-                                existing = json.load(pf)
-                            except Exception:
-                                existing = {}
-                    existing[pair] = short_meta
-                    with open(self.data_purchase_prices_path + '.tmp', 'w', encoding='utf-8') as pf:
-                        json.dump(existing, pf, separators=(',', ':'), ensure_ascii=False)
-                    os.replace(self.data_purchase_prices_path + '.tmp', self.data_purchase_prices_path)
-                except Exception as e:
-                    self.logger.warning(f"Could not persist short entry to {self.data_purchase_prices_path}: {e}")
-                self.entry_timestamps[pair] = int(now_ts)
-                self.logger.info(f"SHORT OPEN SUCCESS: {result}")
-                self.logger.info(f"SHORT OPEN SUMMARY: {pair} {volume:.6f} (~{notional:.2f} EUR)")
-                print(f"\n[SHORT OPEN] {volume:.6f} {pair} (~{notional:.2f} EUR) - Trade #{self.trade_count}")
-                _notifier.send(
-                    f"🔻 <b>SHORT OPEN</b> #{self.trade_count}\n"
-                    f"Pair: {pair}\n"
-                    f"Volume: {volume:.6f}  (~{notional:.2f} EUR)\n"
-                    f"Price: {price:.4f} EUR  |  Leverage: {self.short_leverage}x"
-                )
+                })
+                self.logger.info("SHORT OPEN SUCCESS: %s", result)
+                self._finalise_trade('SHORT_OPEN', pair, volume, price, 0.0,
+                                     'SHORT_OPEN_EXECUTED',
+                                     extra={'notional': notional, 'short_type': short_type})
             else:
                 self.logger.error(f"SHORT OPEN FAILED for {pair}")
         except Exception as e:
@@ -3700,47 +3749,16 @@ class TradingBot:
                 reduce_only=True,
             )
             if result:
-                self.trade_count += 1
-                now_ts = time.time()
-                self.last_trade_at[pair] = now_ts
-                self.last_global_trade_at = now_ts
-                self._save_cooldown_state()
                 self.short_qty[pair] = 0.0
                 self.short_entry_prices[pair] = 0.0
                 self.entry_timestamps[pair] = None
-                # Remove the persisted short entry so a restart doesn't reload
-                # this position as still-open from stale disk data (mirrors
-                # the write that happens in execute_open_short_order).
-                try:
-                    if os.path.exists(self.data_purchase_prices_path):
-                        with open(self.data_purchase_prices_path, 'r', encoding='utf-8') as pf:
-                            try:
-                                existing = json.load(pf)
-                            except Exception:
-                                existing = {}
-                        if pair in existing:
-                            del existing[pair]
-                            with open(self.data_purchase_prices_path + '.tmp', 'w', encoding='utf-8') as pf:
-                                json.dump(existing, pf, separators=(',', ':'), ensure_ascii=False)
-                            os.replace(self.data_purchase_prices_path + '.tmp', self.data_purchase_prices_path)
-                except Exception as e:
-                    self.logger.warning(f"Could not remove closed short entry from {self.data_purchase_prices_path}: {e}")
-                self.logger.info(f"SHORT CLOSE SUCCESS: {result}")
-                self.logger.info(f"SHORT CLOSE SUMMARY: {pair} {qty:.6f} (~{qty*price:.2f} EUR)")
-                self.logger.info(f"SHORT PNL ESTIMATE {pair}: {pnl_eur:.2f} EUR ({pnl_pct:.2f}%)")
+                self._remove_position_meta(pair)
                 self._update_trade_metrics(pair, pnl_eur)
-                self._journal_trade('SHORT_CLOSE', pair, qty, price, pnl_eur,
-                                    'SHORT_CLOSE_EXECUTED',
-                                    extra={'entry': entry, 'exit_price': price, 'pnl_pct': pnl_pct})
-                print(f"\n[SHORT CLOSE] {qty:.6f} {pair} - Trade #{self.trade_count}")
-                pnl_sign = "🟢" if pnl_eur >= 0 else "🔴"
-                _notifier.send(
-                    f"{pnl_sign} <b>SHORT CLOSE</b> #{self.trade_count}\n"
-                    f"Pair: {pair}\n"
-                    f"Volume: {qty:.6f}  (~{qty*price:.2f} EUR)\n"
-                    f"Entry: {entry:.4f} EUR  |  Exit: {price:.4f} EUR\n"
-                    f"P&amp;L est.: {pnl_eur:+.2f} EUR ({pnl_pct:+.2f}%)"
-                )
+                self.logger.info("SHORT CLOSE SUCCESS: %s | PNL: %.2f EUR (%.2f%%)",
+                                 result, pnl_eur, pnl_pct)
+                self._finalise_trade('SHORT_CLOSE', pair, qty, price, pnl_eur,
+                                     'SHORT_CLOSE_EXECUTED',
+                                     extra={'entry': entry, 'exit_price': price, 'pnl_pct': pnl_pct})
             else:
                 self.logger.error(f"SHORT CLOSE FAILED for {pair}")
         except Exception as e:
