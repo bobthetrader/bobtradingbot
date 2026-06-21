@@ -112,6 +112,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
   <h1>&#x1F916; Bob Trading Bot</h1>
   <div class="subtitle">Auto-refreshes every 30s &nbsp;&#x2022;&nbsp; Updated: {updated} &nbsp;&#x2022;&nbsp; Loop #{loop} &nbsp;&#x2022;&nbsp; {mode}</div>
+  <div style="margin-bottom:12px">
+    <a href="/force-buy"  style="display:inline-block;padding:8px 18px;background:#00c851;color:#000;font-weight:bold;border-radius:6px;text-decoration:none;margin-right:8px;font-family:monospace">&#x1F7E2; Force Buy</a>
+    <a href="/force-sell" style="display:inline-block;padding:8px 18px;background:#ff4444;color:#fff;font-weight:bold;border-radius:6px;text-decoration:none;font-family:monospace">&#x1F534; Force Sell</a>
+    <span style="color:#8b949e;font-size:11px;margin-left:12px">Demo only — executes immediately on next loop</span>
+  </div>
 
   <div class="grid">
 
@@ -482,6 +487,40 @@ def start_dashboard(port: int = 8080):
         @app.route("/health")
         def health():
             return "ok", 200
+
+        @app.route("/force-buy")
+        def force_buy():
+            try:
+                path = os.path.join(DATA_DIR, "FORCE_BUY")
+                open(path, "w").close()
+                return Response(
+                    "<html><body style='background:#0d1117;color:#00c851;font-family:monospace;padding:40px'>"
+                    "<h2>&#x2705; FORCE_BUY triggered</h2>"
+                    "<p>The bot will execute a buy on the next loop (within 60 seconds).</p>"
+                    "<p>Watch your Telegram for the BUY notification.</p>"
+                    "<a href='/' style='color:#58a6ff'>← Back to dashboard</a>"
+                    "</body></html>",
+                    mimetype="text/html"
+                )
+            except Exception as e:
+                return Response(f"Error: {e}", status=500)
+
+        @app.route("/force-sell")
+        def force_sell():
+            try:
+                path = os.path.join(DATA_DIR, "FORCE_SELL")
+                open(path, "w").close()
+                return Response(
+                    "<html><body style='background:#0d1117;color:#ff4444;font-family:monospace;padding:40px'>"
+                    "<h2>&#x2705; FORCE_SELL triggered</h2>"
+                    "<p>The bot will close all open positions on the next loop (within 60 seconds).</p>"
+                    "<p>Watch your Telegram for the SELL notification.</p>"
+                    "<a href='/' style='color:#58a6ff'>← Back to dashboard</a>"
+                    "</body></html>",
+                    mimetype="text/html"
+                )
+            except Exception as e:
+                return Response(f"Error: {e}", status=500)
 
         def _run():
             app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)

@@ -2715,12 +2715,20 @@ class TradingBot:
                     # Update BTC regime flag every loop (cheap — reads local history)
                     self._btc_downtrend = self._is_btc_downtrend()
 
-                    # ── FORCE_BUY trigger (test/demo mechanism) ───────────────
-                    _force_buy_path = os.path.join(os.path.dirname(__file__), 'data', 'FORCE_BUY')
+                    # ── FORCE_BUY / FORCE_SELL triggers (demo mechanism) ─────
+                    _data_dir = os.path.join(os.path.dirname(__file__), 'data')
+                    _force_buy_path  = os.path.join(_data_dir, 'FORCE_BUY')
+                    _force_sell_path = os.path.join(_data_dir, 'FORCE_SELL')
+
                     if os.path.exists(_force_buy_path):
                         try:
                             os.remove(_force_buy_path)
-                            _force_pair = self.trade_pairs[0] if self.trade_pairs else None
+                            _force_pair = next(
+                                (p for p in self.trade_pairs
+                                 if self.holdings.get(p, 0) == 0
+                                 and self.short_qty.get(p, 0) == 0),
+                                self.trade_pairs[0] if self.trade_pairs else None
+                            )
                             if _force_pair:
                                 _force_price = self.pair_prices.get(_force_pair, 0)
                                 if _force_price > 0:
@@ -2729,6 +2737,18 @@ class TradingBot:
                                     self.execute_buy_order(_force_pair, _force_price)
                         except Exception as _fe:
                             self.logger.warning(f"FORCE_BUY error: {_fe}")
+
+                    if os.path.exists(_force_sell_path):
+                        try:
+                            os.remove(_force_sell_path)
+                            for _fp in list(self.trade_pairs):
+                                _fqty = self.holdings.get(_fp, 0)
+                                _fprice = self.pair_prices.get(_fp, 0)
+                                if _fqty > 0 and _fprice > 0:
+                                    self.logger.info(f"FORCE_SELL triggered for {_fp} @ {_fprice:.4f}")
+                                    self.execute_sell_order(_fp, _fprice)
+                        except Exception as _fe:
+                            self.logger.warning(f"FORCE_SELL error: {_fe}")
 
                     # Daily + monthly balance resets
                     now = datetime.now()
