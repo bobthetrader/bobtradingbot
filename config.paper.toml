@@ -23,9 +23,12 @@ min_net_sell_profit_pct = 0.0        # Sell at any net level — don't block exi
 enable_trading_hours = false
 enable_regime_filter = false
 enable_volume_filter = false
-mr_rsi_oversold_threshold = 45       # Buy when RSI < 45 — fires several times a day
-mr_rsi_overbought_threshold = 55     # Sell when RSI > 55 — fires several times a day
-max_consecutive_losses = 5           # Allow up to 5 losses before pausing
+enable_daily_drawdown = false         # don't pause on daily loss limit
+enable_bear_shield = false            # don't park in FIAT
+min_auto_scale_notional = 0.1        # allow tiny orders through
+mr_rsi_oversold_threshold = 45
+mr_rsi_overbought_threshold = 55
+max_consecutive_losses = 10
 
 [intelligence]
 refresh_seconds = 600
@@ -37,6 +40,7 @@ regime_cache_ttl_seconds = 120
 
 [technical]
 enable_ema_crossover_filter = false
+enable_mtf_macd_filter = false
 ema_fast_period = 9
 ema_slow_period = 21
 
