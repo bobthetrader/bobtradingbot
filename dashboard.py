@@ -507,6 +507,29 @@ def start_dashboard(port: int = 8080):
             except Exception as e:
                 return Response(f"Error: {e}", status=500)
 
+        @app.route("/clear-state")
+        def clear_state():
+            try:
+                import json as _json
+                cleared = []
+                for fname in ("purchase_prices_paper.json", "purchase_prices_live.json"):
+                    p = os.path.join(DATA_DIR, fname)
+                    if os.path.exists(p):
+                        with open(p, "w") as f:
+                            _json.dump({}, f)
+                        cleared.append(fname)
+                return Response(
+                    "<html><body style='background:#0d1117;color:#ffbb33;font-family:monospace;padding:40px'>"
+                    f"<h2>&#x1F9F9; State cleared</h2>"
+                    f"<p>Cleared: {', '.join(cleared) if cleared else 'nothing to clear'}</p>"
+                    "<p>Restart the Railway service to reload with a clean slate.</p>"
+                    "<a href='/' style='color:#58a6ff'>← Back to dashboard</a>"
+                    "</body></html>",
+                    mimetype="text/html"
+                )
+            except Exception as e:
+                return Response(f"Error: {e}", status=500)
+
         @app.route("/force-sell")
         def force_sell():
             try:
