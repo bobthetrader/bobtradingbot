@@ -1,6 +1,6 @@
-# Trading Bot Core Logic - Multi-Pair Analysis
+﻿# Trading Bot Core Logic - Multi-Pair Analysis
 """
-Kraken Trading Bot — Core Engine
+Kraken Trading Bot â€” Core Engine
 This module is the heart of the trading bot.  It contains the ``TradingBot``
 class that orchestrates the full trading lifecycle, plus a minimal ``Backtester``
 helper for offline strategy validation.
@@ -9,8 +9,8 @@ Signal flow (high level)
 ------------------------
 ::
                     'extra': extra or {},
-    price_action.py  (bar-pattern helpers — optional context)
-         │
+    price_action.py  (bar-pattern helpers â€” optional context)
+         â”‚
     analysis.py  TechnicalAnalysis.generate_signal_with_score()
                 # If caller provided expected/fill price, compute slippage
                 try:
@@ -28,37 +28,37 @@ Signal flow (high level)
                             j['slippage_pct'] = round(((fill - expected) / expected) * 100.0, 4)
                         except Exception:
                             pass
-         │         ↳ RSI mean-reversion  (enable_mr_signals)
-         │         ↳ Bollinger-Band breakout (enable_trend_signals)
-         │         returns (signal: str, score: float  [-50 … +50])
-         │
+         â”‚         â†³ RSI mean-reversion  (enable_mr_signals)
+         â”‚         â†³ Bollinger-Band breakout (enable_trend_signals)
+         â”‚         returns (signal: str, score: float  [-50 â€¦ +50])
+         â”‚
     TradingBot.analyze_all_pairs()
-         │         ↳ fetches live ticker prices for all configured pairs
-         │         ↳ seeds price history from 60m OHLC when too sparse
-         │         ↳ picks the highest-scoring actionable pair
-         │
-    TradingBot.start_trading()  — main loop (~60 s cycle)
-         │         ↳ check_take_profit_or_stop_loss()  (exits first)
-         │         ↳ layered BUY guards (see below)
-         │         ↳ execute_buy_order() / execute_sell_order()
-         │              execute_open_short_order() / execute_close_short_order()
-         │
+         â”‚         â†³ fetches live ticker prices for all configured pairs
+         â”‚         â†³ seeds price history from 60m OHLC when too sparse
+         â”‚         â†³ picks the highest-scoring actionable pair
+         â”‚
+    TradingBot.start_trading()  â€” main loop (~60 s cycle)
+         â”‚         â†³ check_take_profit_or_stop_loss()  (exits first)
+         â”‚         â†³ layered BUY guards (see below)
+         â”‚         â†³ execute_buy_order() / execute_sell_order()
+         â”‚              execute_open_short_order() / execute_close_short_order()
+         â”‚
     kraken_interface.py  KrakenAPI.place_order()
-                          ↳ exclusive order lock (order_lock.py)
-                          ↳ exponential back-off on rate-limit errors
+                          â†³ exclusive order lock (order_lock.py)
+                          â†³ exponential back-off on rate-limit errors
 
 Layered BUY entry guards (all must pass before a buy is placed)
 ---------------------------------------------------------------
 1. Not temporarily paused (loss-streak cooldown)
 2. Daily drawdown limit not hit
 3. Bear Shield not active (BTC above 4h EMA50)
-4. Regime filter: BTC benchmark score ≥ regime_min_score (RISK_ON)
-5. Signal score ≥ min_buy_score (default 15.0)
+4. Regime filter: BTC benchmark score â‰¥ regime_min_score (RISK_ON)
+5. Signal score â‰¥ min_buy_score (default 15.0)
 6. Sentiment guard: no bad-news keywords in marquee file (optional)
 7. Open positions < max_open_positions
 8. MTF trend (1h SMA crossover) is bullish
 9. Trading hours filter (UTC window, optional)
-10. Volume filter: latest 15m candle ≥ volume_filter_min_ratio × 20-candle avg
+10. Volume filter: latest 15m candle â‰¥ volume_filter_min_ratio Ã— 20-candle avg
 
 Key responsibilities of TradingBot
 -----------------------------------
@@ -66,7 +66,7 @@ Key responsibilities of TradingBot
   short positions, trade metrics, cooldown timestamps.
 - Reconciles holdings and average entry price from Kraken trade history on
   startup/restart (``load_purchase_prices_from_history``).
-- Hot-reloads ``config.toml`` every 5 minutes — no restart needed for tweaks.
+- Hot-reloads ``config.toml`` every 5 minutes â€” no restart needed for tweaks.
 - Writes structured JSONL trade events to ``logs/trade_events.jsonl`` and a
   human-readable CSV to ``reports/trade_journal.csv``.
 - Persists the price-history buffer to ``data/history_buffer.json`` so RSI/SMA
@@ -135,7 +135,7 @@ try:
 except ImportError:
     _OPTIMIZER_AVAILABLE = False
 
-# NAS root — read from config [paths] nas_root, fallback to default mount point
+# NAS root â€” read from config [paths] nas_root, fallback to default mount point
 def _resolve_nas_root(config: dict) -> Path:
     return Path(config.get('paths', {}).get('nas_root', '/mnt/fritz_nas/Volume/kraken'))
 _TRADE_HISTORY_REFRESH_INTERVAL = 600  # seconds between Kraken API fetches (10 min)
@@ -249,7 +249,7 @@ class TradingBot:
             except Exception:
                 pass
 
-        # structured JSONL trade log — separate files for paper and live
+        # structured JSONL trade log â€” separate files for paper and live
         # so live Sharpe is never diluted by simulated paper fills
         _is_paper = bool(getattr(self.api_client, 'paper_mode', False))
         _journal_name = 'trade_events_paper.jsonl' if _is_paper else 'trade_events_live.jsonl'
@@ -258,7 +258,7 @@ class TradingBot:
         # manual kill-switch file: if present, bot will pause buys
         self.kill_switch_path = os.path.join(os.path.dirname(__file__), 'PAUSE')
 
-        # ── Market intelligence (Hermes + GPT) ───────────────────────────────
+        # â”€â”€ Market intelligence (Hermes + GPT) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _intel_cfg = self.config.get('intelligence', {})
         self._intelligence_score: float = 0.0
         self._intelligence_last_ts: float = 0.0
@@ -274,16 +274,16 @@ class TradingBot:
         import threading as _th_init
         self._intel_lock = _th_init.Lock()
 
-        # ── TR-GC inspired features ───────────────────────────────────────────
+        # â”€â”€ TR-GC inspired features â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self._btc_downtrend: bool = False
         self._breakout_timestamps: dict = {}
 
-        # ── Monthly return target (3-8% per month) ────────────────────────────
+        # â”€â”€ Monthly return target (3-8% per month) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self._monthly_start_balance: float = 0.0
         self._monthly_start_month: int = 0   # calendar month number
         self._monthly_target_hit_notified: bool = False
 
-        # ── Sharpe + scientific-method optimizer ─────────────────────────────
+        # â”€â”€ Sharpe + scientific-method optimizer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _opt_cfg = self.config.get('optimizer', {})
         self._sharpe_result: dict = {}
         self._closed_trades_count: int = 0
@@ -303,7 +303,7 @@ class TradingBot:
         # Explicit fee estimates (percent): used for net-profit calculations and guards
         self.fees_maker_percent = float(self.config.get('risk_management', {}).get('fees_maker_percent', 0.16))
         self.fees_taker_percent = float(self.config.get('risk_management', {}).get('fees_taker_percent', 0.26))
-        # Normalized fee fractions (e.g. 0.0026 for 0.26%) — use pct_to_frac for consistency
+        # Normalized fee fractions (e.g. 0.0026 for 0.26%) â€” use pct_to_frac for consistency
         try:
             self.fees_maker_frac = pct_to_frac(self.fees_maker_percent)
             self.fees_taker_frac = pct_to_frac(self.fees_taker_percent)
@@ -323,7 +323,7 @@ class TradingBot:
         self.atr_period = int(self.config.get('risk_management', {}).get('atr_period', 14))
         self.atr_multiplier = float(self.config.get('risk_management', {}).get('atr_multiplier', 1.5))
         self.atr_trail_multiplier = float(self.config.get('risk_management', {}).get('atr_trail_multiplier', 0.75))
-        # ATR dynamic take-profit: TP floor = atr_tp_multiplier × ATR%
+        # ATR dynamic take-profit: TP floor = atr_tp_multiplier Ã— ATR%
         self.enable_atr_dynamic_tp = bool(self.config.get('risk_management', {}).get('enable_atr_dynamic_tp', False))
         self.atr_tp_multiplier = float(self.config.get('risk_management', {}).get('atr_tp_multiplier', 2.0))
         # Signal refresh and regime cache (reduce API calls)
@@ -442,25 +442,25 @@ class TradingBot:
         self._trade_history_cache: dict = {}    # {trade_id: trade_dict}
         self._trade_history_last_fetch: float = 0.0  # unix timestamp of last API fetch
 
-        # ── Multi-timeframe OHLC caches for EMA + MTF MACD ────────────────────
+        # â”€â”€ Multi-timeframe OHLC caches for EMA + MTF MACD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-        # ── EMA crossover filter ──────────────────────────────────────────────
+        # â”€â”€ EMA crossover filter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         tech_cfg = self.config.get('technical', {})
         self.enable_ema_crossover_filter = bool(tech_cfg.get('enable_ema_crossover_filter', True))
         self.ema_fast_period = int(tech_cfg.get('ema_fast_period', 9))
         self.ema_slow_period = int(tech_cfg.get('ema_slow_period', 21))
 
-        # ── Multi-timeframe MACD filter ───────────────────────────────────────
+        # â”€â”€ Multi-timeframe MACD filter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self.enable_mtf_macd_filter = bool(tech_cfg.get('enable_mtf_macd_filter', True))
 
-        # ── Partial take-profit exit ──────────────────────────────────────────
+        # â”€â”€ Partial take-profit exit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self.enable_partial_exit = bool(tech_cfg.get('enable_partial_exit', True))
         self.partial_exit_trigger_pct = float(tech_cfg.get('partial_exit_trigger_pct', 4.0))
         self.partial_exit_fraction = float(tech_cfg.get('partial_exit_fraction', 0.5))
         self.partial_exit_min_remaining_eur = float(tech_cfg.get('partial_exit_min_remaining_eur', 5.0))
         # _partial_exit_done dict already created before _init_pair_state; no re-init here
 
-        # ── WebSocket price feed (zero-cost live prices, falls back to REST) ──
+        # â”€â”€ WebSocket price feed (zero-cost live prices, falls back to REST) â”€â”€
         self.ws_feed = None
         ws_cfg = self.config.get('websocket', {})
         if bool(ws_cfg.get('enable_ws_feed', True)) and _WS_FEED_AVAILABLE:
@@ -468,7 +468,7 @@ class TradingBot:
                 self.ws_feed = _KrakenWSFeed(self.trade_pairs)
                 self.ws_feed.start()
             except Exception as _e:
-                self.logger.warning(f"WebSocket feed could not start: {_e} — falling back to REST polling")
+                self.logger.warning(f"WebSocket feed could not start: {_e} â€” falling back to REST polling")
 
     def _notify_pause(self, reason):
         """Log and attempt to notify an external channel when a trading pause activates."""
@@ -494,7 +494,7 @@ class TradingBot:
         except Exception as e:
             self.logger.warning(f"notify_pause: failed to write pause log: {e}")
 
-    # ── Bear Shield ───────────────────────────────────────────────────────────
+    # â”€â”€ Bear Shield â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _calc_ema(self, prices, period):
         """Simple EMA calculation (no external dependencies)."""
@@ -510,8 +510,8 @@ class TradingBot:
         """Return True when the 4h trend has confirmed a downtrend for bear_confirm_candles.
 
         Logic: fetch 4h OHLC for bear_benchmark_pair, compute EMA(bear_ema_period).
-               If the last bear_confirm_candles closes are ALL below EMA → bear mode.
-               If price crosses back above EMA → bull mode restored.
+               If the last bear_confirm_candles closes are ALL below EMA â†’ bear mode.
+               If price crosses back above EMA â†’ bull mode restored.
         Fails safe: returns False (allow trading) if API call fails.
         """
         if not self.enable_bear_shield:
@@ -569,10 +569,10 @@ class TradingBot:
         self.price_history_airbag[pair] = [h for h in history if h[0] >= cutoff]
         
     def _check_airbag_trigger(self, pair):
-        """Return True if price has dropped ≥ airbag_drop_threshold% within the airbag window.
+        """Return True if price has dropped â‰¥ airbag_drop_threshold% within the airbag window.
 
         When triggered, the caller (``analyze_all_pairs``) immediately issues a
-        market sell to exit the position — this is the "flash-crash airbag".
+        market sell to exit the position â€” this is the "flash-crash airbag".
         Requires at least 2 data points; returns False if insufficient history.
         """
         history = self.price_history_airbag.get(pair, [])
@@ -614,7 +614,7 @@ class TradingBot:
 
         Called once at startup for all configured pairs and again whenever
         ``reload_config`` detects that new pairs have been added to the config.
-        Safe to call multiple times — ``setdefault`` prevents overwriting
+        Safe to call multiple times â€” ``setdefault`` prevents overwriting
         existing state for pairs that are already active.
         """
         for pair in pairs:
@@ -670,10 +670,10 @@ class TradingBot:
     def _monthly_size_multiplier(self, current_balance: float) -> float:
         """
         Adjust position sizing based on monthly return progress:
-          >= 8%  → 0.3× (protect gains — lock in the month)
-          >= 3%  → 0.7× (on track — slightly conservative)
-          >= 0%  → 1.0× (normal)
-          <  0%  → 1.2× (behind — slight aggression, within risk limits)
+          >= 8%  â†’ 0.3Ã— (protect gains â€” lock in the month)
+          >= 3%  â†’ 0.7Ã— (on track â€” slightly conservative)
+          >= 0%  â†’ 1.0Ã— (normal)
+          <  0%  â†’ 1.2Ã— (behind â€” slight aggression, within risk limits)
         """
         pct = self._monthly_return_pct(current_balance)
         if pct >= 8.0:
@@ -685,7 +685,7 @@ class TradingBot:
         return 1.2
 
     def _is_btc_downtrend(self) -> bool:
-        """Return True when BTC close is below its 20-period SMA — BEAR regime.
+        """Return True when BTC close is below its 20-period SMA â€” BEAR regime.
         Mirrors the TR-GC-Crypto-LS-2 BTC regime flag from step 3."""
         btc_pair = next((p for p in self.trade_pairs if 'XBT' in p or 'BTC' in p), None)
         if not btc_pair:
@@ -701,16 +701,16 @@ class TradingBot:
 
     def _breakout_size_multiplier(self, pair) -> float:
         """Size multiplier based on breakout recency (TR-GC inspired).
-        Recent BB breakout (< 25 days) → 2× allocation.
-        No recent breakout → 0.5× allocation.
+        Recent BB breakout (< 25 days) â†’ 2Ã— allocation.
+        No recent breakout â†’ 0.5Ã— allocation.
         This encourages entering bigger on fresh signals."""
         last_ts = self._breakout_timestamps.get(pair, 0)
         if last_ts <= 0:
-            return 0.5   # no recorded breakout → conservative
+            return 0.5   # no recorded breakout â†’ conservative
         days_ago = (time.time() - last_ts) / 86400
         if days_ago <= 25:
-            return 2.0   # fresh breakout → double allocation
-        return 0.5       # stale breakout → halve allocation
+            return 2.0   # fresh breakout â†’ double allocation
+        return 0.5       # stale breakout â†’ halve allocation
 
     def _get_dynamic_trade_amount_eur(self, pair, available_eur):
         """Dynamic sizing: adjusted by ATR volatility and available EUR."""
@@ -746,7 +746,7 @@ class TradingBot:
         # 4. Breakout recency multiplier (TR-GC inspired)
         amount *= self._breakout_size_multiplier(pair)
 
-        # 5. Monthly return multiplier — protect gains, slight aggression when behind
+        # 5. Monthly return multiplier â€” protect gains, slight aggression when behind
         amount *= self._monthly_size_multiplier(available_eur)
 
         # Cap at configured max base amount and available funds
@@ -776,7 +776,7 @@ class TradingBot:
             ohlc = self.api_client.get_ohlc_data(pair, interval=60) # 1h
             data_key = next((k for k in ohlc if k != 'last'), None) if ohlc else None
             if not ohlc or not data_key:
-                # API returned no data — fallback to local buffer if available,
+                # API returned no data â€” fallback to local buffer if available,
                 # otherwise fail-open (allow trading) to avoid permanent blocks
                 self.logger.warning(f"MTF check: no OHLC from API for {pair}; falling back to local history if available")
                 local = self.analysis_tool.pair_price_history.get(pair)
@@ -789,7 +789,7 @@ class TradingBot:
             return self.analysis_tool.check_mtf_trend(closes)
         except Exception as e:
             self.logger.error(f"MTF check failed for {pair}: {e}")
-            # Exception occurred — attempt to use local cached history before failing open
+            # Exception occurred â€” attempt to use local cached history before failing open
             local = self.analysis_tool.pair_price_history.get(pair)
             if local:
                 try:
@@ -817,7 +817,7 @@ class TradingBot:
             ohlc = self.api_client.get_ohlc_data(pair, interval=30) # 30m
             data_key = next((k for k in ohlc if k != 'last'), None) if ohlc else None
             if not ohlc or not data_key:
-                # API returned no data — fallback to local buffer if available,
+                # API returned no data â€” fallback to local buffer if available,
                 # otherwise fail-open (allow trading) to avoid permanent blocks
                 self.logger.warning(f"MTF30 check: no OHLC from API for {pair}; falling back to local history if available")
                 local = self.analysis_tool.pair_price_history.get(pair)
@@ -830,7 +830,7 @@ class TradingBot:
             return self.analysis_tool.check_mtf_trend(closes)
         except Exception as e:
             self.logger.error(f"MTF30 check failed for {pair}: {e}")
-            # Exception occurred — attempt to use local cached history before failing open
+            # Exception occurred â€” attempt to use local cached history before failing open
             local = self.analysis_tool.pair_price_history.get(pair)
             if local:
                 try:
@@ -1323,7 +1323,7 @@ class TradingBot:
                 json.dump(trades, f, separators=(',', ':'))
             self.logger.debug(f"Saved {len(trades)} trades to NAS cache ({path.name})")
         except Exception as e:
-            self.logger.warning(f"Could not save trade history to NAS ({e}) — NAS mounted?")
+            self.logger.warning(f"Could not save trade history to NAS ({e}) â€” NAS mounted?")
 
     def _refresh_trade_history_cache(self, force: bool = False) -> None:
         """Fetch trade history from Kraken API and merge into in-memory + NAS cache.
@@ -1594,7 +1594,7 @@ class TradingBot:
 
         Combines two scaling factors:
         - Regime factor: 1.0 in RISK_ON, ``risk_off_allocation_multiplier``
-          (default 0.5) in RISK_OFF — cuts size in half during bear markets.
+          (default 0.5) in RISK_OFF â€” cuts size in half during bear markets.
         - Volatility factor: ``target_volatility_pct / current_vol``; reduces
           size when BTC volatility is elevated above the target (default 1.6%).
 
@@ -1620,11 +1620,11 @@ class TradingBot:
         end = self.trading_hours_end_utc
         if start < end:
             return start <= hour < end
-        # Overnight window support (e.g. 22:00–06:00)
+        # Overnight window support (e.g. 22:00â€“06:00)
         return hour >= start or hour < end
 
     def _has_sufficient_volume(self, pair):
-        """Returns True if the latest 15m candle volume is >= min_ratio × 20-candle average.
+        """Returns True if the latest 15m candle volume is >= min_ratio Ã— 20-candle average.
         Uses a 5-minute cache to avoid redundant API calls.
         """
         if not self.enable_volume_filter:
@@ -1773,7 +1773,7 @@ class TradingBot:
         return current_balance - self._adjusted_reference_balance()
 
     # ------------------------------------------------------------------
-    # Persistent cumulative P&L — survives restarts
+    # Persistent cumulative P&L â€” survives restarts
     # ------------------------------------------------------------------
 
     def _pnl_state_path(self) -> Path:
@@ -1850,7 +1850,7 @@ class TradingBot:
 
     def _count_open_positions(self) -> int:
         """Return the number of pairs where holdings exceed the minimum tradeable volume.
-        Uses position_qty as primary source — holdings is zeroed by _sync_account_state
+        Uses position_qty as primary source â€” holdings is zeroed by _sync_account_state
         in paper mode and cannot be trusted for counting active positions."""
         return sum(
             1 for pair in self.trade_pairs
@@ -1936,12 +1936,12 @@ class TradingBot:
 
     def _required_take_profit_percent(self, pair):
         """Adaptive TP: in stronger momentum, demand a bit more profit before selling.
-        When enable_atr_dynamic_tp is on, the TP floor is raised to atr_tp_multiplier × ATR%
+        When enable_atr_dynamic_tp is on, the TP floor is raised to atr_tp_multiplier Ã— ATR%
         so the bot doesn't exit on small wiggles in volatile markets.
         """
         base_tp = self.take_profit_percent
 
-        # ATR-based dynamic floor: require at least atr_tp_multiplier × ATR% profit
+        # ATR-based dynamic floor: require at least atr_tp_multiplier Ã— ATR% profit
         if self.enable_atr_dynamic_tp:
             atr = self._compute_atr(pair)
             current_price = self.pair_prices.get(pair, 0)
@@ -1998,7 +1998,7 @@ class TradingBot:
         when price FALLS below entry. We apply a conservative slippage buffer
         (buying back slightly higher than mid), require the configured short
         take-profit, and enforce a minimum NET profit after roundtrip fees.
-        Felix's rule: never close a short at a loss — only on real net gain.
+        Felix's rule: never close a short at a loss â€” only on real net gain.
         """
         entry = self.short_entry_prices.get(pair, 0.0)
         if entry <= 0 or current_price <= 0:
@@ -2021,7 +2021,7 @@ class TradingBot:
     def _update_trade_metrics(self, pair, pnl_eur):
         """Update per-pair win/loss counters and trigger loss-streak pause if needed.
 
-        A winning trade (pnl_eur ≥ 0) resets the consecutive-loss counter and
+        A winning trade (pnl_eur â‰¥ 0) resets the consecutive-loss counter and
         lifts any active loss-streak pause immediately.  After
         ``max_consecutive_losses`` losses the bot pauses new buys for
         ``pause_after_loss_streak_minutes`` minutes and recalculates the Kelly
@@ -2081,7 +2081,7 @@ class TradingBot:
             if current_price <= 0:
                 continue
 
-            # Long position exits — use position_qty (holdings zeroed in paper mode)
+            # Long position exits â€” use position_qty (holdings zeroed in paper mode)
             holding = self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)
             min_vol = self._get_min_volume(pair)
             if holding >= min_vol:
@@ -2153,7 +2153,7 @@ class TradingBot:
                         if drop_from_peak >= self.trailing_stop_percent:
                             return pair, "TRAILING_STOP", change_percent
 
-            # Short position exits — use dedicated short TP/SL (lower than long TP)
+            # Short position exits â€” use dedicated short TP/SL (lower than long TP)
             short_qty = self.short_qty.get(pair, 0.0)
             short_entry = self.short_entry_prices.get(pair, 0.0)
             if self.enable_live_shorts and short_qty > 0 and short_entry > 0:
@@ -2167,7 +2167,7 @@ class TradingBot:
         return None, None, None
 
     def _warmup_pair_history(self, pair):
-        """Seed price history — first tries NAS 5m OHLC, then falls back to Kraken API 60m."""
+        """Seed price history â€” first tries NAS 5m OHLC, then falls back to Kraken API 60m."""
         # Prefer NAS 5m (more granular, no API call)
         if self.nas_root:
             try:
@@ -2194,14 +2194,14 @@ class TradingBot:
         """Refresh signals and all MTF indicators for every configured pair.
 
         Per pair (every ``signal_refresh_interval`` seconds, default 5 min):
-        - Fetches 1h OHLC  → signal/score, EMA crossover, 1h MACD histogram
-        - Fetches 15m OHLC → 15m MACD histogram (for MTF MACD filter)
+        - Fetches 1h OHLC  â†’ signal/score, EMA crossover, 1h MACD histogram
+        - Fetches 15m OHLC â†’ 15m MACD histogram (for MTF MACD filter)
 
         All results are cached in instance dicts and read by the buy guards.
         """
         for pair in self.trade_pairs:
             try:
-                # ── 1h OHLC: signal + EMA crossover + 1h MACD ──────────────────
+                # â”€â”€ 1h OHLC: signal + EMA crossover + 1h MACD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 ohlc = self.api_client.get_ohlc_data(pair, interval=60)
                 if not ohlc:
                     continue
@@ -2256,7 +2256,7 @@ class TradingBot:
 
                 time.sleep(0.2)
 
-                # ── 15m OHLC: 15m MACD histogram ────────────────────────────
+                # â”€â”€ 15m OHLC: 15m MACD histogram â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 try:
                     ohlc_15 = self.api_client.get_ohlc_data(pair, interval=15)
                     if ohlc_15:
@@ -2277,7 +2277,7 @@ class TradingBot:
             except Exception as e:
                 self.logger.debug(f"Hourly signal refresh error for {pair}: {e}")
 
-    # ── New technical filters ─────────────────────────────────────────────────
+    # â”€â”€ New technical filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _is_ema_trend_bullish(self, pair):
         """Return True when the 1h EMA crossover is bullish (EMA-fast > EMA-slow).
@@ -2290,11 +2290,11 @@ class TradingBot:
             return True
         val = self._ema_bullish.get(pair)
         if val is None:
-            return True  # no data yet — don't block
+            return True  # no data yet â€” don't block
         if not val:
             self.logger.info(
                 f"EMA crossover filter: BUY blocked for {pair} "
-                f"(EMA{self.ema_fast_period} < EMA{self.ema_slow_period} on 1h — bearish trend)"
+                f"(EMA{self.ema_fast_period} < EMA{self.ema_slow_period} on 1h â€” bearish trend)"
             )
         return val
 
@@ -2319,7 +2319,7 @@ class TradingBot:
         if h1h_pct < -0.05 and h15m < 0:
             self.logger.info(
                 f"MTF MACD filter: BUY blocked for {pair} "
-                f"(1h hist {h1h_pct:.3f}%, 15m hist {h15m:.5f} — both bearish)"
+                f"(1h hist {h1h_pct:.3f}%, 15m hist {h15m:.5f} â€” both bearish)"
             )
             return False
         return True
@@ -2368,7 +2368,7 @@ class TradingBot:
     def _execute_partial_exit(self, pair, price):
         """Sell ``partial_exit_fraction`` of the open position to lock in profits.
 
-        Called automatically when unrealised profit ≥ ``partial_exit_trigger_pct``.
+        Called automatically when unrealised profit â‰¥ ``partial_exit_trigger_pct``.
         Only fires once per entry (tracked via ``_partial_exit_done``).
         The remaining position continues running under ATR trailing stop.
 
@@ -2445,10 +2445,10 @@ class TradingBot:
                 )
                 print(
                     f"\n[PARTIAL SELL] {sell_volume:.6f} {pair} (~{sell_volume * price:.2f} EUR) "
-                    f"kept {remaining_volume:.6f} — Trade #{self.trade_count}"
+                    f"kept {remaining_volume:.6f} â€” Trade #{self.trade_count}"
                 )
                 _notifier.send(
-                    f"📊 <b>PARTIAL SELL</b> #{self.trade_count}\n"
+                    f"ðŸ“Š <b>PARTIAL SELL</b> #{self.trade_count}\n"
                     f"Pair: {pair}\n"
                     f"Sold: {sell_volume:.6f}  (~{sell_volume * price:.2f} EUR)\n"
                     f"Kept: {remaining_volume:.6f}\n"
@@ -2496,10 +2496,10 @@ class TradingBot:
         except Exception:
             pass
 
-    # ── Three-phase pair analysis ─────────────────────────────────────────────
+    # â”€â”€ Three-phase pair analysis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _fetch_market_data(self) -> None:
-        """Phase 1 — Fetch live prices and run safety checks for every pair.
+        """Phase 1 â€” Fetch live prices and run safety checks for every pair.
 
         For each pair:
         - Prefer WebSocket price; fall back to REST ticker.
@@ -2544,7 +2544,7 @@ class TradingBot:
                 self.logger.error("_fetch_market_data error for %s: %s", pair, exc)
 
     def _generate_signals(self) -> None:
-        """Phase 2 — Refresh pair signals and scores if the interval has elapsed.
+        """Phase 2 â€” Refresh pair signals and scores if the interval has elapsed.
 
         Calls ``_refresh_hourly_signals()`` which runs the full technical-analysis
         engine (RSI, Bollinger Bands, ATR, etc.) for each pair and stores results
@@ -2561,7 +2561,7 @@ class TradingBot:
             self.logger.error("_generate_signals error: %s", exc)
 
     def _select_best_pair(self) -> tuple:
-        """Phase 3 — Read cached signals and select the best actionable pair.
+        """Phase 3 â€” Read cached signals and select the best actionable pair.
 
         Iterates ``self.pair_signals`` / ``self.pair_scores`` (written by
         ``_generate_signals``) and returns the pair with the highest absolute
@@ -2589,45 +2589,11 @@ class TradingBot:
 
         return best_pair, best_signal, best_score
 
-    def analyze_all_pairs(self) -> tuple:
-        """Orchestrate the three-phase pair analysis pipeline.
+    # â”€â”€ Extracted main-loop phases â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-        Calls:
-          1. ``_fetch_market_data()``  — prices + airbag
-          2. ``_generate_signals()``   — RSI / BB / ATR signal engine
-          3. ``_select_best_pair()``   — pick highest-score actionable pair
-
-        Returns (best_pair, best_signal, best_score).
-        """
-        self._fetch_market_data()
-        self._generate_signals()
-        return self._select_best_pair()
-
-    def start_trading(self, max_runtime_seconds=None):
-        """Run the main trading loop until the target balance is reached,
-        max_runtime_seconds elapses (if given), or Ctrl-C.
-
-        Startup sequence:
-        1. Fetch initial EUR balance and fix it as the performance baseline.
-        2. Sync account state (holdings + entry prices from Kraken history).
-        3. Reconcile any open orders left from a previous crash.
-        4. Refresh deposit/withdrawal cashflows from the Kraken ledger.
-
-        Each ~60-second cycle:
-        - Resets daily PnL baseline at midnight.
-        - Calls ``analyze_all_pairs()`` to find the best signal.
-        - Evaluates take-profit / stop-loss exits (hard, ATR, trailing,
-          break-even, time-stop) via ``check_take_profit_or_stop_loss()``.
-        - Checks the bear shield (BTC 4h trend) and parks in FIAT if triggered.
-        - Runs all BUY entry guards before calling ``execute_buy_order()``.
-        - Checks for SELL signals and short opportunities.
-        - Hot-reloads config every ``config_reload_interval`` seconds.
-
-        Stops automatically when ``current_balance >= target_balance_eur``,
-        or once ``max_runtime_seconds`` have elapsed since this call started
-        (if provided) -- useful for fixed-duration paper-mode test sessions
-        without relying on an external process to kill/Ctrl+C the bot.
-        """
+    def _run_initialization(self, max_runtime_seconds=None) -> float:
+        """Phase: startup logging, balance fetch, account sync.
+        Returns the initial EUR balance."""
         self.logger.info("=" * 60)
         self.logger.info("TRADING BOT STARTED - MULTI-PAIR MODE")
         self.logger.info(f"Watching: {', '.join(self.trade_pairs)}")
@@ -2635,7 +2601,6 @@ class TradingBot:
         if max_runtime_seconds:
             self.logger.info(f"Max runtime: {max_runtime_seconds} seconds (self-terminating)")
         self.logger.info("=" * 60)
-
         print("=" * 60)
         print("KRAKEN TRADING BOT - MULTI-PAIR MODE")
         print(f"Watching {len(self.trade_pairs)} pairs: {', '.join(self.trade_pairs)}")
@@ -2646,285 +2611,440 @@ class TradingBot:
         print("Press Ctrl+C to stop")
         print("=" * 60)
 
-        _start_ts = time.time()
-
         initial_balance = self.get_eur_balance()
         self.initial_balance_eur = initial_balance
         self.peak_balance = initial_balance
         self.daily_start_balance = initial_balance
         self._load_cumulative_pnl_state(initial_balance)
         self._sync_account_state(force_history=True)
-        self._reconcile_open_orders()  # Detect orphaned orders from any previous crash
+        self._reconcile_open_orders()
         self._refresh_cashflows_from_ledger(force=True)
 
         self.logger.info(f"Initial EUR Balance: {initial_balance:.2f} EUR")
-        self.logger.debug("Performance baseline is fixed at startup; deposits/withdrawals are tracked separately")
         self.logger.info(f"Take-Profit: {self.take_profit_percent}% | Stop-Loss: {self.stop_loss_percent}%")
 
-        # Log holdings and purchase prices for each pair so restarts are transparent
         for pair in self.trade_pairs:
             qty = self.holdings.get(pair, 0.0)
             avg = self.purchase_prices.get(pair, 0.0)
-            min_v = self._get_min_volume(pair)
-            if qty >= min_v:
-                self.logger.info(
-                    f"Startup position: {pair} qty={qty:.8f} avg_entry={avg:.4f} EUR"
-                )
+            if qty >= self._get_min_volume(pair):
+                self.logger.info(f"Startup position: {pair} qty={qty:.8f} avg_entry={avg:.4f} EUR")
             else:
-                self.logger.info(f"Startup position: {pair} — no holdings (qty={qty:.8f})")
+                self.logger.info(f"Startup position: {pair} â€” no holdings (qty={qty:.8f})")
+
+        return initial_balance
+
+    def _check_market_intelligence(self) -> None:
+        """Phase: spawn the AI intelligence refresh thread if the interval has elapsed.
+        Non-blocking â€” the thread writes under _intel_lock when complete."""
+        if not _INTELLIGENCE_AVAILABLE:
+            return
+        if time.time() - self._intelligence_last_ts < self._intelligence_refresh_secs:
+            return
+        try:
+            import threading as _threading
+            _bot_ctx = {
+                "sharpe":          self._sharpe_result.get("sharpe"),
+                "sharpe_verdict":  self._sharpe_result.get("verdict", "insufficient_data"),
+                "sharpe_trending": self._sharpe_result.get("trending", "stable"),
+                "trade_count":     getattr(self, "trade_count", 0),
+                "balance_eur":     getattr(self, "_last_balance_eur", None),
+                "pair_signals":    dict(getattr(self, "pair_signals", {})),
+                "pair_scores":     dict(getattr(self, "pair_scores", {})),
+                "open_positions": {
+                    p: {"qty": float(self.position_qty.get(p, 0) or self.holdings.get(p, 0)),
+                        "entry": float(self.purchase_prices.get(p, 0))}
+                    for p in self.trade_pairs
+                    if float(self.position_qty.get(p, 0) or self.holdings.get(p, 0)) > 0
+                },
+                "open_shorts": {
+                    p: {"qty": float(self.short_qty.get(p, 0)),
+                        "entry": float(self.short_entry_prices.get(p, 0))}
+                    for p in self.trade_pairs
+                    if float(self.short_qty.get(p, 0)) > 0
+                },
+            }
+            try:
+                _jpath = getattr(self, "json_journal_path", "")
+                if _jpath and os.path.exists(_jpath):
+                    with open(_jpath, "r") as _jf:
+                        _lines = [l.strip() for l in _jf if l.strip()][-10:]
+                    _bot_ctx["recent_trades"] = [json.loads(l) for l in _lines if l]
+            except Exception:
+                pass
+
+            self._intelligence_last_ts = time.time()
+
+            def _refresh_intel(_ctx=_bot_ctx):
+                try:
+                    result = _get_market_intelligence(self.trade_pairs, _ctx)
+                    with self._intel_lock:
+                        self._intelligence_score         = result.get("score", 0.0)
+                        self._intelligence_model_scores  = result.get("model_scores", {})
+                        self._intelligence_model_outputs = result.get("model_outputs", {})
+                        self._sharpe_funding_scores      = result.get("sharpe_funding", {})
+                        self._sharpe_insider_scores      = result.get("sharpe_insider", {})
+                    self.logger.info(
+                        "Intelligence refresh complete: score=%.2f sources=%d/5",
+                        self._intelligence_score,
+                        len([v for v in self._intelligence_model_scores.values() if v is not None])
+                    )
+                except Exception as exc:
+                    self.logger.warning("Intelligence refresh error: %s", exc)
+
+            _threading.Thread(target=_refresh_intel, daemon=True, name='intel-refresh').start()
+        except Exception:
+            pass
+
+    def _manage_portfolio_risk(self, current_balance: float) -> tuple:
+        """Phase: daily/monthly resets, drawdown circuit-breaker, regime evaluation.
+
+        Returns:
+            (regime_state, pause_state, adjusted_pnl) â€” strings + float needed
+            by the status log and dashboard writer.
+        """
+        # Daily + monthly balance resets
+        now = datetime.now()
+        last_reset = datetime.fromtimestamp(self.last_daily_reset_ts)
+        if now.day != last_reset.day or now.month != last_reset.month or now.year != last_reset.year:
+            self.daily_start_balance = current_balance
+            self.last_daily_reset_ts = int(time.time())
+            self.logger.info(f"Daily start balance reset to {self.daily_start_balance:.2f} EUR")
+
+        if now.month != self._monthly_start_month or self._monthly_start_balance <= 0:
+            self._monthly_start_balance = current_balance
+            self._monthly_start_month = now.month
+            self._monthly_target_hit_notified = False
+            self.logger.info(
+                f"Monthly tracker reset: start={current_balance:.2f} EUR (target +3-8%)"
+            )
+
+        _monthly_pct = self._monthly_return_pct(current_balance)
+        if _monthly_pct >= 3.0 and not self._monthly_target_hit_notified:
+            self._monthly_target_hit_notified = True
+            self.logger.info(f"MONTHLY TARGET HIT: +{_monthly_pct:.2f}% this month")
+            try:
+                _notifier.send(
+                    f"ðŸŽ¯ <b>Monthly target reached!</b>\n"
+                    f"Return this month: <b>+{_monthly_pct:.2f}%</b>\n"
+                    f"Start: â‚¬{self._monthly_start_balance:.2f} â†’ Now: â‚¬{current_balance:.2f}\n"
+                    f"Position sizing reduced to protect gains."
+                )
+            except Exception:
+                pass
+
+        # Portfolio valuation and drawdown circuit-breaker
+        self._refresh_cashflows_from_ledger()
+        adjusted_pnl = self._adjusted_pnl_eur(current_balance)
+        try:
+            holdings_value  = sum(self.holdings.get(p, 0.0) * self.pair_prices.get(p, 0.0)
+                                  for p in self.trade_pairs)
+            reserve         = self._estimate_open_buy_reserve_eur()
+            portfolio_value = current_balance + holdings_value + reserve
+        except Exception:
+            portfolio_value = current_balance
+
+        try:
+            self.peak_balance = max(getattr(self, 'peak_balance', portfolio_value), portfolio_value)
+            if self.peak_balance > 0:
+                current_dd_pct = ((self.peak_balance - portfolio_value) / self.peak_balance) * 100.0
+                max_dd_cfg = float(self.config.get('risk_management', {}).get('max_drawdown_percent', 10.0))
+                if current_dd_pct >= max_dd_cfg:
+                    pause_sec = int(self.pause_after_loss_streak_minutes * 60)
+                    self.trading_paused_until_ts = max(
+                        self.trading_paused_until_ts, int(time.time()) + pause_sec
+                    )
+                    self.logger.warning(
+                        "Portfolio max-drawdown hit: %.2f%% >= %.2f%%. Pausing buys for %d minutes.",
+                        current_dd_pct, max_dd_cfg, self.pause_after_loss_streak_minutes
+                    )
+        except Exception as exc:
+            self.logger.debug("Drawdown calculation failed: %s", exc)
+
+        # Bear shield
+        if self.enable_bear_shield:
+            bear_now = self._is_bear_market()
+            if bear_now and not self._bear_mode_active:
+                self.logger.warning("BEAR SHIELD ACTIVATED â€” selling all positions, parking in EUR")
+                self._bear_mode_active = True
+                self._bear_shield_exit_all()
+            elif not bear_now and self._bear_mode_active:
+                self.logger.info("BEAR SHIELD DEACTIVATED â€” trend turned bullish")
+                self._bear_mode_active = False
+            elif bear_now:
+                _now_ts = time.time()
+                if (_now_ts - self._bear_last_log_ts) >= self.bear_log_interval_minutes * 60:
+                    self.logger.info("BEAR SHIELD: still in bear mode")
+                    self._bear_last_log_ts = _now_ts
+
+        regime_state = "RISK_ON" if self._is_risk_on_regime() else "RISK_OFF"
+        pause_state  = "PAUSED"  if self._is_temporarily_paused() else "ACTIVE"
+        return regime_state, pause_state, adjusted_pnl
+
+    def _handle_trade_execution(self, best_pair, best_signal, best_score) -> None:
+        """Phase: apply BUY and SELL gates, then execute the winning trade.
+
+        Uses if/elif instead of continue-chains for readability. Each branch
+        returns early (instead of continue) when a gate blocks execution.
+        """
+        if not best_pair or best_signal == "HOLD":
+            return
+        if self._is_on_cooldown(best_pair) or self._is_global_cooldown():
+            return
+
+        price = self.pair_prices.get(best_pair, 0)
+
+        if best_signal == "BUY":
+            self._execute_buy_gate(best_pair, price, float(self.pair_scores.get(best_pair, 0.0)))
+
+        elif best_signal == "SELL":
+            self._execute_sell_gate(best_pair, price)
+
+    def _execute_buy_gate(self, pair: str, price: float, score: float) -> None:
+        """All guards for a long entry, expressed as early returns (not continue).
+        Executes the buy if every gate passes."""
+        if self._is_temporarily_paused():
+            self.logger.warning("BUY paused: loss-streak cooling period active")
+            self.kelly_fraction = self._calculate_kelly_fraction()
+            return
+        if self._daily_drawdown_hit():
+            self.logger.warning("BUY paused: daily loss limit reached")
+            self.kelly_fraction = self._calculate_kelly_fraction()
+            return
+
+        with self._intel_lock:
+            _iscore  = self._intelligence_score
+            _iweight = self._intelligence_score_weight
+        _intel_adj    = -(_iscore * _iweight)
+        _effective_min = self.min_buy_score + _intel_adj
+        if score < _effective_min:
+            self.logger.info(
+                "BUY skipped for %s: score %.2f < effective_min %.2f "
+                "(base=%.2f intel_adj=%+.2f)",
+                pair, score, _effective_min, self.min_buy_score, _intel_adj
+            )
+            return
+        if self._count_open_positions() >= self.max_open_positions:
+            self.logger.info("BUY skipped: max open positions reached")
+            return
+        if not self._is_trading_hours():
+            self.logger.info("BUY skipped: outside trading hours")
+            return
+        try:
+            now = time.time()
+            if (now - self._regime_cache.get('ts', 0)) > self._regime_cache_ttl:
+                self._update_regime_cache()
+            if self.enable_regime_filter and not bool(self._regime_cache.get('risk_on', True)):
+                self.logger.info("BUY skipped: regime filter is RISK_OFF (cached)")
+                return
+        except Exception:
+            pass
+        if self._bear_mode_active:
+            self.logger.info("BUY skipped: BEAR SHIELD active")
+            return
+        if self.sentiment_active:
+            self.logger.info("BUY skipped for %s: sentiment guard active", pair)
+            return
+        if not self._is_ema_trend_bullish(pair):
+            return
+        if not self._is_mtf_macd_buy_aligned(pair):
+            return
+        if not self._has_sufficient_volume(pair):
+            return
+        if any(g in (pair or '').upper() for g in self.reentry_guard_pairs):
+            try:
+                last_net = self._last_closed_trade_net_profit_pct(pair)
+                if last_net is not None and last_net < self.min_reentry_profit_pct:
+                    self.logger.info(
+                        "BUY skipped for %s: last net profit %.2f%% < min_reentry %.2f%%",
+                        pair, last_net, self.min_reentry_profit_pct
+                    )
+                    return
+            except Exception as exc:
+                self.logger.debug("Re-entry guard error for %s: %s", pair, exc)
+        if float(getattr(self, 'short_qty', {}).get(pair, 0)) > 0:
+            self.logger.info("BUY blocked for %s: open short exists â€” close short first", pair)
+            return
+
+        self._breakout_timestamps[pair] = time.time()
+        self.execute_buy_order(pair, price)
+
+    def _execute_sell_gate(self, pair: str, price: float) -> None:
+        """SELL signal handler: close long if profitable, else open/manage short."""
+        min_vol = self._get_min_volume(pair)
+        has_long = (self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)) >= min_vol
+
+        if has_long:
+            if self._can_sell_profit_target(pair, price):
+                self.execute_sell_order(pair, price)
+            else:
+                pp  = self._profit_percent_from_entry(pair, price)
+                req = self._required_take_profit_percent(pair)
+                self.logger.info(
+                    "SELL skipped for %s: profit target not reached (%s%% < %.2f%%)",
+                    pair, f"{pp:.2f}" if pp is not None else "n/a", req
+                )
+        elif self.enable_live_shorts and self.short_qty.get(pair, 0.0) <= 0:
+            score        = float(self.pair_scores.get(pair, 0.0))
+            trend_bearish = not self._is_ema_trend_bullish(pair)
+            risk_off_ok  = (not self._is_risk_on_regime()
+                            if self.enable_regime_filter else True)
+            if trend_bearish and risk_off_ok and score <= -self.min_buy_score:
+                self.execute_open_short_order(pair, price)
+            else:
+                self.logger.info(
+                    "SHORT skipped for %s: bearish=%s risk_off=%s score=%.2f",
+                    pair, trend_bearish, risk_off_ok, score
+                )
+        elif self.enable_live_shorts and self.short_qty.get(pair, 0.0) > 0:
+            if self._can_close_short_profit_target(pair, price):
+                self.execute_close_short_order(pair, price)
+            else:
+                se  = self.short_entry_prices.get(pair, 0.0)
+                spp = ((se - price) / se * 100.0) if se > 0 else 0.0
+                self.logger.info(
+                    "SHORT CLOSE skipped for %s: net profit target not reached (%.2f%% gross)",
+                    pair, spp
+                )
+        else:
+            self._log_empty_sell_signal_throttled(pair)
+
+    def analyze_all_pairs(self) -> tuple:
+        """Orchestrate the three-phase pair analysis pipeline.
+
+        Calls:
+          1. ``_fetch_market_data()``  â€” prices + airbag
+          2. ``_generate_signals()``   â€” RSI / BB / ATR signal engine
+          3. ``_select_best_pair()``   â€” pick highest-score actionable pair
+
+        Returns (best_pair, best_signal, best_score).
+        """
+        self._fetch_market_data()
+        self._generate_signals()
+        return self._select_best_pair()
+
+    def start_trading(self, max_runtime_seconds=None):
+        """Run the main trading loop.
+
+        Delegates to four extracted phase methods to keep this method readable:
+          _run_initialization()       â€” startup logging, balance fetch, account sync
+          _check_market_intelligence() â€” AI panel refresh (background thread)
+          _manage_portfolio_risk()    â€” drawdown, bear shield, monthly tracker
+          _handle_trade_execution()   â€” BUY/SELL gate and order dispatch
+        """
+        self._run_initialization(max_runtime_seconds)
+
+        _start_ts = time.time()
 
         try:
             iteration = 0
             while True:
                 iteration += 1
                 try:
-                    # ── Market intelligence refresh (non-blocking, cached) ─────
-                    if _INTELLIGENCE_AVAILABLE:
-                        _now = time.time()
-                        if _now - self._intelligence_last_ts >= self._intelligence_refresh_secs:
-                            try:
-                                import threading as _threading
-                                # Snapshot bot context for the AI panel
-                                _bot_ctx = {
-                                    "sharpe":          self._sharpe_result.get("sharpe"),
-                                    "sharpe_verdict":  self._sharpe_result.get("verdict", "insufficient_data"),
-                                    "sharpe_trending": self._sharpe_result.get("trending", "stable"),
-                                    "trade_count":     getattr(self, "trade_count", 0),
-                                    "balance_eur":     getattr(self, "_last_balance_eur", None),
-                                    "pair_signals":    dict(getattr(self, "pair_signals", {})),
-                                    "pair_scores":     dict(getattr(self, "pair_scores", {})),
-                                    "open_positions":  {
-                                        p: {"qty": float(getattr(self, "position_qty", {}).get(p, 0) or getattr(self, "holdings", {}).get(p, 0)),
-                                            "entry": float(getattr(self, "purchase_prices", {}).get(p, 0))}
-                                        for p in getattr(self, "trade_pairs", [])
-                                        if float(getattr(self, "position_qty", {}).get(p, 0) or getattr(self, "holdings", {}).get(p, 0)) > 0
-                                    },
-                                    "open_shorts": {
-                                        p: {"qty": float(getattr(self, "short_qty", {}).get(p, 0)),
-                                            "entry": float(getattr(self, "short_entry_prices", {}).get(p, 0))}
-                                        for p in getattr(self, "trade_pairs", [])
-                                        if float(getattr(self, "short_qty", {}).get(p, 0)) > 0
-                                    },
-                                }
-                                # Read last 5 trades from journal for context
-                                try:
-                                    import json as _json
-                                    _jpath = getattr(self, "json_journal_path", "")
-                                    if _jpath and os.path.exists(_jpath):
-                                        with open(_jpath, "r") as _jf:
-                                            _lines = [l.strip() for l in _jf if l.strip()][-10:]
-                                        _bot_ctx["recent_trades"] = [_json.loads(l) for l in _lines if l]
-                                except Exception:
-                                    pass
+                    # â”€â”€ Phase 1: AI panel refresh (background thread) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    self._check_market_intelligence()
 
-                                # Stamp immediately so only one thread spawns per interval
-                                self._intelligence_last_ts = time.time()
-
-                                def _refresh_intel(_ctx=_bot_ctx):
-                                    try:
-                                        result = _get_market_intelligence(self.trade_pairs, _ctx)
-                                        # Acquire lock before writing — main loop may be
-                                        # reading these values concurrently.
-                                        with self._intel_lock:
-                                            self._intelligence_score        = result.get("score", 0.0)
-                                            self._intelligence_model_scores = result.get("model_scores", {})
-                                            self._intelligence_model_outputs= result.get("model_outputs", {})
-                                            self._sharpe_funding_scores     = result.get("sharpe_funding", {})
-                                            self._sharpe_insider_scores     = result.get("sharpe_insider", {})
-                                        self.logger.info(
-                                            "Intelligence refresh complete: score=%.2f sources=%d/5",
-                                            self._intelligence_score,
-                                            len([v for v in self._intelligence_model_scores.values() if v is not None])
-                                        )
-                                    except Exception as _ie:
-                                        self.logger.warning(f"Intelligence refresh error: {_ie}")
-                                _t = _threading.Thread(target=_refresh_intel, daemon=True, name='intel-refresh')
-                                _t.start()
-                            except Exception:
-                                pass
-
+                    # â”€â”€ Phase 2: Balance + regime flags â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     current_balance = self.get_eur_balance()
                     self._last_balance_eur = current_balance
-
-                    # Update BTC regime flag every loop (cheap — reads local history)
                     self._btc_downtrend = self._is_btc_downtrend()
 
-                    # ── FORCE_BUY / FORCE_SELL triggers (demo mechanism) ─────
+                    # â”€â”€ Force buy/sell demo triggers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     _data_dir = os.path.join(os.path.dirname(__file__), 'data')
-                    _force_buy_path  = os.path.join(_data_dir, 'FORCE_BUY')
-                    _force_sell_path = os.path.join(_data_dir, 'FORCE_SELL')
-
-                    if os.path.exists(_force_buy_path):
+                    if os.path.exists(os.path.join(_data_dir, 'FORCE_BUY')):
                         try:
-                            os.remove(_force_buy_path)
-                            _force_pair = next(
+                            os.remove(os.path.join(_data_dir, 'FORCE_BUY'))
+                            _fp = next(
                                 (p for p in self.trade_pairs
-                                 if self.holdings.get(p, 0) == 0
-                                 and self.short_qty.get(p, 0) == 0),
+                                 if not self.holdings.get(p, 0) and not self.short_qty.get(p, 0)),
                                 self.trade_pairs[0] if self.trade_pairs else None
                             )
-                            if _force_pair:
-                                _force_price = self.pair_prices.get(_force_pair, 0)
-                                if _force_price > 0:
-                                    self.logger.info(f"FORCE_BUY triggered for {_force_pair} @ {_force_price:.4f}")
-                                    self._breakout_timestamps[_force_pair] = time.time()
-                                    self.execute_buy_order(_force_pair, _force_price)
-                        except Exception as _fe:
-                            self.logger.warning(f"FORCE_BUY error: {_fe}")
+                            if _fp and self.pair_prices.get(_fp, 0) > 0:
+                                self.logger.info("FORCE_BUY: %s @ %.4f", _fp, self.pair_prices[_fp])
+                                self._breakout_timestamps[_fp] = time.time()
+                                self.execute_buy_order(_fp, self.pair_prices[_fp])
+                        except Exception as exc:
+                            self.logger.warning("FORCE_BUY error: %s", exc)
 
-                    if os.path.exists(_force_sell_path):
+                    if os.path.exists(os.path.join(_data_dir, 'FORCE_SELL')):
                         try:
-                            os.remove(_force_sell_path)
+                            os.remove(os.path.join(_data_dir, 'FORCE_SELL'))
                             for _fp in list(self.trade_pairs):
-                                # Use position_qty as the authoritative source (holdings
-                                # can be zeroed by _sync_account_state in paper mode)
                                 _fqty = self.position_qty.get(_fp, self.holdings.get(_fp, 0))
                                 _fprice = self.pair_prices.get(_fp, 0)
                                 if _fqty > 0 and _fprice > 0:
-                                    self.logger.info(f"FORCE_SELL triggered for {_fp} @ {_fprice:.4f}")
+                                    self.logger.info("FORCE_SELL: %s @ %.4f", _fp, _fprice)
                                     self.execute_sell_order(_fp, _fprice, require_profit_target=False)
-                        except Exception as _fe:
-                            self.logger.warning(f"FORCE_SELL error: {_fe}")
+                        except Exception as exc:
+                            self.logger.warning("FORCE_SELL error: %s", exc)
 
-                    # Daily + monthly balance resets
-                    now = datetime.now()
-                    last_reset = datetime.fromtimestamp(self.last_daily_reset_ts)
-                    if now.day != last_reset.day or now.month != last_reset.month or now.year != last_reset.year:
-                        self.daily_start_balance = current_balance
-                        self.last_daily_reset_ts = int(time.time())
-                        self.logger.info(f"Daily start balance reset to {self.daily_start_balance:.2f} EUR")
+                    # â”€â”€ Phase 3: Portfolio risk management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    regime_state, pause_state, adjusted_pnl = self._manage_portfolio_risk(current_balance)
 
-                    # Monthly reset — fires on the 1st of each new month
-                    if now.month != self._monthly_start_month or self._monthly_start_balance <= 0:
-                        self._monthly_start_balance = current_balance
-                        self._monthly_start_month = now.month
-                        self._monthly_target_hit_notified = False
-                        self.logger.info(
-                            f"Monthly tracker reset: start={current_balance:.2f} EUR "
-                            f"(target +3-8% by end of month)"
-                        )
-
-                    # Monthly target alert
-                    _monthly_pct = self._monthly_return_pct(current_balance)
-                    if _monthly_pct >= 3.0 and not self._monthly_target_hit_notified:
-                        self._monthly_target_hit_notified = True
-                        self.logger.info(f"MONTHLY TARGET HIT: +{_monthly_pct:.2f}% this month")
-                        try:
-                            _notifier.send(
-                                f"🎯 <b>Monthly target reached!</b>\n"
-                                f"Return this month: <b>+{_monthly_pct:.2f}%</b>\n"
-                                f"Start: €{self._monthly_start_balance:.2f} → Now: €{current_balance:.2f}\n"
-                                f"Target range: +3% to +8% — position sizing reduced to protect gains."
-                            )
-                        except Exception:
-                            pass
+                    # â”€â”€ Stop conditions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     if current_balance >= self.target_balance_eur:
-                        self.logger.info(f"TARGET REACHED! Balance: {current_balance:.2f} EUR")
+                        self.logger.info("TARGET REACHED! Balance: %.2f EUR", current_balance)
                         print(f"\nTARGET REACHED! Balance: {current_balance:.2f} EUR")
                         break
                     if max_runtime_seconds and (time.time() - _start_ts) >= max_runtime_seconds:
-                        self.logger.info(
-                            f"MAX RUNTIME REACHED ({max_runtime_seconds}s). Balance: {current_balance:.2f} EUR"
-                        )
+                        self.logger.info("MAX RUNTIME REACHED (%ds). Balance: %.2f EUR",
+                                         max_runtime_seconds, current_balance)
                         print(f"\nMax runtime reached. Final balance: {current_balance:.2f} EUR")
                         break
 
+                    # â”€â”€ Phase 4: Signal generation and pair selection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     best_pair, best_signal, best_score = self.analyze_all_pairs()
                     self._sync_account_state()
-                    
-                    # Sentiment scan (opt-in)
-                    self.sentiment_active = self._scan_news_sentiment() if self.enable_sentiment_guard else False
+                    self.sentiment_active = (self._scan_news_sentiment()
+                                             if self.enable_sentiment_guard else False)
 
-                    # Take profit / stop loss first
+                    # â”€â”€ Phase 5: TP/SL exits and partial exits â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     risk_pair, risk_type, change = self.check_take_profit_or_stop_loss()
                     if risk_pair:
-                        price = self.pair_prices.get(risk_pair, 0)
+                        _price = self.pair_prices.get(risk_pair, 0)
                         print(f"\n[{risk_type}] {risk_pair} at {change:.2f}%")
                         if risk_type == "SHORT_TAKE_PROFIT":
-                            # Short exits go through the dedicated short-close
-                            # path, not execute_sell_order() (which only
-                            # knows how to close LONG positions and would
-                            # silently no-op with "no holdings" here, since
-                            # a short has no entry in position_qty/holdings).
-                            self.execute_close_short_order(risk_pair, price)
+                            self.execute_close_short_order(risk_pair, _price)
                         else:
-                            # All long exits require profit target
-                            self.execute_sell_order(risk_pair, price,
-                                                    require_profit_target=True,
-                                                    reason=risk_type)
+                            self.execute_sell_order(risk_pair, _price,
+                                                    require_profit_target=True, reason=risk_type)
 
-                    # ── Partial take-profit exit ─────────────────────────────
-                    # Fires ONCE per entry when unrealised profit reaches
-                    # partial_exit_trigger_pct.  The remaining half continues
-                    # under ATR trailing stop.
                     if self.enable_partial_exit:
-                        for _pp_pair in list(self.trade_pairs):
-                            if self._partial_exit_done.get(_pp_pair):
+                        for _pp in list(self.trade_pairs):
+                            if self._partial_exit_done.get(_pp):
                                 continue
-                            _pp_qty = self.holdings.get(_pp_pair, 0.0)
-                            if _pp_qty < self._get_min_volume(_pp_pair):
+                            _pp_qty = self.holdings.get(_pp, 0.0)
+                            if _pp_qty < self._get_min_volume(_pp):
                                 continue
-                            _pp_price = self.pair_prices.get(_pp_pair, 0.0)
+                            _pp_price = self.pair_prices.get(_pp, 0.0)
                             if _pp_price <= 0:
                                 continue
-                            _pp_pct = self._profit_percent_from_entry(_pp_pair, _pp_price)
+                            _pp_pct = self._profit_percent_from_entry(_pp, _pp_price)
                             if _pp_pct is not None and _pp_pct >= self.partial_exit_trigger_pct:
-                                self._execute_partial_exit(_pp_pair, _pp_price)
+                                self._execute_partial_exit(_pp, _pp_price)
 
-                    self._refresh_cashflows_from_ledger()
-                    adjusted_pnl = self._adjusted_pnl_eur(current_balance)
-                    # Portfolio value = EUR cash + value of all open crypto positions
-                    # Using cash-only caused false drawdown triggers after every buy order
-                    try:
-                        holdings_value = sum(
-                            self.holdings.get(p, 0.0) * self.pair_prices.get(p, 0.0)
-                            for p in self.trade_pairs
-                        )
-                        reserved_buy_eur = self._estimate_open_buy_reserve_eur()
-                        portfolio_value = current_balance + holdings_value + reserved_buy_eur
-                    except Exception:
-                        portfolio_value = current_balance
-                    # update peak balance and compute portfolio drawdown
-                    try:
-                        self.peak_balance = max(getattr(self, 'peak_balance', portfolio_value), portfolio_value)
-                        current_dd_pct = 0.0
-                        if self.peak_balance > 0:
-                            current_dd_pct = ((self.peak_balance - portfolio_value) / self.peak_balance) * 100.0
-                            # enforce portfolio max drawdown circuit breaker
-                            max_dd_cfg = float(self.config.get('risk_management', {}).get('max_drawdown_percent', 10.0))
-                            if current_dd_pct >= max_dd_cfg:
-                                pause_sec = int(self.pause_after_loss_streak_minutes * 60)
-                                self.trading_paused_until_ts = max(self.trading_paused_until_ts, int(time.time()) + pause_sec)
-                                self.logger.warning(f"Portfolio max-drawdown hit: {current_dd_pct:.2f}% >= {max_dd_cfg}%. Pausing buys for {self.pause_after_loss_streak_minutes} minutes.")
-                    except Exception as e:
-                        self.logger.debug(f"Drawdown calculation failed: {e}")
-                        current_dd_pct = 0.0
-
-                    regime_state = "RISK_ON" if self._is_risk_on_regime() else "RISK_OFF"
-                    pause_state = "PAUSED" if self._is_temporarily_paused() else "ACTIVE"
-
+                    # â”€â”€ Status log â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     label_map = {
-                        "XBTEUR": "BTC", "XXBTZEUR": "BTC",
-                        "ETHEUR": "ETH", "XETHZEUR": "ETH",
-                        "SOLEUR": "SOL",
-                        "ADAEUR": "ADA",
-                        "DOTEUR": "DOT",
-                        "XRPEUR": "XRP", "XXRPZEUR": "XRP",
-                        "LINKEUR": "LINK",
+                        "XBTEUR": "BTC", "XXBTZEUR": "BTC", "ETHEUR": "ETH",
+                        "XETHZEUR": "ETH", "SOLEUR": "SOL", "XRPEUR": "XRP",
+                        "XXRPZEUR": "XRP", "ADAEUR": "ADA", "DOTEUR": "DOT",
                     }
-                    pair_status = " ".join([
-                        f"{label_map.get(p, p[:4])}:{self.pair_signals.get(p, '?')}" for p in self.trade_pairs
-                    ])
+                    pair_status = " ".join(
+                        f"{label_map.get(p, p[:4])}:{self.pair_signals.get(p, '?')}"
+                        for p in self.trade_pairs
+                    )
                     status_msg = (
-                        f"[{iteration}] {pair_status} | {regime_state}/{pause_state} | Best: {best_pair or 'NONE'} ({best_signal}) "
+                        f"[{iteration}] {pair_status} | {regime_state}/{pause_state} "
+                        f"| Best: {best_pair or 'NONE'} ({best_signal}) "
                         f"| Bal: {current_balance:.2f}EUR | Start: {self.initial_balance_eur:.2f}EUR "
                         f"| NetCF: +{self.net_deposits_eur:.2f}/-{self.net_withdrawals_eur:.2f}EUR "
-                        f"| AdjPnL: {adjusted_pnl:+.2f}EUR | TotalPnL: {self.cumulative_pnl_eur(current_balance):+.2f}EUR | Trades: {self.trade_count}"
+                        f"| AdjPnL: {adjusted_pnl:+.2f}EUR "
+                        f"| TotalPnL: {self.cumulative_pnl_eur(current_balance):+.2f}EUR "
+                        f"| Trades: {self.trade_count}"
                     )
                     self.logger.info(status_msg)
                     print(f"\r{status_msg}", end="", flush=True)
 
-                    # ── Write bot_status.json for the web dashboard ───────────
+                    # â”€â”€ Dashboard status.json â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     try:
                         _status = {
                             "ts":             datetime.utcnow().isoformat(),
@@ -2934,16 +3054,16 @@ class TradingBot:
                             "initial_balance":round(float(getattr(self, 'initial_balance_eur', 100.0)), 2),
                             "adjusted_pnl":   round(float(adjusted_pnl), 4),
                             "trade_count":    int(getattr(self, 'trade_count', 0)),
-                            "pair_signals":   {str(k): str(v) for k, v in getattr(self, 'pair_signals', {}).items()},
-                            "pair_scores":    {str(k): round(float(v), 2) for k, v in getattr(self, 'pair_scores', {}).items()},
+                            "pair_signals":   {str(k): str(v) for k, v in self.pair_signals.items()},
+                            "pair_scores":    {str(k): round(float(v), 2) for k, v in self.pair_scores.items()},
                             "best_pair":      str(best_pair) if best_pair else None,
                             "best_signal":    str(best_signal) if best_signal else None,
                             "regime":         str(regime_state),
-                            "intelligence_score":  round(float(getattr(self, '_intelligence_score', 0.0)), 2),
-                            "model_scores":        {k: round(float(v), 2) for k, v in getattr(self, '_intelligence_model_scores', {}).items()},
-                            "model_outputs":       {k: str(v)[:120] for k, v in getattr(self, '_intelligence_model_outputs', {}).items()},
-                            "sharpe_funding":      getattr(self, '_sharpe_funding_scores', {}),
-                            "sharpe_insider":      getattr(self, '_sharpe_insider_scores', {}),
+                            "intelligence_score":  round(float(self._intelligence_score), 2),
+                            "model_scores":        {k: round(float(v), 2) for k, v in self._intelligence_model_scores.items()},
+                            "model_outputs":       {k: str(v)[:120] for k, v in self._intelligence_model_outputs.items()},
+                            "sharpe_funding":      self._sharpe_funding_scores,
+                            "sharpe_insider":      self._sharpe_insider_scores,
                             "btc_downtrend":       self._btc_downtrend,
                             "short_mode":          "BEAR (5% NAV)" if self._btc_downtrend else "HEDGE (3% NAV)",
                             "monthly_return_pct":  round(self._monthly_return_pct(current_balance), 2),
@@ -2954,245 +3074,77 @@ class TradingBot:
                                 p: round((time.time() - ts) / 86400, 1)
                                 for p, ts in self._breakout_timestamps.items() if ts > 0
                             },
-                            "sharpe":         getattr(self, '_sharpe_result', {}).get('sharpe'),
-                            "sharpe_verdict": getattr(self, '_sharpe_result', {}).get('verdict', 'insufficient_data'),
-                            "sharpe_trending":getattr(self, '_sharpe_result', {}).get('trending', 'stable'),
+                            "sharpe":         self._sharpe_result.get('sharpe'),
+                            "sharpe_verdict": self._sharpe_result.get('verdict', 'insufficient_data'),
+                            "sharpe_trending":self._sharpe_result.get('trending', 'stable'),
                             "open_positions": {},
                             "open_shorts":    {},
                         }
-                        for _p in getattr(self, 'trade_pairs', []):
+                        for _p in self.trade_pairs:
                             try:
                                 _pos_qty = float(self.position_qty.get(_p, 0) or self.holdings.get(_p, 0))
                                 if _pos_qty > 0:
-                                    _entry = float(getattr(self, 'purchase_prices', {}).get(_p, 0))
+                                    _entry = float(self.purchase_prices.get(_p, 0))
                                     _cur   = float(self.pair_prices.get(_p, 0))
                                     _pnl_pct = round(((_cur - _entry) / _entry) * 100, 3) if _entry > 0 else 0.0
                                     _pnl_eur = round((_cur - _entry) * _pos_qty, 4) if _entry > 0 else 0.0
                                     _status["open_positions"][_p] = {
-                                        "qty":     round(_pos_qty, 8),
-                                        "entry":   round(_entry, 4),
-                                        "current": round(_cur, 4),
-                                        "pnl_pct": _pnl_pct,
-                                        "pnl_eur": _pnl_eur,
+                                        "qty": round(_pos_qty, 8), "entry": round(_entry, 4),
+                                        "current": round(_cur, 4), "pnl_pct": _pnl_pct, "pnl_eur": _pnl_eur,
                                     }
-                                if float(getattr(self, 'short_qty', {}).get(_p, 0)) > 0:
+                                if float(self.short_qty.get(_p, 0)) > 0:
                                     _status["open_shorts"][_p] = {
                                         "qty":   round(float(self.short_qty.get(_p, 0)), 8),
-                                        "entry": round(float(getattr(self, 'short_entry_prices', {}).get(_p, 0)), 4),
+                                        "entry": round(float(self.short_entry_prices.get(_p, 0)), 4),
                                     }
                             except Exception:
                                 pass
-                        _status_path = os.path.join(os.path.dirname(__file__), 'data', 'bot_status.json')
-                        with open(_status_path, 'w') as _sf:
-                            json.dump(_status, _sf)
-                        self.logger.debug("Dashboard status written (loop %d)", iteration)
-                        # DB stats for dashboard
                         if _HISTORY_DB_AVAILABLE:
                             try:
                                 _status["db_stats"] = _get_db_stats()
                             except Exception:
                                 pass
-                    except Exception as _se:
-                        self.logger.warning("bot_status.json write failed: %s", _se)
+                        with open(os.path.join(os.path.dirname(__file__), 'data', 'bot_status.json'), 'w') as _sf:
+                            json.dump(_status, _sf)
+                        self.logger.debug("Dashboard status written (loop %d)", iteration)
+                    except Exception as exc:
+                        self.logger.warning("bot_status.json write failed: %s", exc)
 
-                    if iteration % 10 == 0 and _HISTORY_DB_AVAILABLE:
-                        try:
-                            _record_bot_snapshot(
-                                ts=datetime.utcnow().isoformat(),
-                                loop=iteration,
-                                balance=float(current_balance),
-                                trade_count=int(getattr(self, 'trade_count', 0)),
-                                sharpe=self._sharpe_result.get('sharpe'),
-                                verdict=self._sharpe_result.get('verdict', 'insufficient_data'),
-                                regime=str(regime_state),
-                                intel_score=float(getattr(self, '_intelligence_score', 0.0)),
-                                signals=dict(getattr(self, 'pair_signals', {})),
-                                paper_mode=bool(getattr(self.api_client, 'paper_mode', True)),
-                            )
-                        except Exception:
-                            pass
-
+                    # â”€â”€ Periodic metrics (every 10 loops) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     if iteration % 10 == 0:
-                        metric_parts = []
-                        for p in self.trade_pairs:
-                            m = self.trade_metrics.get(p, {})
-                            closed = int(m.get("closed", 0))
-                            if closed <= 0:
-                                continue
-                            winrate = (m.get("wins", 0) / closed) * 100.0
-                            avg_pnl = m.get("sum_pnl", 0.0) / closed
-                            metric_parts.append(f"{p}: WR {winrate:.0f}% avg {avg_pnl:.2f}EUR")
-                        if metric_parts:
-                            self.logger.info("METRICS | " + " | ".join(metric_parts))
-
-                        # Periodic housekeeping: auto-cancel old maker/post-only orders if configured
-                        try:
-                            self._auto_cancel_old_maker_orders()
-                        except Exception as _ac:
-                            self.logger.debug(f"Auto-cancel check failed: {_ac}")
-
-                    # ── Bear Shield: check 4h trend and park in FIAT if confirmed downtrend ──
-                    if self.enable_bear_shield:
-                        bear_now = self._is_bear_market()
-                        if bear_now and not self._bear_mode_active:
-                            self.logger.warning(
-                                f"BEAR SHIELD ACTIVATED: {self.bear_benchmark_pair} below EMA{self.bear_ema_period} "
-                                f"on 4h for {self.bear_confirm_candles} candles — selling all positions, parking in EUR"
-                            )
-                            self._bear_mode_active = True
-                            self._bear_shield_exit_all()
-                        elif not bear_now and self._bear_mode_active:
-                            self.logger.info("BEAR SHIELD DEACTIVATED: trend turned bullish — resuming normal trading")
-                            self._bear_mode_active = False
-                        elif bear_now:
-                            now_ts = time.time()
-                            if (now_ts - self._bear_last_log_ts) >= self.bear_log_interval_minutes * 60:
-                                self.logger.info(
-                                    f"BEAR SHIELD: still in bear mode ({self.bear_benchmark_pair} < EMA{self.bear_ema_period} on 4h)"
-                                )
-                                self._bear_last_log_ts = now_ts
-
-                    if best_pair and best_signal != "HOLD" and not self._is_on_cooldown(best_pair) and not self._is_global_cooldown():
-                        price = self.pair_prices.get(best_pair, 0)
-                        if best_signal == "BUY":
-                            score = float(self.pair_scores.get(best_pair, 0.0))
-                            # Cheap checks first
-                            if self._is_temporarily_paused():
-                                self.logger.warning("BUY paused: loss-streak cooling period active")
-                                self.kelly_fraction = self._calculate_kelly_fraction()
-                                continue
-                            if self._daily_drawdown_hit():
-                                self.logger.warning("BUY paused: daily loss limit reached")
-                                self.kelly_fraction = self._calculate_kelly_fraction()
-                                continue
-                            # Intelligence-adjusted buy gate — read under lock so we
-                            # never see a half-written score from the refresh thread.
-                            with self._intel_lock:
-                                _iscore = self._intelligence_score
-                                _iweight = self._intelligence_score_weight
-                            _intel_adj = -(_iscore * _iweight)
-                            _effective_min = self.min_buy_score + _intel_adj
-                            if score < _effective_min:
-                                self.logger.info(
-                                    f"BUY skipped for {best_pair}: score {score:.2f} < "
-                                    f"effective_min {_effective_min:.2f} "
-                                    f"(base={self.min_buy_score:.2f} intel_adj={_intel_adj:+.2f})"
-                                )
-                                continue
-                            if self._count_open_positions() >= self.max_open_positions:
-                                self.logger.info("BUY skipped: max open positions reached")
-                                continue
-                            if not self._is_trading_hours():
-                                self.logger.info(
-                                    f"BUY skipped: outside trading hours "
-                                    f"({self.trading_hours_start_utc}:00-{self.trading_hours_end_utc}:00 UTC)"
-                                )
-                                continue
-
-                            # Regime check (cached)
+                        if _HISTORY_DB_AVAILABLE:
                             try:
-                                now = time.time()
-                                if (now - self._regime_cache.get('ts', 0)) > self._regime_cache_ttl:
-                                    self._update_regime_cache()
-                                if self.enable_regime_filter and not bool(self._regime_cache.get('risk_on', True)):
-                                    self.logger.info("BUY skipped: regime filter is RISK_OFF (cached)")
-                                    continue
+                                _record_bot_snapshot(
+                                    ts=datetime.utcnow().isoformat(), loop=iteration,
+                                    balance=float(current_balance),
+                                    trade_count=int(self.trade_count),
+                                    sharpe=self._sharpe_result.get('sharpe'),
+                                    verdict=self._sharpe_result.get('verdict', 'insufficient_data'),
+                                    regime=str(regime_state),
+                                    intel_score=float(self._intelligence_score),
+                                    signals=dict(self.pair_signals),
+                                    paper_mode=bool(getattr(self.api_client, 'paper_mode', True)),
+                                )
                             except Exception:
                                 pass
+                        metric_parts = [
+                            f"{p}: WR {(m.get('wins',0)/max(m.get('closed',1),1))*100:.0f}% "
+                            f"avg {m.get('sum_pnl',0)/max(m.get('closed',1),1):.2f}EUR"
+                            for p in self.trade_pairs
+                            if (m := self.trade_metrics.get(p, {})) and m.get('closed', 0) > 0
+                        ]
+                        if metric_parts:
+                            self.logger.info("METRICS | " + " | ".join(metric_parts))
+                        try:
+                            self._auto_cancel_old_maker_orders()
+                        except Exception as exc:
+                            self.logger.debug("Auto-cancel check failed: %s", exc)
 
-                            # Expensive checks only now
-                            if self._bear_mode_active:
-                                self.logger.info("BUY skipped: BEAR SHIELD active (parked in FIAT)")
-                                continue
-                            if self.sentiment_active:
-                                self.logger.info(f"BUY skipped for {best_pair}: sentiment guard active")
-                                continue
-                            if not self._is_ema_trend_bullish(best_pair):
-                                # Log message is emitted inside the method
-                                continue
-                            if not self._is_mtf_macd_buy_aligned(best_pair):
-                                # Log message is emitted inside the method
-                                continue
-                            if not self._has_sufficient_volume(best_pair):
-                                continue  # already logged inside
-                            else:
-                                # Re-entry guard: block buys for configured pairs until the last closed
-                                # round-trip for that pair achieved min_reentry_profit_pct net profit.
-                                try:
-                                    if any(g in (best_pair or '').upper() for g in self.reentry_guard_pairs):
-                                        last_net = self._last_closed_trade_net_profit_pct(best_pair)
-                                        if last_net is not None and last_net < self.min_reentry_profit_pct:
-                                            self.logger.info(
-                                                f"BUY skipped for {best_pair}: last closed net profit {last_net:.2f}% < min_reentry {self.min_reentry_profit_pct:.2f}%"
-                                            )
-                                            try:
-                                                _notifier.send(
-                                                    f"BUY blocked for {best_pair}: last closed net profit {last_net:.2f}% < {self.min_reentry_profit_pct:.2f}%"
-                                                )
-                                            except Exception:
-                                                pass
-                                            continue
-                                except Exception as _e:
-                                    self.logger.debug(f"Re-entry guard check error for {best_pair}: {_e}")
-                                # Block long if an open short exists on this pair
-                                if float(getattr(self, 'short_qty', {}).get(best_pair, 0)) > 0:
-                                    self.logger.info(f"BUY blocked for {best_pair}: open short position exists — close short first")
-                                    continue
-                                # Record breakout timestamp for position sizing
-                                self._breakout_timestamps[best_pair] = time.time()
-                                self.execute_buy_order(best_pair, price)
-                        elif best_signal == "SELL":
-                            min_vol = self._get_min_volume(best_pair)
-                            if (self.position_qty.get(best_pair, 0) or self.holdings.get(best_pair, 0)) >= min_vol:
-                                if self._can_sell_profit_target(best_pair, price):
-                                    self.execute_sell_order(best_pair, price)
-                                else:
-                                    pp = self._profit_percent_from_entry(best_pair, price)
-                                    req = self._required_take_profit_percent(best_pair)
-                                    pp_str = f"{pp:.2f}" if pp is not None else 'n/a'
-                                    self.logger.info(
-                                        f"SELL skipped for {best_pair}: profit target not reached ({pp_str}% < {req:.2f}%)"
-                                    )
-                            elif self.enable_live_shorts and self.short_qty.get(best_pair, 0.0) <= 0:
-                                # Open short ONLY in a confirmed downtrend (Felix's rule:
-                                # short only when trending down). Require BOTH a non-risk-on
-                                # regime AND a bearish 1h EMA trend, plus a sufficiently
-                                # negative score. This prevents shorting into a rising market.
-                                score = float(self.pair_scores.get(best_pair, 0.0))
-                                trend_bearish = not self._is_ema_trend_bullish(best_pair)
-                                # When regime filter is disabled, allow shorts on
-                                # bearish trend + negative score alone (Felix: short
-                                # only in confirmed downtrend).  When enabled, also
-                                # require the regime to be risk-off.
-                                risk_off_ok = (
-                                    not self._is_risk_on_regime()
-                                    if self.enable_regime_filter
-                                    else True
-                                )
-                                if trend_bearish and risk_off_ok and score <= -self.min_buy_score:
-                                    self.execute_open_short_order(best_pair, price)
-                                else:
-                                    self.logger.info(
-                                        f"SHORT skipped for {best_pair}: need downtrend "
-                                        f"(bearish={trend_bearish}, risk_off={risk_off_ok}, score={score:.2f})"
-                                    )
-                            elif self.enable_live_shorts and self.short_qty.get(best_pair, 0.0) > 0:
-                                # Close short ONLY on real net profit after fees (Felix's rule:
-                                # never close a short at a loss). The signal flip alone is not
-                                # enough — we require _can_close_short_profit_target.
-                                if self._can_close_short_profit_target(best_pair, price):
-                                    self.execute_close_short_order(best_pair, price)
-                                else:
-                                    se = self.short_entry_prices.get(best_pair, 0.0)
-                                    spp = ((se - price) / se * 100.0) if se > 0 else 0.0
-                                    self.logger.info(
-                                        f"SHORT CLOSE skipped for {best_pair}: net profit target not reached ({spp:.2f}% gross)"
-                                    )
-                            else:
-                                self._log_empty_sell_signal_throttled(best_pair)
+                    # â”€â”€ Phase 6: Trade execution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    self._handle_trade_execution(best_pair, best_signal, best_score)
 
-                    time_since_reload = (datetime.now() - self.last_config_reload).total_seconds()
-                    if time_since_reload >= self.config_reload_interval:
+                    # â”€â”€ Config hot-reload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    if (datetime.now() - self.last_config_reload).total_seconds() >= self.config_reload_interval:
                         self.reload_config()
 
                 except Exception as e:
@@ -3207,15 +3159,7 @@ class TradingBot:
                     # sleep lived after the try/except as a sibling statement,
                     # so every `continue` jumped straight back to `while True`
                     # and skipped it entirely. That caused the loop to spin
-                    # at the per-pair-analysis sleep rate (~3s) instead of
-                    # the configured loop_interval_seconds (60s) any time a
-                    # signal was rejected by a gate check -- which, combined
-                    # with a RISK_OFF regime, could be every iteration.
-                    #
-                    # Note: `finally` also runs on the `break` above (target
-                    # balance reached), so there's a one-time extra sleep
-                    # before shutdown in that case. Harmless, but worth
-                    # knowing about if you're timing shutdown precisely.
+
                     _sd_notify_watchdog()
                     time.sleep(self.loop_interval_sec)
 
@@ -3224,7 +3168,7 @@ class TradingBot:
             self.logger.info(f"Bot stopped by user. Final balance: {final_balance:.2f} EUR")
             print(f"\nTrading bot stopped. Final Balance: {final_balance:.2f} EUR")
 
-    # ── Trade finalisation helpers ────────────────────────────────────────────
+    # â”€â”€ Trade finalisation helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _persist_position_meta(self, meta: dict) -> None:
         """Atomically write a position entry to the purchase-prices state file.
@@ -3303,13 +3247,13 @@ class TradingBot:
         self.logger.info("%s FINALISED: %s %.6f @ %.4f EUR%s (trade #%d)",
                          ttype, pair, volume, price, pnl_str, self.trade_count)
 
-        # Telegram notification — format varies by trade type
-        sign = "🟢" if pnl_eur >= 0 else "🔴"
+        # Telegram notification â€” format varies by trade type
+        sign = "ðŸŸ¢" if pnl_eur >= 0 else "ðŸ”´"
         lev  = getattr(self, 'short_leverage', '2')
         ext  = extra or {}
 
         if ttype == 'BUY':
-            msg = (f"🟢 <b>BUY</b> #{self.trade_count}\n"
+            msg = (f"ðŸŸ¢ <b>BUY</b> #{self.trade_count}\n"
                    f"Pair: {pair}\n"
                    f"Volume: {volume:.6f}  (~{notional:.2f} EUR)\n"
                    f"Price: {price:.4f} EUR")
@@ -3320,7 +3264,7 @@ class TradingBot:
                    f"Price: {price:.4f} EUR\n"
                    f"P&amp;L est.: {pnl_eur:+.2f} EUR")
         elif ttype == 'SHORT_OPEN':
-            msg = (f"🔻 <b>SHORT OPEN</b> #{self.trade_count}\n"
+            msg = (f"ðŸ”» <b>SHORT OPEN</b> #{self.trade_count}\n"
                    f"Pair: {pair}\n"
                    f"Volume: {volume:.6f}  (~{notional:.2f} EUR)\n"
                    f"Price: {price:.4f} EUR  |  Leverage: {lev}x")
@@ -3398,7 +3342,7 @@ class TradingBot:
                 except Exception as e:
                     self.logger.error(f"Error writing JSON trade log fallback: {e}")
 
-            # ── Write to persistent history DB ────────────────────────────────
+            # â”€â”€ Write to persistent history DB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if _HISTORY_DB_AVAILABLE:
                 try:
                     _record_trade(
@@ -3418,7 +3362,7 @@ class TradingBot:
                 except Exception:
                     pass
 
-            # ── Retrospectively mark the last intelligence log entry ──────────
+            # â”€â”€ Retrospectively mark the last intelligence log entry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if ttype in ('SELL', 'SHORT_CLOSE'):
                 try:
                     _intel_log_path = os.path.join(os.path.dirname(__file__), 'data', 'intelligence_log.jsonl')
@@ -3436,7 +3380,7 @@ class TradingBot:
                 except Exception:
                     pass
 
-            # ── Sharpe + optimizer update on closed trades ────────────────────
+            # â”€â”€ Sharpe + optimizer update on closed trades â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if ttype in ('SELL', 'SHORT_CLOSE') and _OPTIMIZER_AVAILABLE:
                 try:
                     self._closed_trades_count += 1
@@ -3451,7 +3395,7 @@ class TradingBot:
                         if self._optimizer_enabled and self.config_path:
                             opt = _run_optimizer(self.config_path, self._sharpe_result)
                             if opt.get('action') not in ('none', 'waiting'):
-                                self.logger.info(f"Optimizer: {opt.get('action')} — {opt.get('detail','')}")
+                                self.logger.info(f"Optimizer: {opt.get('action')} â€” {opt.get('detail','')}")
                                 if opt.get('new_experiment'):
                                     self.logger.info(f"Optimizer new experiment: {opt['new_experiment']}")
                                 # Reload config so the changed parameter takes effect
@@ -3575,7 +3519,7 @@ class TradingBot:
                     )
                     return
 
-                # Confirmed — update position-specific state
+                # Confirmed â€” update position-specific state
                 now_ts = time.time()
                 self.peak_prices[pair] = max(self.peak_prices.get(pair, 0.0), price)
                 if self.entry_timestamps.get(pair) is None:
@@ -3609,14 +3553,14 @@ class TradingBot:
         """Place a post-only (maker) spot SELL order to close the long position.
 
         When ``require_profit_target=True`` (default), the sell is blocked
-        unless ``_can_sell_profit_target()`` passes (i.e. profit ≥ required TP
+        unless ``_can_sell_profit_target()`` passes (i.e. profit â‰¥ required TP
         after slippage buffer).  Pass ``require_profit_target=False`` for
         emergency exits (airbag, bear shield, time-stop).
 
         Clears position state, updates trade metrics, and journals the trade.
         """
         try:
-            # Use position_qty as primary source — holdings can be zeroed by
+            # Use position_qty as primary source â€” holdings can be zeroed by
             # _sync_account_state in paper mode even when a position exists
             volume = self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)
             min_vol = self._get_min_volume(pair)
@@ -3679,7 +3623,7 @@ class TradingBot:
                     )
                     return
 
-                # Confirmed — update position-specific state then finalise
+                # Confirmed â€” update position-specific state then finalise
                 self.purchase_prices[pair] = 0.0
                 self.position_qty[pair]    = 0.0
                 self.peak_prices[pair]     = 0.0
@@ -3703,7 +3647,7 @@ class TradingBot:
     def execute_open_short_order(self, pair, price):
         """Open a leveraged short position on *pair* at *price*.
 
-        Uses the configured ``short_leverage`` (default 2×) via Kraken margin.
+        Uses the configured ``short_leverage`` (default 2Ã—) via Kraken margin.
         Position notional is capped at ``max_short_notional_eur``.  Only placed
         when no short is already open for this pair.  Blocked when
         ``enable_live_shorts`` is False in config.
@@ -3715,8 +3659,8 @@ class TradingBot:
                 return
 
             # Two-tier short sizing (TR-GC inspired):
-            # BEAR short (BTC in downtrend) → 5% of balance, bigger conviction
-            # HEDGE short (neutral/up trend) → 3% of balance, defensive
+            # BEAR short (BTC in downtrend) â†’ 5% of balance, bigger conviction
+            # HEDGE short (neutral/up trend) â†’ 3% of balance, defensive
             _balance = self._available_eur_for_buy() + sum(
                 self.short_qty.get(p, 0) * self.pair_prices.get(p, 0)
                 for p in self.trade_pairs
@@ -3724,10 +3668,10 @@ class TradingBot:
             _nav = max(_balance, self.get_eur_balance() or _balance)
             if self._btc_downtrend:
                 short_type = "BEAR"
-                notional = _nav * 0.05   # 5% of NAV — BTC regime confirms downtrend
+                notional = _nav * 0.05   # 5% of NAV â€” BTC regime confirms downtrend
             else:
                 short_type = "HEDGE"
-                notional = _nav * 0.03   # 3% of NAV — defensive hedge short
+                notional = _nav * 0.03   # 3% of NAV â€” defensive hedge short
             notional = min(self.max_short_notional_eur, max(notional, self._get_trade_amount_eur() * 0.3))
             if notional <= 0 or price <= 0:
                 return
