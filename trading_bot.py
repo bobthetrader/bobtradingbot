@@ -1038,7 +1038,14 @@ class TradingBot:
 
         Maps Kraken asset codes (e.g. 'XXBT') back to our pair keys
         (e.g. 'XBTEUR').  Only updates pairs listed in ``self.trade_pairs``.
+
+        In paper mode, skip reading real Kraken balances — the paper positions
+        are tracked via position_qty / purchase_prices_paper.json. Reading real
+        balances in paper mode causes the bot to see real BTC/ETH as open longs
+        and blocks new paper trades.
         """
+        if getattr(self.api_client, 'paper_mode', False):
+            return
         try:
             balance = self.api_client.get_account_balance()
             if not balance:
