@@ -136,7 +136,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <!-- Signals card -->
     <div class="card">
-      <h2>Pair Signals &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">AI Panel: {intel_score:+.1f}</span></h2>
+      <h2>Pair Signals &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">AI Panel: {intel_score:+.1f}</span> &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Short: {btc_mode}</span></h2>
       <table>
         <tr><th>Pair</th><th>Signal</th><th>Score</th></tr>
         {signal_rows}
@@ -202,12 +202,16 @@ def _build_page() -> str:
 
     # ── Signals ───────────────────────────────────────────────────────────────
     signal_rows = ""
+    breakout_ages = status.get("breakout_ages_days", {})
+    btc_mode = status.get("short_mode", "HEDGE (3% NAV)")
     for pair in status.get("pair_signals", {}):
-        sig   = status["pair_signals"].get(pair, "HOLD")
-        score = status.get("pair_scores", {}).get(pair, 0.0)
-        colour= _signal_colour(sig)
+        sig    = status["pair_signals"].get(pair, "HOLD")
+        score  = status.get("pair_scores", {}).get(pair, 0.0)
+        colour = _signal_colour(sig)
+        age    = breakout_ages.get(pair)
+        age_str = f' <span class="grey" style="font-size:10px">({age:.0f}d breakout)</span>' if age else ""
         signal_rows += (
-            f'<tr><td>{pair}</td>'
+            f'<tr><td>{pair}{age_str}</td>'
             f'<td><span style="color:{colour};font-weight:bold">{sig}</span></td>'
             f'<td style="color:{colour}">{score:+.2f}</td></tr>'
         )
@@ -404,6 +408,7 @@ def _build_page() -> str:
         arrow         = _trending_arrow(trending),
         trending      = trending.replace("_", " "),
         intel_score   = status.get("intelligence_score", 0.0),
+        btc_mode      = btc_mode,
         signal_rows   = signal_rows,
         sharpe_html   = sharpe_html,
         model_html    = model_html,

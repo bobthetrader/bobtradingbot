@@ -270,6 +270,12 @@ class TradingBot:
         self._sharpe_insider_scores: dict = {}
         self._last_balance_eur: float = 0.0
 
+        # ── TR-GC inspired features ───────────────────────────────────────────
+        # BTC regime: True = downtrend (close < 20-day SMA) → enable BEAR shorts
+        self._btc_downtrend: bool = False
+        # Breakout recency: pair → unix timestamp of last Bollinger Band breakout
+        self._breakout_timestamps: dict = {}
+
         # ── Sharpe + scientific-method optimizer ─────────────────────────────
         _opt_cfg = self.config.get('optimizer', {})
         self._sharpe_result: dict = {}
@@ -648,6 +654,34 @@ class TradingBot:
         except Exception:
             return 30.0
 
+    def _is_btc_downtrend(self) -> bool:
+        """Return True when BTC close is below its 20-period SMA — BEAR regime.
+        Mirrors the TR-GC-Crypto-LS-2 BTC regime flag from step 3."""
+        btc_pair = next((p for p in self.trade_pairs if 'XBT' in p or 'BTC' in p), None)
+        if not btc_pair:
+            return False
+        try:
+            history = list(self.analysis_tool._get_price_history(btc_pair))
+            if len(history) < 20:
+                return False
+            sma20 = sum(history[-20:]) / 20
+            return history[-1] < sma20
+        except Exception:
+            return False
+
+    def _breakout_size_multiplier(self, pair) -> float:
+        """Size multiplier based on breakout recency (TR-GC inspired).
+        Recent BB breakout (< 25 days) → 2× allocation.
+        No recent breakout → 0.5× allocation.
+        This encourages entering bigger on fresh signals."""
+        last_ts = self._breakout_timestamps.get(pair, 0)
+        if last_ts <= 0:
+            return 0.5   # no recorded breakout → conservative
+        days_ago = (time.time() - last_ts) / 86400
+        if days_ago <= 25:
+            return 2.0   # fresh breakout → double allocation
+        return 0.5       # stale breakout → halve allocation
+
     def _get_dynamic_trade_amount_eur(self, pair, available_eur):
         """Dynamic sizing: adjusted by ATR volatility and available EUR."""
         base_amount = self._get_trade_amount_eur()
@@ -678,9 +712,12 @@ class TradingBot:
 
         # 3. Apply risk-off multiplier from regime
         amount *= self._allocation_multiplier()
-        
+
+        # 4. Breakout recency multiplier (TR-GC inspired)
+        amount *= self._breakout_size_multiplier(pair)
+
         # Cap at configured max base amount and available funds
-        return min(base_amount * 1.5, amount, available_eur * 0.95)
+        return min(base_amount * 2.0, amount, available_eur * 0.95)
 
     def _is_mtf_trend_bullish(self, pair):
         """Check 1h timeframe to confirm bullish trend.
@@ -2646,6 +2683,9 @@ class TradingBot:
                     current_balance = self.get_eur_balance()
                     self._last_balance_eur = current_balance
 
+                    # Update BTC regime flag every loop (cheap — reads local history)
+                    self._btc_downtrend = self._is_btc_downtrend()
+
                     # Daily reset of daily_start_balance
                     now = datetime.now()
                     last_reset = datetime.fromtimestamp(self.last_daily_reset_ts)
@@ -2779,6 +2819,12 @@ class TradingBot:
                             "model_outputs":       {k: str(v)[:120] for k, v in getattr(self, '_intelligence_model_outputs', {}).items()},
                             "sharpe_funding":      getattr(self, '_sharpe_funding_scores', {}),
                             "sharpe_insider":      getattr(self, '_sharpe_insider_scores', {}),
+                            "btc_downtrend":       self._btc_downtrend,
+                            "short_mode":          "BEAR (5% NAV)" if self._btc_downtrend else "HEDGE (3% NAV)",
+                            "breakout_ages_days":  {
+                                p: round((time.time() - ts) / 86400, 1)
+                                for p, ts in self._breakout_timestamps.items() if ts > 0
+                            },
                             "sharpe":         getattr(self, '_sharpe_result', {}).get('sharpe'),
                             "sharpe_verdict": getattr(self, '_sharpe_result', {}).get('verdict', 'insufficient_data'),
                             "sharpe_trending":getattr(self, '_sharpe_result', {}).get('trending', 'stable'),
@@ -2952,6 +2998,8 @@ class TradingBot:
                                 if float(getattr(self, 'short_qty', {}).get(best_pair, 0)) > 0:
                                     self.logger.info(f"BUY blocked for {best_pair}: open short position exists — close short first")
                                     continue
+                                # Record breakout timestamp for position sizing
+                                self._breakout_timestamps[best_pair] = time.time()
                                 self.execute_buy_order(best_pair, price)
                         elif best_signal == "SELL":
                             min_vol = self._get_min_volume(best_pair)
@@ -3456,12 +3504,27 @@ class TradingBot:
             if self.short_qty.get(pair, 0.0) > 0:
                 return
 
-            notional = min(self.max_short_notional_eur, self._get_dynamic_trade_amount_eur(pair, self._available_eur_for_buy()))
+            # Two-tier short sizing (TR-GC inspired):
+            # BEAR short (BTC in downtrend) → 5% of balance, bigger conviction
+            # HEDGE short (neutral/up trend) → 3% of balance, defensive
+            _balance = self._available_eur_for_buy() + sum(
+                self.short_qty.get(p, 0) * self.pair_prices.get(p, 0)
+                for p in self.trade_pairs
+            )
+            _nav = max(_balance, current_balance if (current_balance := self.get_eur_balance()) else _balance)
+            if self._btc_downtrend:
+                short_type = "BEAR"
+                notional = _nav * 0.05   # 5% of NAV — BTC regime confirms downtrend
+            else:
+                short_type = "HEDGE"
+                notional = _nav * 0.03   # 3% of NAV — defensive hedge short
+            notional = min(self.max_short_notional_eur, max(notional, self._get_trade_amount_eur() * 0.3))
             if notional <= 0 or price <= 0:
                 return
             volume = max(self._get_min_volume(pair), notional / price)
             self.logger.info(
-                f"Placing SHORT OPEN order: {volume:.6f} {pair} at ~{price:.2f} EUR (lev={self.short_leverage}x)"
+                f"Placing {short_type} SHORT OPEN order: {volume:.6f} {pair} at ~{price:.2f} EUR "
+                f"(lev={self.short_leverage}x, nav={_nav:.2f}, notional={notional:.2f})"
             )
             result = self._place_live_order(pair=pair, direction='sell', volume=volume, leverage=self.short_leverage)
             if result:
