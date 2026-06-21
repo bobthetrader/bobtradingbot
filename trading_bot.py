@@ -2448,12 +2448,12 @@ class TradingBot:
                     f"kept {remaining_volume:.6f} â€” Trade #{self.trade_count}"
                 )
                 _notifier.send(
-                    f"ðŸ“Š <b>PARTIAL SELL</b> #{self.trade_count}\n"
-                    f"Pair: {pair}\n"
-                    f"Sold: {sell_volume:.6f}  (~{sell_volume * price:.2f} EUR)\n"
-                    f"Kept: {remaining_volume:.6f}\n"
-                    f"Price: {price:.4f} EUR\n"
-                    f"P&amp;L est.: {est_profit_eur:+.2f} EUR ({pp_str})"
+                    f”[PARTIAL SELL] #{self.trade_count}\n”
+                    f”Pair: {pair}\n”
+                    f”Sold: {sell_volume:.6f}  (~{sell_volume * price:.2f} EUR)\n”
+                    f”Kept: {remaining_volume:.6f}\n”
+                    f”Price: {price:.4f} EUR\n”
+                    f”P&amp;L est.: {est_profit_eur:+.2f} EUR ({pp_str})”
                 )
             else:
                 self.logger.error(f"PARTIAL EXIT FAILED for {pair}")
@@ -3266,38 +3266,40 @@ class TradingBot:
         self.logger.info("%s FINALISED: %s %.6f @ %.4f EUR%s (trade #%d)",
                          ttype, pair, volume, price, pnl_str, self.trade_count)
 
-        # Telegram notification â€” format varies by trade type
-        sign = "ðŸŸ¢" if pnl_eur >= 0 else "ðŸ”´"
+        # Telegram notification - format varies by trade type
+        sign = “WIN” if pnl_eur >= 0 else “LOSS”
         lev  = getattr(self, 'short_leverage', '2')
         ext  = extra or {}
 
         if ttype == 'BUY':
-            msg = (f"ðŸŸ¢ <b>BUY</b> #{self.trade_count}\n"
-                   f"Pair: {pair}\n"
-                   f"Volume: {volume:.6f}  (~{notional:.2f} EUR)\n"
-                   f"Price: {price:.4f} EUR")
+            msg = (“<b>[BUY]</b> #” + str(self.trade_count) + “\n”
+                   “Pair: “ + pair + “\n”
+                   “Volume: “ + f”{volume:.6f}” + “  (~” + f”{notional:.2f}” + “ EUR)\n”
+                   “Price: “ + f”{price:.4f}” + “ EUR”)
         elif ttype == 'SELL':
-            msg = (f"{sign} <b>SELL</b> #{self.trade_count}\n"
-                   f"Pair: {pair}\n"
-                   f"Volume: {volume:.6f}  (~{notional:.2f} EUR)\n"
-                   f"Price: {price:.4f} EUR\n"
-                   f"P&amp;L est.: {pnl_eur:+.2f} EUR")
+            pnl_tag = “[+]” if pnl_eur >= 0 else “[-]”
+            msg = (“<b>” + pnl_tag + “ SELL</b> #” + str(self.trade_count) + “\n”
+                   “Pair: “ + pair + “\n”
+                   “Volume: “ + f”{volume:.6f}” + “  (~” + f”{notional:.2f}” + “ EUR)\n”
+                   “Price: “ + f”{price:.4f}” + “ EUR\n”
+                   “P&amp;L: “ + f”{pnl_eur:+.2f}” + “ EUR”)
         elif ttype == 'SHORT_OPEN':
-            msg = (f"ðŸ”» <b>SHORT OPEN</b> #{self.trade_count}\n"
-                   f"Pair: {pair}\n"
-                   f"Volume: {volume:.6f}  (~{notional:.2f} EUR)\n"
-                   f"Price: {price:.4f} EUR  |  Leverage: {lev}x")
+            msg = (“<b>[SHORT OPEN]</b> #” + str(self.trade_count) + “\n”
+                   “Pair: “ + pair + “\n”
+                   “Volume: “ + f”{volume:.6f}” + “  (~” + f”{notional:.2f}” + “ EUR)\n”
+                   “Price: “ + f”{price:.4f}” + “ EUR  |  Leverage: “ + str(lev) + “x”)
         elif ttype == 'SHORT_CLOSE':
             entry   = ext.get('entry', 0)
             pnl_pct = ext.get('pnl_pct', 0)
-            msg = (f"{sign} <b>SHORT CLOSE</b> #{self.trade_count}\n"
-                   f"Pair: {pair}\n"
-                   f"Volume: {volume:.6f}  (~{notional:.2f} EUR)\n"
-                   f"Entry: {entry:.4f} EUR  |  Exit: {price:.4f} EUR\n"
-                   f"P&amp;L est.: {pnl_eur:+.2f} EUR ({pnl_pct:+.2f}%)")
+            pnl_tag = “[+]” if pnl_eur >= 0 else “[-]”
+            msg = (“<b>” + pnl_tag + “ SHORT CLOSE</b> #” + str(self.trade_count) + “\n”
+                   “Pair: “ + pair + “\n”
+                   “Volume: “ + f”{volume:.6f}” + “  (~” + f”{notional:.2f}” + “ EUR)\n”
+                   “Entry: “ + f”{entry:.4f}” + “ EUR  |  Exit: “ + f”{price:.4f}” + “ EUR\n”
+                   “P&amp;L: “ + f”{pnl_eur:+.2f}” + “ EUR (“ + f”{pnl_pct:+.2f}” + “%)”)
         else:
-            msg = (f"{sign} <b>{ttype}</b> #{self.trade_count}\n"
-                   f"Pair: {pair}\nVolume: {volume:.6f}\nPrice: {price:.4f} EUR")
+            msg = (“<b>[“ + ttype + “]</b> #” + str(self.trade_count) + “\n”
+                   “Pair: “ + pair + “\nVolume: “ + f”{volume:.6f}” + “\nPrice: “ + f”{price:.4f}” + “ EUR”)
 
         try:
             _notifier.send(msg)
