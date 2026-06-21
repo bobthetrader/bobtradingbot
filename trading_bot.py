@@ -2584,16 +2584,8 @@ class TradingBot:
                     time.sleep(0.25)
                     continue
 
-                # Filter contradictory signals: BUY must have positive score,
-                # SELL must have negative score. A BUY signal with score -13
-                # means RSI is oversold but trend is strongly bearish — skip it
-                # so a weaker-but-genuine BUY (positive score) can win instead.
-                if signal == "BUY" and score < 0:
-                    time.sleep(0.25)
-                    continue
-                if signal == "SELL" and score > 0:
-                    time.sleep(0.25)
-                    continue
+                # With mean reversion disabled, SMA momentum signals always have
+                # scores that match direction. No contradictory filter needed.
 
                 # Filter non-actionable SELL on empty position
                 has_long  = (self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)) >= self._get_min_volume(pair)
@@ -2915,7 +2907,7 @@ class TradingBot:
             trend_bearish = not self._ema_bullish.get(pair, True)
             risk_off_ok  = (not self._is_risk_on_regime()
                             if self.enable_regime_filter else True)
-            if (trend_bearish or score <= -abs(self.min_buy_score) * 3) and risk_off_ok and score <= -self.min_buy_score:
+            if (trend_bearish or abs(score) >= self.min_buy_score) and risk_off_ok and abs(score) >= self.min_buy_score:
                 self.execute_open_short_order(pair, price)
             else:
                 self.logger.info(
