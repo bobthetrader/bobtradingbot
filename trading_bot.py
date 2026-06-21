@@ -2933,9 +2933,16 @@ class TradingBot:
                             try:
                                 _pos_qty = float(self.position_qty.get(_p, 0) or self.holdings.get(_p, 0))
                                 if _pos_qty > 0:
+                                    _entry = float(getattr(self, 'purchase_prices', {}).get(_p, 0))
+                                    _cur   = float(self.pair_prices.get(_p, 0))
+                                    _pnl_pct = round(((_cur - _entry) / _entry) * 100, 3) if _entry > 0 else 0.0
+                                    _pnl_eur = round((_cur - _entry) * _pos_qty, 4) if _entry > 0 else 0.0
                                     _status["open_positions"][_p] = {
-                                        "qty":   round(_pos_qty, 8),
-                                        "entry": round(float(getattr(self, 'purchase_prices', {}).get(_p, 0)), 4),
+                                        "qty":     round(_pos_qty, 8),
+                                        "entry":   round(_entry, 4),
+                                        "current": round(_cur, 4),
+                                        "pnl_pct": _pnl_pct,
+                                        "pnl_eur": _pnl_eur,
                                     }
                                 if float(getattr(self, 'short_qty', {}).get(_p, 0)) > 0:
                                     _status["open_shorts"][_p] = {

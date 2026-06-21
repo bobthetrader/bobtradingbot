@@ -341,9 +341,16 @@ def _build_page() -> str:
     shorts    = status.get("open_shorts", {})
     pos_rows  = ""
     for pair, info in positions.items():
+        pnl_pct = info.get("pnl_pct", 0.0)
+        pnl_eur = info.get("pnl_eur", 0.0)
+        pnl_col = "#00c851" if pnl_pct >= 0 else "#ff4444"
+        cur = info.get("current", 0)
         pos_rows += (
             f'<tr><td>{pair}</td><td class="green">LONG</td>'
-            f'<td>{info["qty"]}</td><td>&euro;{info["entry"]}</td></tr>'
+            f'<td>{info["qty"]}</td>'
+            f'<td>&euro;{info["entry"]}</td>'
+            f'<td>&euro;{cur:,.4f}</td>'
+            f'<td style="color:{pnl_col}">{pnl_pct:+.2f}% ({pnl_eur:+.4f})</td></tr>'
         )
     for pair, info in shorts.items():
         pos_rows += (
@@ -352,7 +359,7 @@ def _build_page() -> str:
         )
     if pos_rows:
         positions_html = (
-            '<table><tr><th>Pair</th><th>Side</th><th>Qty</th><th>Entry</th></tr>'
+            '<table><tr><th>Pair</th><th>Side</th><th>Qty</th><th>Entry</th><th>Current</th><th>P&amp;L</th></tr>'
             + pos_rows + '</table>'
         )
     else:
