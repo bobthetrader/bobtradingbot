@@ -2550,7 +2550,7 @@ class TradingBot:
                 self._update_airbag_history(pair, current_price)
                 if self._check_airbag_trigger(pair):
                     # Panic sell if holding
-                    if self.holdings.get(pair, 0) >= self._get_min_volume(pair):
+                    if (self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)) >= self._get_min_volume(pair):
                         self.execute_sell_order(pair, current_price, require_profit_target=False, reason="CRASH_AIRBAG")
 
                 # Use cached hourly signals (refreshed periodically) when present
@@ -3109,7 +3109,7 @@ class TradingBot:
                                 self.execute_buy_order(best_pair, price)
                         elif best_signal == "SELL":
                             min_vol = self._get_min_volume(best_pair)
-                            if self.holdings.get(best_pair, 0) >= min_vol:
+                            if (self.position_qty.get(best_pair, 0) or self.holdings.get(best_pair, 0)) >= min_vol:
                                 if self._can_sell_profit_target(best_pair, price):
                                     self.execute_sell_order(best_pair, price)
                                 else:

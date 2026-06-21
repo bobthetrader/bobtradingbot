@@ -1,0 +1,717 @@
+================================================================================
+KRAKEN ALGORITHMIC TRADING BOT — COMPREHENSIVE BUILD REPORT
+================================================================================
+Date: June 2026
+Repository: https://github.com/bobthetrader/bobtradingbot
+Deployment: Railway.app (24/7 cloud hosting)
+Exchange: Kraken (paper mode active, live mode ready)
+================================================================================
+
+CONTENTS
+--------
+1. Overview
+2. Architecture
+3. Trading Strategy & Signal Generation
+4. Risk Management Parameters
+5. AI Intelligence Panel
+6. Self-Learning & Optimisation System
+7. External Data Sources
+8. Persistent History Database
+9. Deployment & Infrastructure
+10. Dashboard & Notifications
+11. Current Configuration (Paper Mode)
+12. Switching to Live Trading
+13. Known Issues & Future Improvements
+
+
+================================================================================
+1. OVERVIEW
+================================================================================
+
+This is a fully automated, multi-pair cryptocurrency trading bot that trades
+BTC, ETH, SOL and XRP against EUR on the Kraken exchange. It operates 24/7
+on Railway cloud infrastructure and features:
+
+- Real-time market data via Kraken WebSocket feed
+- Technical analysis signal engine (RSI, Bollinger Bands, EMA, ATR, MACD)
+- 5-model AI intelligence panel (Hermes, Perplexity Sonar, DeepSeek, Llama, GPT)
+- Institutional derivatives data from Sharpe.ai (funding rates, insider selling)
+- Scientific method parameter optimiser using Sharpe ratio as the objective
+- Persistent SQLite history database surviving all restarts
+- Live web dashboard with auto-refresh
+- Telegram trade notifications
+
+
+================================================================================
+2. ARCHITECTURE
+================================================================================
+
+File Structure
+--------------
+D:\tradingbot\
+├── main.py                     Entry point — wires all components, CLI args
+├── trading_bot.py              Core trading loop (~3,000 lines)
+├── kraken_interface.py         Kraken REST + WebSocket API wrapper
+├── analysis.py                 Technical analysis signal engine
+├── utils.py                    Shared utilities
+├── dashboard.py                Flask web dashboard
+├── config.toml                 Live trading configuration
+├── config.paper.toml           Paper trading configuration (active)
+├── core/
+│   ├── market_intelligence.py  AI panel orchestrator
+│   ├── sharpe_data.py          Sharpe.ai API integration
+│   ├── sharpe_calculator.py    Sharpe ratio computation
+│   ├── param_optimizer.py      Scientific method optimiser
+│   ├── history_db.py           SQLite persistent history store
+│   ├── ws_feed.py              Kraken WebSocket price feed
+│   ├── notifier.py             Telegram notification sender
+│   └── token_bucket.py         API rate-limit token bucket
+└── data/                       Persisted state (Railway volume)
+    ├── bot_history.db          SQLite history database
+    ├── purchase_prices_paper.json  Open paper positions
+    ├── purchase_prices_live.json   Open live positions
+    ├── trade_events_paper.jsonl    Paper trade journal
+    ├── trade_events_live.jsonl     Live trade journal
+    ├── intelligence_log.jsonl      AI panel decision history
+    ├── optimizer_state.json        Optimiser experiment state
+    ├── history_buffer.json         Price history for indicator warm-up
+    ├── pnl_state.json              P&L baseline
+    └── cooldown_state.json         Trade cooldown timers
+
+Startup Flow
+------------
+1. main.py loads .env (API keys), parses CLI args, selects config file
+2. KrakenAPI client initialised (paper or live mode)
+3. History database initialised (creates tables if new)
+4. Web dashboard started on port 8080 (background thread)
+5. TradingBot initialised — loads persisted state, warms up indicators
+6. Kraken WebSocket connected for live price feed
+7. Main trading loop begins (60-second cycles)
+8. Market intelligence refresh spawned (background thread, every 10 minutes)
+
+
+================================================================================
+3. TRADING STRATEGY & SIGNAL GENERATION
+================================================================================
+
+Signal Engine (analysis.py)
+----------------------------
+The bot generates a (signal, score) tuple for each pair every loop using
+two complementary strategies:
+
+MEAN REVERSION PATH (enable_mean_reversion_signals = true)
+  - RSI oversold (< 28) → BUY signal
+  - RSI overbought (> 65) → SELL signal
+  - Score driven by distance from the threshold
+  - Works best in ranging/sideways markets
+
+TREND/BREAKOUT PATH (enable_trend_breakout_signals = true)
+  - Price above Bollinger upper band + RSI ≥ 55 → BUY
+  - Price below Bollinger lower band + RSI ≤ 45 → SELL
+  - Works best in trending markets
+
+The stronger signal wins (highest absolute score takes priority).
+ATR (Average True Range) and Williams %R provide small boosts when confirming.
+
+Score Range: −50 (strongly bearish) to +50 (strongly bullish)
+Positive = bullish bias, Negative = bearish bias
+
+Indicators Used
+---------------
+- RSI (14-period)                    Momentum oscillator
+- Bollinger Bands (20-period, 2σ)    Volatility bands
+- SMA-20 / SMA-50                    Trend direction
+- EMA-9 / EMA-21 (optional)          Short-term trend filter (disabled)
+- ATR (14-period)                    Volatility for dynamic stops
+- Williams %R                         Overbought/oversold confirmation
+- MACD (optional, multi-timeframe)   Trend confirmation
+
+Price history: 200 candles per pair, seeded from 15-minute Kraken OHLC data
+on startup so indicators work immediately without a warm-up delay.
+
+Trade Execution Flow (per loop)
+--------------------------------
+1. Get live price via WebSocket (REST fallback if WS stale)
+2. Generate signal + score for each pair
+3. Select best pair (highest absolute score)
+4. Apply intelligence-adjusted buy gate:
+   effective_min = min_buy_score + (intelligence_score × score_weight × -1)
+5. Check all filters (regime, volume, drawdown, cooldown, position limits)
+6. If BUY: check no open short exists on same pair → execute buy
+7. If SELL: check open position → check profit target → execute sell
+8. If SELL + no position + shorts enabled: open short
+
+Shorting
+--------
+Shorts are opened when a SELL signal fires but no long position exists.
+The bot uses Kraken's margin feature (leverage 2x, paper mode simulated).
+A short on XBTEUR means: sell BTC now, buy back cheaper later = profit if
+BTC falls.
+
+Short positions are tracked separately from longs in the state files and
+are properly restored after restarts.
+
+Multi-Pair Selection
+--------------------
+Pairs traded: XBTEUR, XETHZEUR, SOLEUR, XXRPZEUR
+On each loop, all four pairs are scored and the best signal wins.
+auto_select_pair = true means the bot picks whichever pair has the
+strongest signal, not a fixed pair.
+
+
+================================================================================
+4. RISK MANAGEMENT PARAMETERS
+================================================================================
+
+LIVE CONFIG (config.toml) — CURRENT VALUES
+-------------------------------------------
+stop_loss_percent              5.0%     Exit if position drops this much
+enable_hard_stop_loss          true     Force-close at hard threshold
+hard_stop_loss_percent         4.0%     Hard stop fires before soft stop
+trailing_stop_percent          0        Disabled
+max_take_profit_percent        5.0%     Cap on adaptive TP
+take_profit_percent            2.0%     Base take-profit target
+sell_fee_buffer_percent        0.26%    Added to TP to cover Kraken fees
+allocation_per_trade_percent   50.0%    50% of balance per trade
+min_trade_eur                  10.0     Minimum trade size
+max_open_positions             20       Maximum concurrent positions
+max_drawdown_percent           10.0%    Pause trading if down 10% from peak
+enable_daily_drawdown          false    Daily loss limit (disabled)
+enable_atr_dynamic_tp          true     ATR-based dynamic take profit
+atr_tp_multiplier              1.0      ATR multiplier for TP
+
+PAPER CONFIG (config.paper.toml) — CURRENT VALUES (ACTIVE)
+------------------------------------------------------------
+stop_loss_percent              2.0%
+short_take_profit_percent      1.5%     Was 3.5%, lowered for faster closes
+short_stop_loss_percent        3.0%
+allocation_per_trade_percent   10.0%    Conservative for paper testing
+min_buy_score                  8.0      Was 18 — lowered to allow trades
+min_trade_eur                  5.0
+enable_ema_crossover_filter    false    Was true — was blocking all buys
+mr_rsi_oversold_threshold      28       More sensitive than live (30)
+mr_rsi_overbought_threshold    65       Was 55 — 55 triggered sells too early
+score_weight (intelligence)    0.5      Was 2.0 — AI was over-adjusting gate
+
+Stop Loss Mechanisms (3 layers)
+---------------------------------
+1. SOFT STOP (stop_loss_percent): Regular exit when price falls X% from entry
+2. HARD STOP (hard_stop_loss_percent): Force-close even if soft SL not triggered
+3. BREAK-EVEN STOP: After price rises 0.5%, move stop to entry price
+   (enable_break_even = true, break_even_trigger_percent = 0.5)
+
+The hard stop fires at 4%, soft at 5% — so hard stop always triggers first
+in live mode, acting as a backstop.
+
+Position Sizing
+---------------
+Trade amount = available_balance × (allocation_per_trade_percent / 100)
+In paper mode: 10% of €100 = €10 per trade
+In live mode: 50% of available EUR balance per trade
+
+Intelligence-Adjusted Buy Gate
+-------------------------------
+The AI panel score adjusts the minimum buy score threshold:
+
+  effective_min_score = min_buy_score - (intelligence_score × score_weight)
+
+Example: min_buy_score=8, AI score=-3, weight=0.5
+  → effective_min = 8 - (-3 × 0.5) = 8 + 1.5 = 9.5
+
+Bullish AI (score=+4) → effective_min = 8 - 2 = 6 (easier to buy)
+Bearish AI (score=-4) → effective_min = 8 + 2 = 10 (harder to buy)
+
+
+================================================================================
+5. AI INTELLIGENCE PANEL
+================================================================================
+
+Five AI models run in parallel every 10 minutes via OpenRouter and OpenAI.
+Each receives a detailed market context prompt and returns a score −5 to +5.
+Scores are weighted and averaged into a combined intelligence_score.
+
+MODEL PANEL
+-----------
+Model               Provider        Weight  Specialisation
+------------------  --------------  ------  ---------------------------------
+Hermes 3 70B        OpenRouter      1.0×    Strategy & positioning
+Perplexity Sonar    OpenRouter      1.5×    LIVE WEB SEARCH — real-time news
+DeepSeek R1         OpenRouter      1.0×    Technical pattern reasoning
+Llama 3.1 8B        OpenRouter      0.75×   Fast sentiment cross-check
+GPT-4o-mini         OpenRouter      1.0×    General market sentiment
+
+Perplexity Sonar gets 1.5× weight because it can search the live internet
+for breaking news, regulatory updates and market events in real time.
+
+What Each Model Receives
+------------------------
+Every model prompt includes:
+
+MARKET DATA:
+  - Crypto Fear & Greed Index (last 3 days trend)
+  - BTC dominance %
+  - Global market cap 24h change
+  - Recent crypto news headlines
+
+SHARPE.AI INSTITUTIONAL DATA:
+  - Per-coin funding rates (BTC/ETH/SOL/XRP)
+  - Funding rate signal scores (contrarian indicator)
+  - Market-wide insider selling signal
+  - Total perpetual OI ($33B+ tracked)
+  - OI-weighted funding rate
+
+BOT PERFORMANCE CONTEXT:
+  - Current Sharpe ratio and verdict (success/failure/neutral)
+  - Last 10 trades with outcomes (WIN/LOSS/FLAT + P&L)
+  - Last 6 AI panel calls and whether they were right
+  - Last 4 Sharpe.ai funding rate snapshots (trend)
+  - Last 5 optimizer decisions (what changed, Sharpe impact)
+  - Open positions (longs and shorts)
+  - Current technical signals per pair
+  - Account balance
+
+RECENT HISTORY (from SQLite DB):
+  - All past trades with outcomes
+  - All past AI decisions correlated with market outcomes
+  - Funding rate trend over time
+  - Optimizer experiment results
+
+Score Interpretation
+--------------------
++5  Very bullish — strongly recommend increased exposure
++3  Bullish — market conditions favour longs
++1  Mildly bullish — slight upward bias
+ 0  Neutral — no clear direction
+-1  Mildly bearish — slight downward bias
+-3  Bearish — market conditions favour shorts/reduced exposure
+-5  Very bearish — strongly recommend reduced/no exposure
+
+Combined score adjusts the buy gate. The bot doesn't blindly follow AI —
+the AI score is one input among many, weighted at 0.5× in paper mode.
+
+Intelligence Log
+----------------
+Every AI panel call is logged to:
+  - data/intelligence_log.jsonl (text log)
+  - data/bot_history.db (ai_panels table)
+
+After each trade closes, the outcome (WIN/LOSS + P&L) is written back
+into the most recent AI panel entry, creating a feedback loop so models
+can see whether their past calls predicted correctly.
+
+
+================================================================================
+6. SELF-LEARNING & OPTIMISATION SYSTEM
+================================================================================
+
+The bot has two self-improvement mechanisms:
+
+A) SCIENTIFIC METHOD PARAMETER OPTIMISER
+-----------------------------------------
+File: core/param_optimizer.py
+
+Uses the scientific method: change one variable at a time, measure the
+outcome, keep or revert.
+
+Process:
+1. Establish a Sharpe ratio baseline from closed trade history
+2. Select the next parameter to test from a rotation list
+3. Change it by exactly ONE step (up or down)
+4. Wait for MIN_EVAL_TRADES (10) new closed trades
+5. Calculate new Sharpe ratio
+6. If improved → KEEP the change, update baseline
+7. If not improved → REVERT the change, try next parameter
+
+Parameters cycled through:
+  min_buy_score              Step: 2.0   Range: 5–50
+  take_profit_percent        Step: 0.25  Range: 1–6%
+  stop_loss_percent          Step: 0.5   Range: 1.5–10%
+  mr_rsi_oversold_threshold  Step: 2.0   Range: 20–45
+  mr_rsi_overbought_threshold Step: 2.0  Range: 50–75
+  volume_filter_min_ratio    Step: 0.1   Range: 0.2–2.0
+  allocation_per_trade_percent Step: 5.0 Range: 5–70%
+
+Success criteria: Sharpe ratio ≥ 3.0
+Failure trigger:  Sharpe ratio < 1.0
+
+All experiments are recorded in:
+  - data/optimizer_state.json (current state, survives restarts)
+  - data/bot_history.db (optimizer_decisions table, full history)
+
+The optimizer runs after every 10 closed trades (configurable via
+eval_every_n_trades in config.toml [optimizer] section).
+
+B) AI PANEL CALIBRATION (Learning from History)
+-------------------------------------------------
+The AI models receive their own historical decisions and outcomes in every
+prompt. This creates a feedback loop:
+
+"Last time Hermes scored -4 (bearish), BTC dropped 2% — correct call."
+"Last time Sonar scored +3 (bullish), ETH rose 1.5% — correct call."
+"Funding rate was -1 for SOL, then SOL rose 3% — contrarian signal worked."
+
+Over time, models can calibrate their scoring based on what actually
+happened in this specific bot's trading history with these specific pairs.
+
+This is different from traditional ML — the learning happens through the
+models' contextual understanding of the provided history, not weight updates.
+
+
+================================================================================
+7. EXTERNAL DATA SOURCES
+================================================================================
+
+FREE DATA SOURCES (no API key required)
+-----------------------------------------
+Alternative.me Fear & Greed    https://api.alternative.me/fng/
+  - Crypto market sentiment 0-100
+  - Last 3 days shown to track trend direction
+
+CoinGecko Global               https://api.coingecko.com/api/v3/global
+  - Total market cap, BTC dominance, 24h change
+  - Active cryptocurrency count
+
+CryptoCompare News             https://min-api.cryptocompare.com/
+  - Recent BTC/ETH/Trading headlines (backup news source)
+
+Kraken Public API              https://api.kraken.com/
+  - OHLC candles for indicator seeding
+  - Orderbook for spread checks
+  - Trade history
+
+Kraken WebSocket               wss://ws.kraken.com/
+  - Real-time price feed (primary price source)
+  - Auto-reconnects on disconnect with exponential backoff
+
+PAID DATA SOURCES
+-----------------
+Sharpe.ai API                  https://www.sharpe.ai/api
+  Key type: sk_live_...
+  Railway Variable: SHARPE_API_KEY
+
+  Endpoints used:
+  GET /v1/funding/rates?type=history&coin=X&days=1
+    → Most recent perpetual funding rate per coin across all exchanges
+    → Contrarian signal: positive rate = longs crowded = bearish bias
+
+  GET /v1/market/derivatives-overview
+    → Total market OI ($32.9B+)
+    → OI-weighted average funding rate (more accurate than simple average)
+    → Top coins by open interest
+
+  GET /v1/insider-selling/data
+    → Composite 0-10 score per coin for systematic short positioning
+    → Detects coins with persistent negative funding = institutional shorts
+    → Market signal: high average = bearish market pressure
+
+  GET /v1/news/feed
+    → Aggregated crypto news from multiple sources
+
+  Funding Rate Signal Logic:
+    Positive funding rate = longs paying shorts = market is bullish/overcrowded
+    → Contrarian bearish signal (negative score: expect reversal downward)
+
+    Negative funding rate = shorts paying longs = market is bearish/oversold
+    → Contrarian bullish signal (positive score: expect reversal upward)
+
+    Score mapping (8-hour equivalent APY):
+    >100% APY  → signal -5 (extreme long crowding)
+    >35% APY   → signal -4
+    >5% APY    → signal -2 (slightly crowded longs — mild bearish)
+    Neutral    → signal  0
+    <-5% APY   → signal +2 (shorts crowded — mild bullish)
+    <-35% APY  → signal +4
+
+OpenRouter API                 https://openrouter.ai/
+  Key type: sk-or-v1-...
+  Railway Variable: OPENROUTER_API_KEY
+  Models: Hermes 3 70B, Perplexity Sonar, DeepSeek R1, Llama 3.1 8B, GPT-4o-mini
+
+OpenAI API (optional)          https://api.openai.com/
+  Key type: sk-...
+  Railway Variable: OPENAI_API_KEY
+  Model: GPT-4o-mini (accessed via OpenRouter, separate key optional)
+
+Data Refresh Intervals
+----------------------
+WebSocket prices       Real-time (continuous)
+Intelligence panel     Every 600 seconds (10 minutes)
+Sharpe.ai data         Every 540 seconds (9 minutes, cached)
+Fear & Greed           Cached 10 minutes
+Config hot-reload      Every 60 seconds (no restart needed)
+
+
+================================================================================
+8. PERSISTENT HISTORY DATABASE
+================================================================================
+
+File: data/bot_history.db (SQLite, on Railway persistent volume)
+Module: core/history_db.py
+
+The database retains up to 5,000 rows per table and prunes older entries
+automatically. All data survives Railway redeploys and container restarts.
+
+TABLE: trades
+-------------
+id, ts, type, pair, qty, price, pnl_eur, balance_after, paper_mode, reason
+Populated: On every trade execution (BUY/SELL/SHORT_OPEN/SHORT_CLOSE)
+Purpose: Full trade audit trail, feeds into AI context
+
+TABLE: ai_panels
+----------------
+id, ts, combined_score, hermes_score, sonar_score, deepseek_score,
+llama_score, gpt_score, hermes_text, sonar_text, sharpe_at_time, market_outcome
+Populated: Every 10-minute AI intelligence refresh
+market_outcome: Updated retrospectively when next trade closes (WIN/LOSS)
+Purpose: Lets AI models see whether their past calls were right
+
+TABLE: sharpe_snapshots
+-----------------------
+id, ts, btc_funding_score, eth_funding_score, sol_funding_score,
+xrp_funding_score, insider_signal, total_oi_usd, oi_weighted_funding
+Populated: Every AI panel refresh (when Sharpe.ai data is fetched)
+Purpose: Funding rate trend history, shows how signals evolved
+
+TABLE: bot_snapshots
+--------------------
+id, ts, loop, balance_eur, trade_count, sharpe_score, sharpe_verdict,
+regime, intelligence_score, btc_signal, eth_signal, sol_signal, xrp_signal, paper_mode
+Populated: Every 10 loops (~10 minutes)
+Purpose: Performance tracking, balance history
+
+TABLE: optimizer_decisions
+--------------------------
+id, ts, param_key, section, old_value, new_value, sharpe_before, sharpe_after, verdict
+Populated: When the optimizer keeps or reverts a parameter change
+Purpose: Full experiment audit trail
+
+How History Feeds Back Into AI Prompts
+---------------------------------------
+On every intelligence refresh, core/history_db.py::build_history_context()
+reads the last N entries from each table and formats them as a text block
+injected into every model's prompt before they score the market.
+
+This means models see:
+- Whether past bearish/bullish calls preceded actual price movements
+- Whether funding rate signals proved accurate
+- Which parameter changes improved or hurt Sharpe
+- What trades have been placed and their outcomes
+
+
+================================================================================
+9. DEPLOYMENT & INFRASTRUCTURE
+================================================================================
+
+Platform: Railway.app (https://railway.app)
+Container: Docker (python:3.11-slim)
+Branch: main (auto-deploys on git push)
+Repository: https://github.com/bobthetrader/bobtradingbot
+
+Railway Environment Variables (required)
+-----------------------------------------
+KRAKEN_API_KEY          Kraken exchange API key
+KRAKEN_API_SECRET       Kraken exchange API secret
+OPENROUTER_API_KEY      OpenRouter (Hermes, Sonar, DeepSeek, Llama, GPT)
+SHARPE_API_KEY          Sharpe.ai institutional data
+TELEGRAM_BOT_TOKEN      Telegram bot token (from @BotFather)
+TELEGRAM_CHAT_ID        Your personal Telegram chat ID
+
+Persistent Volumes (Railway)
+-----------------------------
+/app/data    → bot-data volume (all state files, SQLite DB, journals, logs)
+
+All critical files are under /app/data/ so a single volume covers everything.
+Without this volume, state resets on every redeploy.
+
+Dockerfile Summary
+------------------
+Base: python:3.11-slim
+Build: pip install -r requirements.txt
+Run: python main.py (overridden by railway.toml to: python main.py --paper)
+Health check: Verifies log file was written within last 5 minutes
+
+Switching Paper → Live
+-----------------------
+In Railway Variables: remove BOT_ARGS or set BOT_ARGS= (empty)
+Or in railway.toml: change startCommand to "python main.py"
+The bot will use config.toml (live config) instead of config.paper.toml
+
+IMPORTANT before going live:
+1. Regenerate OpenRouter API key (was visible in chat session)
+2. Deposit EUR into Kraken account
+3. Ensure Kraken API key has Order Management permissions
+4. Apply for Kraken margin trading if shorting is desired
+5. Have Kraken account at Intermediate verification level
+
+Local Development
+-----------------
+cd D:\tradingbot
+venv\Scripts\python.exe main.py --paper --duration 3600
+
+Requirements: Python 3.11, packages in requirements.txt
+Key packages: krakenex, openai, flask, requests, pandas, numpy, python-dotenv
+
+
+================================================================================
+10. DASHBOARD & NOTIFICATIONS
+================================================================================
+
+Web Dashboard
+-------------
+URL: Your Railway service public domain (e.g. https://bobtradingbot-xxx.railway.app)
+Port: 8080 (Railway routes automatically)
+Refresh: Every 30 seconds (auto-refresh via meta tag)
+
+Dashboard Cards:
+  Balance            EUR balance, P&L from start, trade count, regime
+  Sharpe Score       Current Sharpe, verdict (success/neutral/failure), trend
+  Pair Signals       BUY/SELL/HOLD per pair with score, combined AI panel score
+  Open Positions     Long and short positions with entry price
+  Sharpe.ai         Per-coin funding rate signal, insider selling market signal
+  AI Model Panel    Per-model scores with bar chart and reasoning text
+  Recent Trades     Last 15 trades with timestamp, type, pair, price, P&L
+  AI Panel History  Last 10 AI assessments with model scores and trade outcomes
+  DB Stats Footer   History DB row counts and oldest trade date
+
+Telegram Notifications
+-----------------------
+Bot: @[your bot name] via BotFather
+Triggers: Every BUY, SELL, SHORT OPEN, SHORT CLOSE, PARTIAL SELL
+
+Message format example:
+  🟢 BUY #7
+  Pair: XRPEUR
+  Volume: 12.345678 (~10.00 EUR)
+  Price: 0.9823 EUR
+
+  🔴 SELL #8
+  Pair: XRPEUR
+  Volume: 12.345678
+  Price: 0.9985 EUR
+  P&L: +€0.0200
+
+
+================================================================================
+11. CURRENT CONFIGURATION (PAPER MODE)
+================================================================================
+
+As of June 2026, the bot runs in paper mode with €100 simulated starting balance.
+
+Active pairs:       XBTEUR, ETHEUR, SOLEUR, XRPEUR
+Mode:               Paper (no real money)
+Balance:            €100 simulated
+Trade size:         10% of balance (~€10 per trade)
+Min trade:          €5
+
+Signal thresholds (paper):
+  Buy gate:         score ≥ 8.0 (after AI adjustment)
+  Sell gate:        profit ≥ TP% above entry
+  Take profit:      2% (long), 1.5% (short)
+  Stop loss:        2% (long), 3% (short)
+
+AI panel:
+  5 models active  (Hermes, Sonar, DeepSeek, Llama, GPT)
+  Score weight:    0.5 (each point adjusts buy gate by 0.5)
+  Refresh:         Every 10 minutes
+
+Sharpe.ai:
+  Funding rates:   Per coin, history endpoint, 1-day lookback
+  Insider selling: Market-wide composite score
+  Derivatives:     Total OI + OI-weighted funding
+
+Optimizer:
+  Enabled:         true
+  Eval interval:   Every 10 closed trades
+  Target:          Sharpe ≥ 3.0 (success)
+  Exit trigger:    Sharpe < 1.0 (failure, revert last change)
+
+
+================================================================================
+12. SWITCHING TO LIVE TRADING
+================================================================================
+
+Pre-flight checklist:
+[ ] Run paper mode for minimum 1-2 weeks, review Sharpe score
+[ ] Confirm Sharpe > 1.5 over 30+ trades before going live
+[ ] Regenerate OpenRouter API key (sk-or-v1-...) at openrouter.ai/keys
+[ ] Regenerate Sharpe.ai API key at sharpe.ai
+[ ] Deposit EUR into Kraken (minimum €50 recommended, €100+ preferred)
+[ ] Verify Kraken account at Intermediate level
+[ ] Confirm API key permissions: Query Funds, Create Orders, Query Orders,
+    Query Trades, Query Ledger, Cancel Orders
+[ ] Apply for margin trading on Kraken if shorting desired (1-2 business days)
+[ ] Review config.toml settings (currently: 50% allocation, 5% SL, 4% hard stop)
+
+To activate live mode:
+  Railway → Service → Variables → remove BOT_ARGS variable → Update → Redeploy
+
+The bot will automatically use config.toml (live config) and real Kraken balances.
+
+Revenue model:
+  The bot profits from the spread between entry and exit prices, minus fees.
+  Kraken maker fee: 0.16%, taker fee: 0.26% (at lowest tier)
+  Each round trip (buy + sell) costs ~0.42% in fees.
+  Therefore: take_profit_percent must exceed 0.42% just to break even.
+  Current setting of 2% TP gives ~1.58% gross profit per winning trade.
+
+
+================================================================================
+13. KNOWN ISSUES & FUTURE IMPROVEMENTS
+================================================================================
+
+Known Issues
+------------
+1. Windows fcntl lock: The single-instance lock and order lock both rely on
+   fcntl which is Linux-only. On Windows (development machine), these are
+   no-ops. On Railway (Linux), they work correctly.
+
+2. kelly_fraction: Calculated but not used in position sizing. Dead code —
+   could be wired into allocation_per_trade_percent calculation.
+
+3. get_crypto_holdings() hardcodes 11 asset mappings. Adding new pairs
+   requires updating this dict manually.
+
+4. Hermes 3 70B occasionally ignores the score format instruction and
+   returns conversational text. The score parser falls back to extracting
+   the first number in the response, which may be inaccurate.
+
+5. Score zeroing: All pair scores sometimes show 0.00 for extended periods.
+   This happens when RSI is in the neutral zone (30-70) and price is inside
+   the Bollinger Bands simultaneously. The bot holds during these periods.
+
+Planned Improvements
+--------------------
+- Volatility-based TP advisor: Calculate achievable TP% from recent ATR
+  and display suggested parameters on dashboard
+- Sharpe.ai futures data: Use long/short ratio data for additional signal
+- More pairs: Add ADAEUR, DOTEUR when bot proves profitable on current 4
+- Backtesting integration: Run new parameter combinations against historical
+  data before the optimizer deploys them live
+- WebSocket order execution: Currently uses REST for orders (slow);
+  WebSocket order placement would reduce execution latency
+- Portfolio rebalancing: Prevent over-concentration in one pair
+- Notification improvements: Daily P&L summary, Sharpe score alerts
+
+
+================================================================================
+SUMMARY
+================================================================================
+
+This bot represents a complete algorithmic trading stack built from scratch:
+
+  SIGNAL LAYER    → Technical analysis (RSI, BB, ATR, EMA, MACD)
+  INTELLIGENCE    → 5 AI models + Sharpe.ai institutional data
+  RISK MGMT       → 3-layer stop system, position limits, drawdown controls
+  LEARNING        → Scientific method optimizer + AI historical calibration
+  PERSISTENCE     → SQLite DB + JSONL journals + JSON state files
+  INFRASTRUCTURE  → Docker on Railway, GitHub CI/CD, Kraken WebSocket
+  MONITORING      → Flask dashboard + Telegram alerts
+
+The system is designed to improve over time: the optimizer systematically
+tests parameter changes while the AI panel calibrates against its own
+historical decisions. Together they create a self-improving loop bounded
+by the Sharpe ratio objective (target ≥ 3.0, exit if < 1.0).
+
+================================================================================
+END OF REPORT
+================================================================================
