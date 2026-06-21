@@ -436,6 +436,31 @@ class TechnicalAnalysis:
                     elif current_price < sma50 and score == 0.0:
                         score = -8.0  # weak, no signal override
 
+            # ── SMA momentum path ────────────────────────────────────────────
+            # Always generates a non-zero score so the bot trades even when
+            # RSI is neutral (30-70) and price is inside Bollinger Bands.
+            # SMA8 > SMA21 = short-term trend bullish → BUY bias.
+            # SMA8 < SMA21 = short-term trend bearish → SELL bias.
+            # Score capped at ±15 so this never overrides a strong RSI/BB signal.
+            if len(prices) >= 21:
+                try:
+                    sma8  = float(np.mean(prices[-8:]))
+                    sma21 = float(np.mean(prices[-21:]))
+                    if sma21 > 0:
+                        sma_gap_pct   = (sma8 - sma21) / sma21 * 100
+                        momentum_score = max(-15.0, min(15.0, sma_gap_pct * 20))
+                        if signal == "HOLD" and abs(momentum_score) >= 0.5:
+                            # No existing signal — use momentum as primary
+                            signal = "BUY" if momentum_score > 0 else "SELL"
+                            score  = momentum_score
+                        elif signal in ("BUY", "SELL"):
+                            # Existing signal — add 30% boost when momentum agrees
+                            if (signal == "BUY"  and momentum_score > 0) or \
+                               (signal == "SELL" and momentum_score < 0):
+                                score += abs(momentum_score) * 0.3
+                except Exception:
+                    pass
+
             # Cap score
             score = max(-50.0, min(50.0, score))
 
