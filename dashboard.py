@@ -112,11 +112,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
   <h1>&#x1F916; Bob Trading Bot</h1>
   <div class="subtitle">Auto-refreshes every 30s &nbsp;&#x2022;&nbsp; Updated: {updated} &nbsp;&#x2022;&nbsp; Loop #{loop} &nbsp;&#x2022;&nbsp; {mode}</div>
-  <div style="margin-bottom:12px">
-    <a href="/force-buy"  style="display:inline-block;padding:8px 18px;background:#00c851;color:#000;font-weight:bold;border-radius:6px;text-decoration:none;margin-right:8px;font-family:monospace">&#x1F7E2; Force Buy</a>
-    <a href="/force-sell" style="display:inline-block;padding:8px 18px;background:#ff4444;color:#fff;font-weight:bold;border-radius:6px;text-decoration:none;font-family:monospace">&#x1F534; Force Sell</a>
-    <span style="color:#8b949e;font-size:11px;margin-left:12px">Demo only — executes immediately on next loop</span>
-  </div>
 
   <div class="grid">
 
