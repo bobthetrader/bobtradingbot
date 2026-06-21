@@ -2579,10 +2579,26 @@ class TradingBot:
                 signal = self.pair_signals.get(pair) or "HOLD"
                 score  = float(self.pair_scores.get(pair, 0))
                 self.logger.info("PAIR %s: %s | score %.2f", pair, signal, score)
-                if signal in ("BUY", "SELL") and abs(score) > abs(best_score):
+
+                if signal not in ("BUY", "SELL"):
+                    time.sleep(0.25)
+                    continue
+
+                # Filter non-actionable signals before scoring — prevents a strong
+                # SELL on an empty position from beating a weaker BUY this cycle.
+                has_long  = (self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)) >= self._get_min_volume(pair)
+                has_short = self.short_qty.get(pair, 0.0) > 0
+
+                if signal == "SELL" and not has_long and not has_short and not self.enable_live_shorts:
+                    # No position to close and shorts disabled — not actionable
+                    time.sleep(0.25)
+                    continue
+
+                if abs(score) > abs(best_score):
                     best_pair   = pair
                     best_signal = signal
                     best_score  = score
+
                 time.sleep(0.25)
             except Exception as exc:
                 self.logger.error("_select_best_pair error for %s: %s", pair, exc)
@@ -3473,8 +3489,14 @@ class TradingBot:
                     self.logger.info(f"BUY skipped for {pair}: top ask depth insufficient for planned size ({best_ask*best_ask_vol:.2f} EUR < {planned_notional*min_book_fill_ratio:.2f} EUR)")
                     return
             except Exception as e:
-                self.logger.warning(f"Preflight checks failed for BUY {pair}: {e}")
-                return
+                # Fail-open in paper mode — don't block simulated orders due to API hiccups.
+                # In live mode, keep fail-closed to protect against bad fills.
+                is_paper = bool(getattr(self.api_client, 'paper_mode', False))
+                if is_paper:
+                    self.logger.debug(f"Preflight skipped in paper mode ({pair}): {e}")
+                else:
+                    self.logger.warning(f"Preflight checks failed for BUY {pair}: {e}")
+                    return
 
             prev_qty = self.holdings.get(pair, 0.0)
             result = self._place_live_order(pair=pair, direction='buy', volume=volume, price=price, post_only=True)
