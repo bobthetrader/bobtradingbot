@@ -2663,10 +2663,10 @@ class TradingBot:
                                     "pair_signals":    dict(getattr(self, "pair_signals", {})),
                                     "pair_scores":     dict(getattr(self, "pair_scores", {})),
                                     "open_positions":  {
-                                        p: {"qty": float(getattr(self, "holdings", {}).get(p, 0)),
+                                        p: {"qty": float(getattr(self, "position_qty", {}).get(p, 0) or getattr(self, "holdings", {}).get(p, 0)),
                                             "entry": float(getattr(self, "purchase_prices", {}).get(p, 0))}
                                         for p in getattr(self, "trade_pairs", [])
-                                        if float(getattr(self, "holdings", {}).get(p, 0)) > 0
+                                        if float(getattr(self, "position_qty", {}).get(p, 0) or getattr(self, "holdings", {}).get(p, 0)) > 0
                                     },
                                     "open_shorts": {
                                         p: {"qty": float(getattr(self, "short_qty", {}).get(p, 0)),
@@ -2742,7 +2742,9 @@ class TradingBot:
                         try:
                             os.remove(_force_sell_path)
                             for _fp in list(self.trade_pairs):
-                                _fqty = self.holdings.get(_fp, 0)
+                                # Use position_qty as the authoritative source (holdings
+                                # can be zeroed by _sync_account_state in paper mode)
+                                _fqty = self.position_qty.get(_fp, self.holdings.get(_fp, 0))
                                 _fprice = self.pair_prices.get(_fp, 0)
                                 if _fqty > 0 and _fprice > 0:
                                     self.logger.info(f"FORCE_SELL triggered for {_fp} @ {_fprice:.4f}")
@@ -2926,9 +2928,10 @@ class TradingBot:
                         }
                         for _p in getattr(self, 'trade_pairs', []):
                             try:
-                                if float(getattr(self, 'holdings', {}).get(_p, 0)) > 0:
+                                _pos_qty = float(self.position_qty.get(_p, 0) or self.holdings.get(_p, 0))
+                                if _pos_qty > 0:
                                     _status["open_positions"][_p] = {
-                                        "qty":   round(float(self.holdings.get(_p, 0)), 8),
+                                        "qty":   round(_pos_qty, 8),
                                         "entry": round(float(getattr(self, 'purchase_prices', {}).get(_p, 0)), 4),
                                     }
                                 if float(getattr(self, 'short_qty', {}).get(_p, 0)) > 0:
