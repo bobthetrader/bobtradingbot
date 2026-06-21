@@ -30,6 +30,7 @@ min_auto_scale_notional = 0.1
 mr_rsi_oversold_threshold = 45
 mr_rsi_overbought_threshold = 55
 max_consecutive_losses = 10
+max_open_positions = 20
 
 [intelligence]
 refresh_seconds = 600

@@ -2839,8 +2839,9 @@ class TradingBot:
                 pair, score, _effective_min, self.min_buy_score, _intel_adj
             )
             return
-        if self._count_open_positions() >= self.max_open_positions:
-            self.logger.info("BUY skipped: max open positions reached")
+        _open_pos = self._count_open_positions()
+        if _open_pos >= self.max_open_positions:
+            self.logger.info("BUY skipped: max open positions reached (%d/%d)", _open_pos, self.max_open_positions)
             return
         if not self._is_trading_hours():
             self.logger.info("BUY skipped: outside trading hours")
