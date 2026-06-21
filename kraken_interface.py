@@ -685,7 +685,18 @@ class KrakenAPI:
                 res = {'txid': [txid], 'simulated': True}
                 if mid:
                     res['fill_price'] = mid
-                self.logger.info(f"[PAPER] Simulated order: {direction} {volume} {pair} @ {res.get('fill_price')} ({order_type})")
+
+                # Update simulated EUR balance so get_account_balance() reflects trades
+                fill = float(res.get('fill_price') or mid or 0)
+                if fill > 0 and volume > 0:
+                    notional = float(volume) * fill
+                    fee = notional * 0.0026   # Kraken taker fee estimate
+                    if direction == 'buy':
+                        self._paper_balance_eur = max(0.0, self._paper_balance_eur - notional - fee)
+                    elif direction == 'sell':
+                        self._paper_balance_eur += notional - fee
+
+                self.logger.info(f"[PAPER] Simulated order: {direction} {volume} {pair} @ {res.get('fill_price')} ({order_type}) | EUR balance: {self._paper_balance_eur:.2f}")
                 return res
 
             with acquire_order_lock(timeout_seconds=5.0) as locked:
