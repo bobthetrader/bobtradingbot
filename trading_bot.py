@@ -2901,10 +2901,12 @@ class TradingBot:
                 )
         elif self.enable_live_shorts and self.short_qty.get(pair, 0.0) <= 0:
             score        = float(self.pair_scores.get(pair, 0.0))
-            trend_bearish = not self._is_ema_trend_bullish(pair)
+            # Read cached EMA trend directly (not via the BUY filter flag) so
+            # disabling enable_ema_crossover_filter doesn't also disable short entry.
+            trend_bearish = not self._ema_bullish.get(pair, True)
             risk_off_ok  = (not self._is_risk_on_regime()
                             if self.enable_regime_filter else True)
-            if trend_bearish and risk_off_ok and score <= -self.min_buy_score:
+            if (trend_bearish or score <= -abs(self.min_buy_score) * 3) and risk_off_ok and score <= -self.min_buy_score:
                 self.execute_open_short_order(pair, price)
             else:
                 self.logger.info(
