@@ -6,7 +6,7 @@ secret = ""
 [bot_settings]
 base_currency = "EUR"
 auto_select_pair = true
-loop_interval_seconds = 60
+loop_interval_seconds = 30
 trade_pairs = [ "XXBTZEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR",]
 allocation_per_trade_percent = 10.0
 
@@ -15,11 +15,12 @@ max_drawdown_percent = 10.0
 stop_loss_percent = 2.0
 allocation_per_trade_percent = 10.0
 min_trade_eur = 5.0
-min_buy_score = 8.0                  # was 18 — scores peak at 12-15 in normal markets
+min_buy_score = 5.0
 enable_trading_hours = false
 enable_regime_filter = false
-mr_rsi_oversold_threshold = 28       # more sensitive oversold detection
-mr_rsi_overbought_threshold = 65     # was 55 — 55 triggered SELL too easily
+enable_volume_filter = false
+mr_rsi_oversold_threshold = 42       # fires when RSI < 42 — common in normal markets
+mr_rsi_overbought_threshold = 58     # fires when RSI > 58 — common in normal markets
 
 [intelligence]
 refresh_seconds = 600
