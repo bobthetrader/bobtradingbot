@@ -1845,10 +1845,13 @@ class TradingBot:
         return current_balance - getattr(self, "cumulative_start_eur", current_balance)
 
     def _count_open_positions(self) -> int:
-        """Return the number of pairs where holdings exceed the minimum tradeable volume."""
+        """Return the number of pairs where holdings exceed the minimum tradeable volume.
+        Uses position_qty as primary source — holdings is zeroed by _sync_account_state
+        in paper mode and cannot be trusted for counting active positions."""
         return sum(
             1 for pair in self.trade_pairs
-            if self.holdings.get(pair, 0.0) >= self._get_min_volume(pair)
+            if (self.position_qty.get(pair, 0.0) or self.holdings.get(pair, 0.0))
+            >= self._get_min_volume(pair)
         )
 
     def _is_on_cooldown(self, pair):
@@ -2074,8 +2077,8 @@ class TradingBot:
             if current_price <= 0:
                 continue
 
-            # Long position exits
-            holding = self.holdings.get(pair, 0)
+            # Long position exits — use position_qty (holdings zeroed in paper mode)
+            holding = self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)
             min_vol = self._get_min_volume(pair)
             if holding >= min_vol:
                 prev_peak = self.peak_prices.get(pair, 0.0)
@@ -3139,12 +3142,8 @@ class TradingBot:
                                 if self._can_close_short_profit_target(best_pair, price):
                                     self.execute_close_short_order(best_pair, price)
                                 else:
-                                    # If we get a bullish signal, close early to avoid adverse move
-                                    if best_signal == "BUY":
-                                        self.execute_close_short_order(best_pair, price)
-                                        self.logger.info(
-                                            f"SHORT CLOSED early on bullish signal for {best_pair} (price {price:.2f})"
-                                        )
+                                    # Note: best_signal == "SELL" here so BUY check removed (was dead code)
+                                    if False:
                                     else:
                                         se = self.short_entry_prices.get(best_pair, 0.0)
                                         spp = ((se - price) / se * 100.0) if se > 0 else 0.0
@@ -3609,7 +3608,7 @@ class TradingBot:
                 self.short_qty.get(p, 0) * self.pair_prices.get(p, 0)
                 for p in self.trade_pairs
             )
-            _nav = max(_balance, current_balance if (current_balance := self.get_eur_balance()) else _balance)
+            _nav = max(_balance, self.get_eur_balance() or _balance)
             if self._btc_downtrend:
                 short_type = "BEAR"
                 notional = _nav * 0.05   # 5% of NAV — BTC regime confirms downtrend
@@ -3726,6 +3725,9 @@ class TradingBot:
                 self.logger.info(f"SHORT CLOSE SUMMARY: {pair} {qty:.6f} (~{qty*price:.2f} EUR)")
                 self.logger.info(f"SHORT PNL ESTIMATE {pair}: {pnl_eur:.2f} EUR ({pnl_pct:.2f}%)")
                 self._update_trade_metrics(pair, pnl_eur)
+                self._journal_trade('SHORT_CLOSE', pair, qty, price, pnl_eur,
+                                    'SHORT_CLOSE_EXECUTED',
+                                    extra={'entry': entry, 'exit_price': price, 'pnl_pct': pnl_pct})
                 print(f"\n[SHORT CLOSE] {qty:.6f} {pair} - Trade #{self.trade_count}")
                 pnl_sign = "🟢" if pnl_eur >= 0 else "🔴"
                 _notifier.send(

@@ -374,7 +374,7 @@ class TechnicalAnalysis:
             score = 0.0
 
             # RSI confirmation (used by both signal paths)
-            rsi_confirm = self.calculate_rsi(list(price_history)[-20:]) if len(price_history) >= 20 else None
+            rsi_confirm = self.calculate_rsi(list(price_history)) if len(price_history) >= self.rsi_period + 1 else None
             rsi_full = self.calculate_rsi(list(price_history)) if len(price_history) >= self.rsi_period + 1 else None
             sma_ratio = (sma20 - sma50) / sma50 if sma50 > 0 else 0.0
 
