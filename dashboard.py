@@ -149,6 +149,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {positions_html}
     </div>
 
+    <!-- Monthly return card -->
+    <div class="card full">
+      <h2>Monthly Return Target &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Goal: +3% to +8% per month</span></h2>
+      {monthly_html}
+    </div>
+
     <!-- Sharpe.ai derivatives card -->
     <div class="card full">
       <h2>Sharpe.ai Derivatives</h2>
@@ -217,6 +223,49 @@ def _build_page() -> str:
         )
     if not signal_rows:
         signal_rows = '<tr><td colspan="3" class="grey">Waiting for signals…</td></tr>'
+
+    # ── Monthly return ────────────────────────────────────────────────────────
+    monthly_pct   = status.get("monthly_return_pct", 0.0)
+    monthly_start = status.get("monthly_start_bal", 0.0)
+    target_lo     = status.get("monthly_target_low", 3.0)
+    target_hi     = status.get("monthly_target_high", 8.0)
+
+    if monthly_pct >= target_hi:
+        m_col   = "#ffd700"   # gold — above target, protecting gains
+        m_label = f"+{monthly_pct:.2f}% ✓ TARGET EXCEEDED — position sizing reduced to protect gains"
+    elif monthly_pct >= target_lo:
+        m_col   = "#00c851"   # green — in target range
+        m_label = f"+{monthly_pct:.2f}% ✓ ON TARGET"
+    elif monthly_pct >= 0:
+        m_col   = "#ffbb33"   # yellow — positive but below target
+        m_label = f"+{monthly_pct:.2f}% — building toward {target_lo}% target"
+    else:
+        m_col   = "#ff4444"   # red — negative
+        m_label = f"{monthly_pct:.2f}% — below breakeven, slight aggression enabled"
+
+    # Progress bar: 0% → 8% range, clamp at 100%
+    bar_pct  = max(0, min(100, (monthly_pct / target_hi) * 100))
+    bar_col  = m_col
+    zone_lo  = round((target_lo / target_hi) * 100)   # where 3% sits on bar
+
+    monthly_html = f"""
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <div style="font-size:32px;font-weight:bold;color:{m_col}">{monthly_pct:+.2f}%</div>
+      <div>
+        <div style="font-size:13px;color:{m_col};margin-bottom:4px">{m_label}</div>
+        <div style="font-size:11px;color:#8b949e">
+          Month start: €{monthly_start:.2f} &nbsp;•&nbsp; Target: +{target_lo}% to +{target_hi}%
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:12px;background:#21262d;border-radius:6px;height:12px;position:relative">
+      <div style="position:absolute;left:{zone_lo}%;top:0;bottom:0;width:2px;background:#30363d"></div>
+      <div style="background:#30363d;border-radius:6px;position:absolute;left:{zone_lo}%;right:0;top:0;bottom:0"></div>
+      <div style="background:{bar_col};width:{bar_pct:.0f}%;height:12px;border-radius:6px;transition:width 1s"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:10px;color:#8b949e;margin-top:3px">
+      <span>0%</span><span style="color:#ffbb33">+{target_lo}% target floor</span><span style="color:#ffd700">+{target_hi}% cap</span>
+    </div>"""
 
     # ── Sharpe.ai derivatives ─────────────────────────────────────────────────
     funding       = status.get("sharpe_funding", {})
@@ -410,6 +459,7 @@ def _build_page() -> str:
         intel_score   = status.get("intelligence_score", 0.0),
         btc_mode      = btc_mode,
         signal_rows   = signal_rows,
+        monthly_html  = monthly_html,
         sharpe_html   = sharpe_html,
         model_html    = model_html,
         positions_html= positions_html,

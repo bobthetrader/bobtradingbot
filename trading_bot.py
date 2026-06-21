@@ -271,10 +271,13 @@ class TradingBot:
         self._last_balance_eur: float = 0.0
 
         # ── TR-GC inspired features ───────────────────────────────────────────
-        # BTC regime: True = downtrend (close < 20-day SMA) → enable BEAR shorts
         self._btc_downtrend: bool = False
-        # Breakout recency: pair → unix timestamp of last Bollinger Band breakout
         self._breakout_timestamps: dict = {}
+
+        # ── Monthly return target (3-8% per month) ────────────────────────────
+        self._monthly_start_balance: float = 0.0
+        self._monthly_start_month: int = 0   # calendar month number
+        self._monthly_target_hit_notified: bool = False
 
         # ── Sharpe + scientific-method optimizer ─────────────────────────────
         _opt_cfg = self.config.get('optimizer', {})
@@ -654,6 +657,29 @@ class TradingBot:
         except Exception:
             return 30.0
 
+    def _monthly_return_pct(self, current_balance: float) -> float:
+        """Return % gain since the start of the current calendar month."""
+        if self._monthly_start_balance <= 0:
+            return 0.0
+        return ((current_balance - self._monthly_start_balance) / self._monthly_start_balance) * 100.0
+
+    def _monthly_size_multiplier(self, current_balance: float) -> float:
+        """
+        Adjust position sizing based on monthly return progress:
+          >= 8%  → 0.3× (protect gains — lock in the month)
+          >= 3%  → 0.7× (on track — slightly conservative)
+          >= 0%  → 1.0× (normal)
+          <  0%  → 1.2× (behind — slight aggression, within risk limits)
+        """
+        pct = self._monthly_return_pct(current_balance)
+        if pct >= 8.0:
+            return 0.3
+        if pct >= 3.0:
+            return 0.7
+        if pct >= 0.0:
+            return 1.0
+        return 1.2
+
     def _is_btc_downtrend(self) -> bool:
         """Return True when BTC close is below its 20-period SMA — BEAR regime.
         Mirrors the TR-GC-Crypto-LS-2 BTC regime flag from step 3."""
@@ -715,6 +741,9 @@ class TradingBot:
 
         # 4. Breakout recency multiplier (TR-GC inspired)
         amount *= self._breakout_size_multiplier(pair)
+
+        # 5. Monthly return multiplier — protect gains, slight aggression when behind
+        amount *= self._monthly_size_multiplier(available_eur)
 
         # Cap at configured max base amount and available funds
         return min(base_amount * 2.0, amount, available_eur * 0.95)
@@ -2686,13 +2715,38 @@ class TradingBot:
                     # Update BTC regime flag every loop (cheap — reads local history)
                     self._btc_downtrend = self._is_btc_downtrend()
 
-                    # Daily reset of daily_start_balance
+                    # Daily + monthly balance resets
                     now = datetime.now()
                     last_reset = datetime.fromtimestamp(self.last_daily_reset_ts)
                     if now.day != last_reset.day or now.month != last_reset.month or now.year != last_reset.year:
                         self.daily_start_balance = current_balance
                         self.last_daily_reset_ts = int(time.time())
                         self.logger.info(f"Daily start balance reset to {self.daily_start_balance:.2f} EUR")
+
+                    # Monthly reset — fires on the 1st of each new month
+                    if now.month != self._monthly_start_month or self._monthly_start_balance <= 0:
+                        self._monthly_start_balance = current_balance
+                        self._monthly_start_month = now.month
+                        self._monthly_target_hit_notified = False
+                        self.logger.info(
+                            f"Monthly tracker reset: start={current_balance:.2f} EUR "
+                            f"(target +3-8% by end of month)"
+                        )
+
+                    # Monthly target alert
+                    _monthly_pct = self._monthly_return_pct(current_balance)
+                    if _monthly_pct >= 3.0 and not self._monthly_target_hit_notified:
+                        self._monthly_target_hit_notified = True
+                        self.logger.info(f"MONTHLY TARGET HIT: +{_monthly_pct:.2f}% this month")
+                        try:
+                            _notifier.send(
+                                f"🎯 <b>Monthly target reached!</b>\n"
+                                f"Return this month: <b>+{_monthly_pct:.2f}%</b>\n"
+                                f"Start: €{self._monthly_start_balance:.2f} → Now: €{current_balance:.2f}\n"
+                                f"Target range: +3% to +8% — position sizing reduced to protect gains."
+                            )
+                        except Exception:
+                            pass
                     if current_balance >= self.target_balance_eur:
                         self.logger.info(f"TARGET REACHED! Balance: {current_balance:.2f} EUR")
                         print(f"\nTARGET REACHED! Balance: {current_balance:.2f} EUR")
@@ -2821,6 +2875,10 @@ class TradingBot:
                             "sharpe_insider":      getattr(self, '_sharpe_insider_scores', {}),
                             "btc_downtrend":       self._btc_downtrend,
                             "short_mode":          "BEAR (5% NAV)" if self._btc_downtrend else "HEDGE (3% NAV)",
+                            "monthly_return_pct":  round(self._monthly_return_pct(current_balance), 2),
+                            "monthly_start_bal":   round(self._monthly_start_balance, 2),
+                            "monthly_target_low":  3.0,
+                            "monthly_target_high": 8.0,
                             "breakout_ages_days":  {
                                 p: round((time.time() - ts) / 86400, 1)
                                 for p, ts in self._breakout_timestamps.items() if ts > 0
