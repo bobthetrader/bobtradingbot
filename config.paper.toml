@@ -15,8 +15,9 @@ max_drawdown_percent = 10.0
 stop_loss_percent = 2.0
 allocation_per_trade_percent = 10.0
 min_trade_eur = 5.0
-min_buy_score = -100.0               # TEMP: force trade on next loop
+min_buy_score = 8.0                  # was 18 — scores peak at 12-15 in normal markets
 enable_trading_hours = false
+enable_regime_filter = false
 mr_rsi_oversold_threshold = 28       # more sensitive oversold detection
 mr_rsi_overbought_threshold = 65     # was 55 — 55 triggered SELL too easily
 
@@ -61,5 +62,5 @@ initial_balance = 100.0
 enabled = true
 leverage = "2"
 max_short_notional_eur = 25.0
-short_take_profit_percent = 0.1      # TEMP: close shorts almost immediately
+short_take_profit_percent = 1.5      # was 3.5 — 3.5% never hits in 1-2% daily range
 short_stop_loss_percent = 3.0

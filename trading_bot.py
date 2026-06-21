@@ -2715,6 +2715,21 @@ class TradingBot:
                     # Update BTC regime flag every loop (cheap — reads local history)
                     self._btc_downtrend = self._is_btc_downtrend()
 
+                    # ── FORCE_BUY trigger (test/demo mechanism) ───────────────
+                    _force_buy_path = os.path.join(os.path.dirname(__file__), 'data', 'FORCE_BUY')
+                    if os.path.exists(_force_buy_path):
+                        try:
+                            os.remove(_force_buy_path)
+                            _force_pair = self.trade_pairs[0] if self.trade_pairs else None
+                            if _force_pair:
+                                _force_price = self.pair_prices.get(_force_pair, 0)
+                                if _force_price > 0:
+                                    self.logger.info(f"FORCE_BUY triggered for {_force_pair} @ {_force_price:.4f}")
+                                    self._breakout_timestamps[_force_pair] = time.time()
+                                    self.execute_buy_order(_force_pair, _force_price)
+                        except Exception as _fe:
+                            self.logger.warning(f"FORCE_BUY error: {_fe}")
+
                     # Daily + monthly balance resets
                     now = datetime.now()
                     last_reset = datetime.fromtimestamp(self.last_daily_reset_ts)
