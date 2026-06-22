@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 SHARPE_SUCCESS   = 3.0
 SHARPE_FAILURE   = 1.0
-MIN_TRADES       = 10    # need at least this many closed trades
+MIN_TRADES       = 5     # need at least this many closed trades
 ROLLING_WINDOW   = 50    # evaluate over the most recent N trades
 
 
@@ -73,11 +73,11 @@ def _extract_returns(events: list) -> list:
             capital = price * volume if price > 0 and volume > 0 else max(bal * 0.05, 1.0)
             open_trades[pair] = {"capital": capital}
 
-        elif ttype in ("SELL", "SHORT_CLOSE") and pnl != 0.0:
+        elif ttype in ("SELL", "SHORT_CLOSE"):
             entry = open_trades.pop(pair, None)
             capital = entry["capital"] if entry else max(bal * 0.05, 1.0)
             if capital > 0:
-                returns.append(pnl / capital)
+                returns.append(pnl / capital)   # include breakeven (0) trades
 
     return returns
 

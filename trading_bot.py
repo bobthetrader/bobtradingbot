@@ -307,10 +307,35 @@ class TradingBot:
 
         # â”€â”€ Sharpe + scientific-method optimizer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _opt_cfg = self.config.get('optimizer', {})
-        self._sharpe_result: dict = {}
-        self._closed_trades_count: int = 0
         self._optimizer_interval: int = int(_opt_cfg.get('eval_every_n_trades', 10))
         self._optimizer_enabled: bool = bool(_opt_cfg.get('enabled', True))
+
+        # Initialise Sharpe from existing trade history so restarts don't lose progress
+        self._sharpe_result: dict = {}
+        self._closed_trades_count: int = 0
+        if _OPTIMIZER_AVAILABLE:
+            try:
+                _journal = os.path.join(
+                    os.path.dirname(__file__), 'data',
+                    'trade_events_paper.jsonl' if getattr(api_client, 'paper_mode', False)
+                    else 'trade_events_live.jsonl'
+                )
+                if os.path.exists(_journal):
+                    import json as _j
+                    with open(_journal, 'r', encoding='utf-8') as _f:
+                        self._closed_trades_count = sum(
+                            1 for _l in _f
+                            if _l.strip() and _j.loads(_l).get('type') in ('SELL', 'SHORT_CLOSE')
+                        )
+                    if self._closed_trades_count >= 5:
+                        self._sharpe_result = _calculate_sharpe(_journal)
+                        self.logger.info(
+                            "Sharpe initialised from history: %.3f (%d closed trades)",
+                            self._sharpe_result.get('sharpe') or 0.0,
+                            self._closed_trades_count
+                        )
+            except Exception as _se:
+                self.logger.debug("Sharpe init from history failed: %s", _se)
         self.take_profit_percent = self._get_take_profit_percent()
         self.stop_loss_percent = self._get_stop_loss_percent()
         self.max_open_positions = int(self.config.get('risk_management', {}).get('max_open_positions', 3))
@@ -3575,7 +3600,8 @@ class TradingBot:
             if ttype in ('SELL', 'SHORT_CLOSE') and _OPTIMIZER_AVAILABLE:
                 try:
                     self._closed_trades_count += 1
-                    if self._closed_trades_count % self._optimizer_interval == 0:
+                    # Recalculate Sharpe every 5 closed trades (not just optimizer intervals)
+                    if self._closed_trades_count % 5 == 0 or self._closed_trades_count < 10:
                         self._sharpe_result = _calculate_sharpe(self.json_journal_path)
                         s = self._sharpe_result
                         self.logger.info(
