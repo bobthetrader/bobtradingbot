@@ -129,6 +129,12 @@ except ImportError:
     _HISTORY_DB_AVAILABLE = False
 
 try:
+    from core.onchain_data import fetch_all_onchain as _fetch_onchain_status
+    _ONCHAIN_AVAILABLE = True
+except ImportError:
+    _ONCHAIN_AVAILABLE = False
+
+try:
     from core.alpaca_interface import (
         get_client as _alpaca_client,
         is_available as _alpaca_available,
@@ -3461,6 +3467,22 @@ class TradingBot:
                             pass
                         _status["new_listings"]     = _listings_display
                         _status["kraken_headlines"] = getattr(self, '_kraken_headlines', [])
+
+                        # On-chain data (cached, runs every 5 min via market_intelligence)
+                        if _ONCHAIN_AVAILABLE and iteration % 5 == 0:
+                            try:
+                                _oc = _fetch_onchain_status()
+                                _status["onchain"] = {
+                                    "btc_score":   _oc.get("btc_network", {}).get("combined_score", 0),
+                                    "btc_tx_24h":  _oc.get("btc_network", {}).get("n_tx_24h", 0),
+                                    "btc_mempool": _oc.get("btc_network", {}).get("mempool_size", 0),
+                                    "eth_gas":     _oc.get("eth_gas", {}).get("fast_gas_gwei", 0),
+                                    "eth_signal":  _oc.get("eth_gas", {}).get("gas_signal", 0),
+                                    "btc_flow_signal": _oc.get("btc_flows", {}).get("flow_signal"),
+                                    "combined":    _oc.get("combined_score", 0),
+                                }
+                            except Exception:
+                                pass
 
                         # Alpaca positions
                         if _ALPACA_ENABLED and _alpaca_available():

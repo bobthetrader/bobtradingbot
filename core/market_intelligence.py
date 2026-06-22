@@ -32,6 +32,12 @@ import requests
 from typing import Optional
 
 try:
+    from core.onchain_data import fetch_all_onchain as _fetch_onchain
+    _ONCHAIN_AVAILABLE = True
+except ImportError:
+    _ONCHAIN_AVAILABLE = False
+
+try:
     from core.sharpe_data import fetch_all as _sharpe_fetch_all
     _SHARPE_AVAILABLE = True
 except ImportError:
@@ -218,6 +224,28 @@ def _build_market_context(pairs: list, bot_context: dict, sharpe_data: dict = No
             lines.append(f"  • {art.get('title', '')}")
 
     lines.append(f"\nBot pairs: {', '.join(pairs)}")
+
+    # ── On-chain data ─────────────────────────────────────────────────────────
+    if _ONCHAIN_AVAILABLE:
+        try:
+            _oc = _fetch_onchain()
+            if _oc.get("available"):
+                lines.append("\n--- ON-CHAIN DATA ---")
+                btc_net = _oc.get("btc_network", {})
+                if btc_net.get("summary"):
+                    lines.append(btc_net["summary"])
+                eth_gas = _oc.get("eth_gas", {})
+                if eth_gas.get("summary"):
+                    lines.append(eth_gas["summary"])
+                btc_flow = _oc.get("btc_flows", {})
+                if btc_flow.get("summary"):
+                    lines.append(btc_flow["summary"])
+                lines.append(
+                    f"On-chain combined signal: {_oc.get('combined_score', 0):+.2f} "
+                    f"(positive=bullish activity, negative=bearish)"
+                )
+        except Exception as _oce:
+            logger.debug("On-chain context injection failed: %s", _oce)
 
     # ── Sharpe.ai institutional data ──────────────────────────────────────────
     if _SHARPE_AVAILABLE:

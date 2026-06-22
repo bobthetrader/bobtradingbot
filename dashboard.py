@@ -155,6 +155,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {monthly_html}
     </div>
 
+    <!-- On-chain card -->
+    <div class="card full">
+      <h2>On-Chain Data &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Blockchain.info · Etherscan · Glassnode</span></h2>
+      {onchain_html}
+    </div>
+
     <!-- Alpaca card -->
     <div class="card full">
       <h2>Alpaca Correlated Stocks &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">MSTR · COIN · MARA — mirrors BTC/ETH signals</span></h2>
@@ -290,6 +296,41 @@ def _build_page() -> str:
     <div style="display:flex;justify-content:space-between;font-size:10px;color:#8b949e;margin-top:3px">
       <span>0%</span><span style="color:#ffbb33">+{target_lo}% target floor</span><span style="color:#ffd700">+{target_hi}% cap</span>
     </div>"""
+
+    # ── On-chain ──────────────────────────────────────────────────────────────
+    oc = status.get("onchain", {})
+    if oc:
+        combined = oc.get("combined", 0)
+        c_col    = "#00c851" if combined >= 1 else ("#ff4444" if combined <= -1 else "#ffbb33")
+        rows = [
+            ("BTC Transactions (24h)", f'{oc.get("btc_tx_24h", 0):,}', "#e6edf3"),
+            ("BTC Mempool Size",       f'{oc.get("btc_mempool", 0):,} txs', "#e6edf3"),
+            ("BTC Network Signal",     f'{oc.get("btc_score", 0):+.1f}',
+             "#00c851" if oc.get("btc_score", 0) >= 0 else "#ff4444"),
+            ("ETH Gas (fast)",         f'{oc.get("eth_gas", 0):.0f} gwei', "#e6edf3"),
+            ("ETH Gas Signal",         f'{oc.get("eth_signal", 0):+.1f}',
+             "#00c851" if oc.get("eth_signal", 0) >= 0 else "#ff4444"),
+        ]
+        if oc.get("btc_flow_signal") is not None:
+            rows.append(("BTC Exchange Flow Signal",
+                         f'{oc["btc_flow_signal"]:+.1f} (Glassnode)',
+                         "#00c851" if oc["btc_flow_signal"] >= 0 else "#ff4444"))
+        tbl = "".join(
+            f'<tr><td class="grey">{r[0]}</td>'
+            f'<td style="color:{r[2]};font-weight:bold">{r[1]}</td></tr>'
+            for r in rows
+        )
+        onchain_html = (
+            f'<div style="margin-bottom:10px">Combined on-chain signal: '
+            f'<span style="color:{c_col};font-size:20px;font-weight:bold">{combined:+.2f}</span>'
+            f'<span class="grey" style="margin-left:8px;font-size:11px">'
+            f'positive=bullish network activity | negative=bearish</span></div>'
+            f'<table>{tbl}</table>'
+            f'<div class="grey" style="font-size:11px;margin-top:6px">'
+            f'Add ETHERSCAN_API_KEY for ETH gas · GLASSNODE_API_KEY for exchange flows</div>'
+        )
+    else:
+        onchain_html = '<div class="grey" style="padding:8px 0">On-chain data loading — updates every 5 loops.</div>'
 
     # ── Alpaca ────────────────────────────────────────────────────────────────
     alpaca_data = status.get("alpaca", {})
@@ -653,6 +694,7 @@ def _build_page() -> str:
         btc_mode      = btc_mode,
         signal_rows   = signal_rows,
         monthly_html  = monthly_html,
+        onchain_html     = onchain_html,
         alpaca_html      = alpaca_html,
         kraken_news_html = kraken_news_html,
         optimizer_html = optimizer_html,
