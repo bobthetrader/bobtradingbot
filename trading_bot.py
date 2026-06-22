@@ -313,6 +313,7 @@ class TradingBot:
         # â”€â”€ TR-GC inspired features â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self._btc_downtrend: bool = False
         self._breakout_timestamps: dict = {}
+        self._current_market_regime: str = "RANGING"   # TRENDING_UP / TRENDING_DOWN / RANGING
 
         # New listings monitor
         self._listing_watchlist: dict = _load_watchlist() if _LISTINGS_AVAILABLE else {}
@@ -809,6 +810,82 @@ class TradingBot:
         except Exception:
             return False
 
+    def _detect_market_regime(self) -> str:
+        """
+        Classify the current market into one of three regimes:
+
+          TRENDING_UP    BTC SMA8 > SMA21 > SMA50, trending clearly upward
+          TRENDING_DOWN  BTC SMA8 < SMA21 < SMA50, trending clearly downward
+          RANGING        SMAs are tangled, no clear direction — sideways market
+
+        Returns one of: "TRENDING_UP", "TRENDING_DOWN", "RANGING"
+
+        Used to switch between momentum (trending) and mean-reversion (ranging) strategies.
+        """
+        btc_pair = next((p for p in self.trade_pairs if 'XBT' in p or 'BTC' in p), None)
+        if not btc_pair:
+            return "RANGING"
+        try:
+            history = list(self.analysis_tool._get_price_history(btc_pair))
+            if len(history) < 50:
+                return "RANGING"
+
+            import numpy as _np
+            prices = _np.array(history)
+            sma8   = float(_np.mean(prices[-8:]))
+            sma21  = float(_np.mean(prices[-21:]))
+            sma50  = float(_np.mean(prices[-50:]))
+
+            # Clear uptrend: each shorter SMA above longer SMA
+            if sma8 > sma21 > sma50:
+                # Confirm momentum: SMA8 at least 0.3% above SMA50
+                if (sma8 - sma50) / sma50 * 100 >= 0.3:
+                    return "TRENDING_UP"
+
+            # Clear downtrend: each shorter SMA below longer SMA
+            if sma8 < sma21 < sma50:
+                if (sma50 - sma8) / sma50 * 100 >= 0.3:
+                    return "TRENDING_DOWN"
+
+            return "RANGING"
+        except Exception:
+            return "RANGING"
+
+    def _regime_strategy_config(self) -> dict:
+        """
+        Return strategy parameters appropriate for the current regime.
+
+        TRENDING:  Use trend-following signals. Raise min_buy_score so only
+                   strong breakout signals fire. Disable mean reversion.
+        RANGING:   Use mean reversion. Lower min_buy_score so RSI extremes fire.
+                   Reduce position size (ranging markets reverse quickly).
+        """
+        regime = self._current_market_regime
+        if regime == "TRENDING_UP":
+            return {
+                "enable_mr":        False,   # don't fade an uptrend
+                "enable_trend":     True,
+                "score_multiplier": 1.3,     # boost trend signals
+                "size_multiplier":  1.2,     # bigger positions in trending market
+                "label":            "TREND UP",
+            }
+        elif regime == "TRENDING_DOWN":
+            return {
+                "enable_mr":        False,
+                "enable_trend":     True,
+                "score_multiplier": 1.3,
+                "size_multiplier":  0.8,     # slightly smaller — downtrends risky for longs
+                "label":            "TREND DOWN",
+            }
+        else:  # RANGING
+            return {
+                "enable_mr":        True,    # fade RSI extremes in ranging market
+                "enable_trend":     False,   # don't chase breakouts in ranging market
+                "score_multiplier": 1.0,
+                "size_multiplier":  0.7,     # smaller size — ranging markets whipsaw
+                "label":            "RANGING",
+            }
+
     def _breakout_size_multiplier(self, pair) -> float:
         """Size multiplier based on breakout recency (TR-GC inspired).
         Recent BB breakout (< 25 days) â†’ 2Ã— allocation.
@@ -856,7 +933,10 @@ class TradingBot:
         # 4. Breakout recency multiplier (TR-GC inspired)
         amount *= self._breakout_size_multiplier(pair)
 
-        # 5. Monthly return multiplier â€” protect gains, slight aggression when behind
+        # 5. Regime size multiplier — bigger in trends, smaller when ranging
+        amount *= self._regime_strategy_config().get(“size_multiplier”, 1.0)
+
+        # 6. Monthly return multiplier — protect gains, slight aggression when behind
         amount *= self._monthly_size_multiplier(available_eur)
 
         # Cap at configured max base amount and available funds
@@ -3288,7 +3368,13 @@ class TradingBot:
                     self._last_balance_eur = current_balance
                     self._btc_downtrend = self._is_btc_downtrend()
 
-                    # â”€â”€ Force buy/sell demo triggers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    # Detect full market regime and switch strategy accordingly
+                    self._current_market_regime = self._detect_market_regime()
+                    _rc = self._regime_strategy_config()
+                    self.analysis_tool.enable_mr_signals    = _rc[“enable_mr”]
+                    self.analysis_tool.enable_trend_signals = _rc[“enable_trend”]
+
+                    # Force buy/sell demo triggers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     _data_dir = os.path.join(os.path.dirname(__file__), 'data')
                     if os.path.exists(os.path.join(_data_dir, 'FORCE_BUY')):
                         try:
@@ -3406,6 +3492,8 @@ class TradingBot:
                             "sharpe_insider":      self._sharpe_insider_scores,
                             "btc_downtrend":       self._btc_downtrend,
                             "short_mode":          "BEAR (5% NAV)" if self._btc_downtrend else "HEDGE (3% NAV)",
+                            "market_regime":       self._current_market_regime,
+                            "regime_strategy":     self._regime_strategy_config().get("label", "RANGING"),
                             "monthly_return_pct":  round(self._monthly_return_pct(current_balance), 2),
                             "monthly_start_bal":   round(self._monthly_start_balance, 2),
                             "monthly_target_low":  3.0,
