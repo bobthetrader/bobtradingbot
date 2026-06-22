@@ -157,59 +157,121 @@ def _backtest_sharpe(closes: list, rsi_buy: float, rsi_sell: float,
     return round(mean / std, 3)
 
 
+    # Per-pair strategy profiles (mirrors trading_bot.py _PAIR_PROFILES)
+    # Each pair gets its own RSI thresholds that suit its volatility profile
+    _PAIR_PROFILES_BT = {
+        "XBTEUR":   {"rsi_buy": 32, "rsi_sell": 68, "strategy": "trend"},
+        "XXBTZEUR": {"rsi_buy": 32, "rsi_sell": 68, "strategy": "trend"},
+        "XETHZEUR": {"rsi_buy": 32, "rsi_sell": 68, "strategy": "trend"},
+        "ETHEUR":   {"rsi_buy": 32, "rsi_sell": 68, "strategy": "trend"},
+        "SOLEUR":   {"rsi_buy": 28, "rsi_sell": 72, "strategy": "mean_reversion"},
+        "XXRPZEUR": {"rsi_buy": 28, "rsi_sell": 72, "strategy": "mean_reversion"},
+        "XRPEUR":   {"rsi_buy": 28, "rsi_sell": 72, "strategy": "mean_reversion"},
+        "ADAEUR":   {"rsi_buy": 28, "rsi_sell": 72, "strategy": "mean_reversion"},
+        "DOTEUR":   {"rsi_buy": 25, "rsi_sell": 75, "strategy": "mean_reversion"},
+        "LINKEUR":  {"rsi_buy": 25, "rsi_sell": 75, "strategy": "mean_reversion"},
+    }
+
+
 def backtest_parameter_change(config: dict, section: str, key: str,
                                new_value: float, baseline_sharpe: Optional[float]) -> dict:
     """
-    Run a 30-day backtest with the proposed parameter change applied.
-    Tests on ALL configured trade pairs and averages the Sharpe.
-    Returns {passed, backtest_sharpe, reason} dict.
+    Run a targeted 30-day backtest per pair, using each pair's own strategy profile.
+
+    Each pair is tested with:
+    - Its OWN RSI thresholds (from _PAIR_PROFILES_BT)
+    - The proposed parameter change applied on top
+    - 30 days of THAT pair's OHLC data
+
+    Only pairs where the strategy is relevant to the changed parameter are tested.
+    e.g. RSI threshold changes only affect mean_reversion pairs.
+    Returns {passed, backtest_sharpe, pair_results, reason} dict.
     """
     if baseline_sharpe is None:
         return {"passed": True, "backtest_sharpe": None, "reason": "no baseline — skip gate"}
 
-    # Read configured pairs from config — use each pair's OHLC, not just BTC
+    rm = config.get("risk_management", {})
+    global_tp  = float(rm.get("take_profit_percent", 2.0))
+    global_sl  = float(rm.get("stop_loss_percent",   1.0))
+
     raw_pairs = config.get("bot_settings", {}).get("trade_pairs", ["XXBTZEUR"])
-    # Normalise pair names to Kraken format (strip non-alphanumeric)
     pairs = [p.strip('"').strip("'") for p in raw_pairs if p.strip('"').strip("'")]
     if not pairs:
         pairs = ["XBTEUR"]
 
+    # Determine which pairs are relevant for this parameter change
+    def _is_relevant(pair: str) -> bool:
+        profile  = _PAIR_PROFILES_BT.get(pair, {"strategy": "mean_reversion"})
+        strategy = profile.get("strategy", "mean_reversion")
+        # RSI changes only matter for mean_reversion pairs
+        if key in ("mr_rsi_oversold_threshold", "mr_rsi_overbought_threshold"):
+            return strategy == "mean_reversion"
+        # TP/SL changes matter more for volatile pairs — test all but weight small caps
+        return True
+
+    pair_results = {}
     pair_sharpes = []
+
     for pair in pairs:
+        if not _is_relevant(pair):
+            continue
+
         closes = _fetch_ohlc_kraken(pair, interval=240, limit=180)
         if not closes:
+            logger.debug("Backtest: no OHLC for %s, skipping", pair)
             continue
-        # Build simulation params from current config + proposed change
-        rm       = config.get("risk_management", {})
-        rsi_buy  = float(rm.get("mr_rsi_oversold_threshold",  30))
-        rsi_sell = float(rm.get("mr_rsi_overbought_threshold", 70))
-        tp_pct   = float(rm.get("take_profit_percent", 2.0))
-        sl_pct   = float(rm.get("stop_loss_percent",   1.0))
+
+        # Use this pair's own profile RSI thresholds as the base
+        profile  = _PAIR_PROFILES_BT.get(pair, {"rsi_buy": 30, "rsi_sell": 70})
+        rsi_buy  = float(profile["rsi_buy"])
+        rsi_sell = float(profile["rsi_sell"])
+        tp_pct   = global_tp
+        sl_pct   = global_sl
+
+        # Apply the proposed parameter change on top of the pair's profile
         if section == "risk_management":
             if key == "mr_rsi_oversold_threshold":   rsi_buy  = new_value
             if key == "mr_rsi_overbought_threshold": rsi_sell = new_value
             if key == "take_profit_percent":         tp_pct   = new_value
             if key == "stop_loss_percent":           sl_pct   = new_value
+
         bt = _backtest_sharpe(closes, rsi_buy, rsi_sell, tp_pct, sl_pct)
+        pair_results[pair] = bt
         if bt is not None:
             pair_sharpes.append(bt)
-            logger.debug("Backtest %s → Sharpe %.3f", pair, bt)
+            logger.debug("Backtest %s (rsi %d/%d tp %.1f%% sl %.1f%%): Sharpe %.3f",
+                         pair, rsi_buy, rsi_sell, tp_pct, sl_pct, bt)
+        else:
+            logger.debug("Backtest %s: insufficient trades", pair)
 
     if not pair_sharpes:
-        return {"passed": True, "backtest_sharpe": None, "reason": "no OHLC data — skip gate"}
+        return {"passed": True, "backtest_sharpe": None,
+                "pair_results": pair_results, "reason": "no OHLC data or trades — skip gate"}
 
     bt_sharpe = round(sum(pair_sharpes) / len(pair_sharpes), 3)
-    logger.info("Backtest gate (%d pairs avg): Sharpe %.3f", len(pair_sharpes), bt_sharpe)
+    logger.info("Backtest gate: %d pairs tested | avg Sharpe %.3f | per pair: %s",
+                len(pair_sharpes), bt_sharpe,
+                {p: f"{v:.3f}" if v else "n/a" for p, v in pair_results.items()})
 
-    # Gate: reject if backtest is meaningfully worse than current baseline
+    # Gate: reject if backtest average is meaningfully worse than baseline
     threshold = baseline_sharpe - 0.2
     passed    = bt_sharpe >= threshold
-    reason    = (
-        f"backtest Sharpe {bt_sharpe:.3f} vs baseline {baseline_sharpe:.3f} "
-        f"({'PASS' if passed else 'FAIL — worse by ' + str(round(baseline_sharpe - bt_sharpe, 3))})"
+    pairs_helped  = [p for p, v in pair_results.items() if v is not None and v >= baseline_sharpe]
+    pairs_hurt    = [p for p, v in pair_results.items() if v is not None and v < baseline_sharpe - 0.1]
+    reason = (
+        f"avg Sharpe {bt_sharpe:.3f} vs baseline {baseline_sharpe:.3f} "
+        f"({'PASS' if passed else 'FAIL'}) | "
+        f"helped: {pairs_helped or 'none'} | hurt: {pairs_hurt or 'none'}"
     )
-    logger.info("Backtest gate: %s=%s->%.2f | %s", key, "current", new_value, reason)
-    return {"passed": passed, "backtest_sharpe": bt_sharpe, "reason": reason}
+    logger.info("Backtest gate %s->%.2f: %s", key, new_value, reason)
+    return {
+        "passed":           passed,
+        "backtest_sharpe":  bt_sharpe,
+        "pair_results":     pair_results,
+        "pairs_helped":     pairs_helped,
+        "pairs_hurt":       pairs_hurt,
+        "reason":           reason,
+    }
 
 # Each entry: (config_section, key, step_size, min_allowed, max_allowed)
 TUNABLE_PARAMS: list[tuple] = [
@@ -445,6 +507,9 @@ def run_optimizer(config_path: str, sharpe_result: dict) -> dict:
                 "sharpe_at_start":  state["baseline_sharpe"],
                 "backtest_sharpe":  gate.get("backtest_sharpe"),
                 "backtest_reason":  gate.get("reason", ""),
+                "pairs_helped":     gate.get("pairs_helped", []),
+                "pairs_hurt":       gate.get("pairs_hurt", []),
+                "pair_results":     gate.get("pair_results", {}),
             }
             state["param_index"]     = idx
             state["trades_at_start"] = n_trades

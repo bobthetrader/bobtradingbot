@@ -437,8 +437,15 @@ def _build_page() -> str:
         exp = opt.get("current_experiment")
         baseline = opt.get("baseline_sharpe")
         if exp and exp.get("param"):
-            bt_sharpe = exp.get("backtest_sharpe")
-            bt_str    = f" | backtest pre-screened: {bt_sharpe:.3f}" if bt_sharpe else ""
+            bt_sharpe    = exp.get("backtest_sharpe")
+            helped       = exp.get("pairs_helped", [])
+            hurt         = exp.get("pairs_hurt", [])
+            bt_detail    = ""
+            if bt_sharpe:
+                bt_detail = f" | backtest: {bt_sharpe:.3f}"
+                if helped: bt_detail += f" | helped: {', '.join(helped)}"
+                if hurt:   bt_detail += f" | hurt: {', '.join(hurt)}"
+            bt_str = bt_detail
             opt_lines.append(
                 f'<div style="margin-bottom:10px;padding:10px;background:#161b22;border:1px solid #30363d;border-radius:6px">'
                 f'<span style="color:#ffbb33;font-weight:bold">ACTIVE EXPERIMENT</span> &nbsp; '
