@@ -129,6 +129,21 @@ except ImportError:
     _HISTORY_DB_AVAILABLE = False
 
 try:
+    from core.listings_monitor import (
+        fetch_new_kraken_listings as _fetch_listings,
+        load_watchlist as _load_watchlist,
+        save_watchlist as _save_watchlist,
+        add_to_watchlist as _add_to_watchlist,
+        mark_bought as _mark_bought,
+        remove_from_watchlist as _remove_listing,
+        is_trending_up as _listing_trending_up,
+        is_expired as _listing_expired,
+    )
+    _LISTINGS_AVAILABLE = True
+except ImportError:
+    _LISTINGS_AVAILABLE = False
+
+try:
     from core.sharpe_calculator import calculate_sharpe as _calculate_sharpe
     from core.param_optimizer import run_optimizer as _run_optimizer, get_optimizer_history as _get_optimizer_history
     _OPTIMIZER_AVAILABLE = True
@@ -277,6 +292,13 @@ class TradingBot:
         # â”€â”€ TR-GC inspired features â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self._btc_downtrend: bool = False
         self._breakout_timestamps: dict = {}
+
+        # New listings monitor
+        self._listing_watchlist: dict = _load_watchlist() if _LISTINGS_AVAILABLE else {}
+        self._listings_last_check: float = 0.0
+        self._listings_check_interval: int = 600
+        self._listing_hold_hours: int = 12
+        self._listing_trend_pct: float = 2.0
 
         # â”€â”€ Monthly return target (3-8% per month) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self._monthly_start_balance: float = 0.0
@@ -2934,6 +2956,112 @@ class TradingBot:
         else:
             self._log_empty_sell_signal_throttled(pair)
 
+    def _handle_new_listing_cycle(self) -> None:
+        """
+        New listings strategy — runs every loop:
+        1. Every 10 min: poll Sharpe.ai for new Kraken spot listings
+        2. New coin found: record initial price, send Telegram alert
+        3. Price up 2%+ from detection price: BUY
+        4. 12 hours after BUY: force-SELL (capture pump, exit before drawdown)
+        5. 12 hours without a buy: remove from watchlist
+        """
+        if not _LISTINGS_AVAILABLE:
+            return
+
+        # Step 1 — periodic Sharpe.ai poll
+        now = time.time()
+        if now - self._listings_last_check >= self._listings_check_interval:
+            self._listings_last_check = now
+            try:
+                new_listings = _fetch_listings(hours_lookback=24)
+                for listing in new_listings:
+                    symbol = listing["symbol"]
+                    if symbol in self._listing_watchlist:
+                        continue
+                    pair = listing["kraken_pair"]
+                    # Get current price from Kraken
+                    try:
+                        md = self.api_client.get_market_data(pair)
+                        if md:
+                            key = next(iter(md))
+                            initial_price = float(md[key]["c"][0])
+                        else:
+                            continue
+                    except Exception:
+                        continue
+                    if _add_to_watchlist(self._listing_watchlist, listing, initial_price):
+                        self.logger.info(
+                            "NEW LISTING DETECTED: %s on Kraken @ %.6f EUR — buying in 60 min if trending up",
+                            symbol, initial_price
+                        )
+                        try:
+                            _notifier.send(
+                                f"[NEW LISTING] {listing.get('name', symbol)} ({symbol})\n"
+                                f"Just listed on Kraken @ {initial_price:.6f} EUR\n"
+                                f"Monitoring for 12 hours — will buy if +2% trend detected"
+                            )
+                        except Exception:
+                            pass
+            except Exception as exc:
+                self.logger.debug("New listings poll error: %s", exc)
+
+        # Step 2 — manage watchlist entries
+        to_remove = []
+        for symbol, entry in list(self._listing_watchlist.items()):
+            pair = entry.get("kraken_pair", symbol + "EUR")
+            try:
+                md = self.api_client.get_market_data(pair)
+                if not md:
+                    if _listing_expired(entry, self._listing_hold_hours):
+                        to_remove.append(symbol)
+                    continue
+                key = next(iter(md))
+                current_price = float(md[key]["c"][0])
+            except Exception:
+                continue
+
+            if entry.get("bought"):
+                # Check 12-hour exit
+                if _listing_expired(entry, self._listing_hold_hours):
+                    self.logger.info(
+                        "NEW LISTING EXIT: %s — 12h window expired, force-selling", symbol
+                    )
+                    qty = self.position_qty.get(pair, self.holdings.get(pair, 0))
+                    if qty > 0:
+                        self.execute_sell_order(
+                            pair, current_price,
+                            require_profit_target=False,
+                            reason="NEW_LISTING_12HR_EXIT"
+                        )
+                    to_remove.append(symbol)
+            else:
+                # Check if expired without buying
+                if _listing_expired(entry, self._listing_hold_hours):
+                    self.logger.info("NEW LISTING EXPIRED (no buy): %s", symbol)
+                    to_remove.append(symbol)
+                    continue
+
+                # Wait 60 min after detection before buying (let initial price settle)
+                minutes_since_detection = (now - entry.get("detected_at", now)) / 60
+                if minutes_since_detection < 60:
+                    continue
+
+                # Check trend — buy if up 2%+ from detection price
+                if _listing_trending_up(entry, current_price, self._listing_trend_pct):
+                    existing = self.position_qty.get(pair, self.holdings.get(pair, 0))
+                    if existing <= 0:
+                        self.logger.info(
+                            "NEW LISTING BUY SIGNAL: %s @ %.6f EUR (+%.1f%% from detection)",
+                            symbol, current_price,
+                            ((current_price - entry["initial_price"]) / entry["initial_price"]) * 100
+                        )
+                        self._breakout_timestamps[pair] = time.time()
+                        self.execute_buy_order(pair, current_price)
+                        _mark_bought(self._listing_watchlist, symbol, current_price)
+
+        for symbol in to_remove:
+            _remove_listing(self._listing_watchlist, symbol)
+
     def analyze_all_pairs(self) -> tuple:
         """Orchestrate the three-phase pair analysis pipeline.
 
@@ -3167,9 +3295,12 @@ class TradingBot:
                             self.logger.debug("Auto-cancel check failed: %s", exc)
 
                     # â”€â”€ Phase 6: Trade execution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    # New listings strategy (runs every loop, polls API every 10 min)
+                    self._handle_new_listing_cycle()
+
                     self._handle_trade_execution(best_pair, best_signal, best_score)
 
-                    # â”€â”€ Config hot-reload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    # Config hot-reload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     if (datetime.now() - self.last_config_reload).total_seconds() >= self.config_reload_interval:
                         self.reload_config()
 

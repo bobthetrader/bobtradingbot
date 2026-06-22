@@ -8,7 +8,7 @@ secret = ""
 base_currency = "EUR"
 auto_select_pair = true
 loop_interval_seconds = 60
-trade_pairs = [ "XXBTZEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR",]
+trade_pairs = [ "XXBTZEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR", "ADAEUR", "DOTEUR", "LINKEUR",]
 allocation_per_trade_percent = 5.0
 
 [risk_management]
