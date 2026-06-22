@@ -934,7 +934,7 @@ class TradingBot:
         amount *= self._breakout_size_multiplier(pair)
 
         # 5. Regime size multiplier — bigger in trends, smaller when ranging
-        amount *= self._regime_strategy_config().get(“size_multiplier”, 1.0)
+        amount *= self._regime_strategy_config().get('size_multiplier', 1.0)
 
         # 6. Monthly return multiplier — protect gains, slight aggression when behind
         amount *= self._monthly_size_multiplier(available_eur)
