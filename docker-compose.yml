@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  tradingbot:
+    build: .
+    container_name: tradingbot_local
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # LOCAL ALWAYS STARTS IN PAPER MODE
+      # To switch live: docker exec tradingbot_local touch /app/data/GO_LIVE
+      BOT_ARGS: "--paper"
+    volumes:
+      # Persist local state in a named volume (survives container restarts)
+      - tradingbot_data:/app/data
+    ports:
+      # Dashboard available at http://localhost:8080
+      - "8080:8080"
+
+volumes:
+  tradingbot_data:
