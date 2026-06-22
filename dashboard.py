@@ -155,6 +155,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {monthly_html}
     </div>
 
+    <!-- New listings card -->
+    <div class="card full">
+      <h2>New Listings Monitor &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">60 min wait → buy if +2% → sell after 12h</span></h2>
+      {listings_html}
+    </div>
+
     <!-- Sharpe.ai derivatives card -->
     <div class="card full">
       <h2>Sharpe.ai Derivatives</h2>
@@ -266,6 +272,41 @@ def _build_page() -> str:
     <div style="display:flex;justify-content:space-between;font-size:10px;color:#8b949e;margin-top:3px">
       <span>0%</span><span style="color:#ffbb33">+{target_lo}% target floor</span><span style="color:#ffd700">+{target_hi}% cap</span>
     </div>"""
+
+    # ── New listings ──────────────────────────────────────────────────────────
+    new_listings = status.get("new_listings", {})
+    if new_listings:
+        lst_rows = ""
+        for sym, info in new_listings.items():
+            bought    = info.get("bought", False)
+            pnl_pct   = info.get("pnl_pct", 0.0)
+            hrs_left  = info.get("hours_left", 0)
+            cur       = info.get("current", 0)
+            init      = info.get("initial_price", 0)
+            buy_price = info.get("buy_price", 0)
+            chg_from_init = round(((cur - init) / init) * 100, 2) if init > 0 else 0.0
+            status_label = "HOLDING" if bought else ("WATCHING" if chg_from_init < 2 else "READY TO BUY")
+            status_col   = "#00c851" if bought else ("#ffbb33" if chg_from_init >= 2 else "#8b949e")
+            pnl_col      = "#00c851" if pnl_pct >= 0 else "#ff4444"
+            lst_rows += (
+                f'<tr>'
+                f'<td><b>{sym}</b><br><span class="grey" style="font-size:10px">{info.get("pair","")}</span></td>'
+                f'<td><span style="color:{status_col};font-weight:bold">{status_label}</span></td>'
+                f'<td>&euro;{cur:.6f}<br><span class="grey" style="font-size:10px">init: &euro;{init:.6f}</span></td>'
+                f'<td style="color:{("#ffbb33" if chg_from_init >= 2 else "#8b949e")}">{chg_from_init:+.2f}%</td>'
+                f'<td>{info.get("qty", 0):.6f}</td>'
+                f'<td style="color:{pnl_col}">{pnl_pct:+.2f}%</td>'
+                f'<td class="grey">{hrs_left:.1f}h left</td>'
+                f'</tr>'
+            )
+        listings_html = (
+            '<table><tr>'
+            '<th>Coin</th><th>Status</th><th>Price</th>'
+            '<th>vs Detection</th><th>Qty Held</th><th>P&amp;L</th><th>Timer</th>'
+            '</tr>' + lst_rows + '</table>'
+        )
+    else:
+        listings_html = '<div class="grey" style="padding:8px 0">No new Kraken listings detected in last 24h — checking every 10 minutes via Sharpe.ai</div>'
 
     # ── Sharpe.ai derivatives ─────────────────────────────────────────────────
     funding       = status.get("sharpe_funding", {})
@@ -467,6 +508,7 @@ def _build_page() -> str:
         btc_mode      = btc_mode,
         signal_rows   = signal_rows,
         monthly_html  = monthly_html,
+        listings_html = listings_html,
         sharpe_html   = sharpe_html,
         model_html    = model_html,
         positions_html= positions_html,

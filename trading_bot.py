@@ -3261,6 +3261,32 @@ class TradingBot:
                                     }
                             except Exception:
                                 pass
+                        # New listing positions
+                        _listings_display = {}
+                        try:
+                            for _sym, _wl in getattr(self, '_listing_watchlist', {}).items():
+                                _lpair = _wl.get("kraken_pair", _sym + "EUR")
+                                _lcur  = float(self.pair_prices.get(_lpair, 0) or 0)
+                                _linit = float(_wl.get("initial_price", 0) or 0)
+                                _lqty  = float(self.position_qty.get(_lpair, 0) or 0)
+                                _lbuy  = float(_wl.get("buy_price") or 0)
+                                _hours_left = max(0, 12 - (time.time() - (_wl.get("buy_ts") or time.time())) / 3600)
+                                _pnl_pct = round(((_lcur - _lbuy) / _lbuy) * 100, 2) if _lbuy > 0 and _lcur > 0 else 0.0
+                                _listings_display[_sym] = {
+                                    "pair":        _lpair,
+                                    "bought":      _wl.get("bought", False),
+                                    "qty":         round(_lqty, 8),
+                                    "initial_price": round(_linit, 6),
+                                    "buy_price":   round(_lbuy, 6),
+                                    "current":     round(_lcur, 6),
+                                    "pnl_pct":     _pnl_pct,
+                                    "hours_left":  round(_hours_left, 1),
+                                    "listed_at":   _wl.get("listed_at", 0),
+                                }
+                        except Exception:
+                            pass
+                        _status["new_listings"] = _listings_display
+
                         if _HISTORY_DB_AVAILABLE:
                             try:
                                 _status["db_stats"] = _get_db_stats()
