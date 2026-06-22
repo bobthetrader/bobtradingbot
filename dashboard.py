@@ -136,7 +136,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <!-- Signals card -->
     <div class="card">
-      <h2>Pair Signals &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">AI: {intel_score:+.1f}</span> &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Regime: {regime_label}</span> &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Short: {btc_mode}</span></h2>
+      <h2>Pair Signals &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">AI: {intel_score:+.1f}</span> &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Regime: {regime_label}</span> &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Correlated open: {corr_open}</span> &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Short: {btc_mode}</span></h2>
       <table>
         <tr><th>Pair</th><th>Signal</th><th>Score</th></tr>
         {signal_rows}
@@ -692,6 +692,7 @@ def _build_page() -> str:
         trending      = trending.replace("_", " "),
         intel_score   = status.get("intelligence_score", 0.0),
         regime_label  = status.get("regime_strategy", "RANGING"),
+        corr_open     = status.get("correlated_open", 0),
         btc_mode      = btc_mode,
         signal_rows   = signal_rows,
         monthly_html  = monthly_html,
