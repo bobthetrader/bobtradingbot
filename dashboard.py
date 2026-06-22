@@ -96,6 +96,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     .subtitle {{ color: #8b949e; font-size: 12px; margin-bottom: 16px; }}
     .grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }}
     @media(max-width:600px) {{ .grid {{ grid-template-columns: 1fr; }} }}
+    @media(max-width:900px) {{ .two-panel {{ grid-template-columns: 1fr !important; }} }}
     .card {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 14px; }}
     .card h2 {{ font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }}
     .big {{ font-size: 28px; font-weight: bold; color: #e6edf3; }}
@@ -155,40 +156,50 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {monthly_html}
     </div>
 
-    <!-- LunarCrush card -->
-    <div class="card full">
-      <h2>Social Sentiment &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Reddit · CoinGecko community — activity leads price by 1-6h</span></h2>
-      {lunar_html}
+  </div><!-- end top grid -->
+
+  <!-- ── 2-panel layout: analysis left, news right ─────────────────────── -->
+  <div style="display:grid;grid-template-columns:3fr 2fr;gap:12px;margin-bottom:12px;align-items:start">
+
+    <!-- LEFT PANEL: analysis cards stacked -->
+    <div style="display:flex;flex-direction:column;gap:12px">
+
+      <div class="card">
+        <h2>Social Sentiment &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Reddit · CoinGecko — activity leads price 1-6h</span></h2>
+        {lunar_html}
+      </div>
+
+      <div class="card">
+        <h2>On-Chain Data &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Blockchain.info · CoinMetrics · Alchemy</span></h2>
+        {onchain_html}
+      </div>
+
+      <div class="card">
+        <h2>New Listings Monitor &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">60 min wait → buy if +2% → sell 12h</span></h2>
+        {listings_html}
+      </div>
+
+      <div class="card">
+        <h2>Scientific Method Optimizer &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Sharpe &ge;3.0 success | &lt;1.0 failure</span></h2>
+        {optimizer_html}
+      </div>
+
+    </div><!-- end left panel -->
+
+    <!-- RIGHT PANEL: Kraken news feed -->
+    <div class="card" style="position:sticky;top:16px;max-height:calc(100vh - 32px);overflow-y:auto">
+      <h2>Kraken News &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">blog.kraken.com</span></h2>
+      {kraken_news_html}
     </div>
 
-    <!-- On-chain card -->
-    <div class="card full">
-      <h2>On-Chain Data &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Blockchain.info · CoinMetrics · Alchemy</span></h2>
-      {onchain_html}
-    </div>
+  </div><!-- end 2-panel -->
+
+  <div class="grid">
 
     <!-- Alpaca card -->
     <div class="card full">
       <h2>Alpaca Correlated Stocks &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">MSTR · COIN · MARA — mirrors BTC/ETH signals</span></h2>
       {alpaca_html}
-    </div>
-
-    <!-- Kraken news card -->
-    <div class="card full">
-      <h2>Kraken News &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">blog.kraken.com — refreshed every 10 min</span></h2>
-      {kraken_news_html}
-    </div>
-
-    <!-- Optimizer card -->
-    <div class="card full">
-      <h2>Scientific Method Optimizer &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Sharpe target: &ge;3.0 success | &lt;1.0 failure</span></h2>
-      {optimizer_html}
-    </div>
-
-    <!-- New listings card -->
-    <div class="card full">
-      <h2>New Listings Monitor &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">60 min wait → buy if +2% → sell after 12h</span></h2>
-      {listings_html}
     </div>
 
     <!-- Sharpe.ai derivatives card -->
