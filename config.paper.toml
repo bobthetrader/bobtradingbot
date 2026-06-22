@@ -63,6 +63,7 @@ results_output_path = "backtest_results/"
 [reporting]
 generate_trade_reports = true
 report_output_path = "reports/"
+cashflow_refresh_seconds = 600
 
 [paths]
 nas_root = "/mnt/fritz_nas/Volume/kraken"
