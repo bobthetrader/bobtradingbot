@@ -2980,15 +2980,23 @@ class TradingBot:
                         continue
                     pair = listing["kraken_pair"]
                     # Get current price from Kraken
-                    try:
-                        md = self.api_client.get_market_data(pair)
-                        if md:
-                            key = next(iter(md))
-                            initial_price = float(md[key]["c"][0])
-                        else:
+                    # Try pair name variants until Kraken returns a price
+                    resolved_pair = None
+                    initial_price = 0.0
+                    for variant in listing.get("pair_variants", [listing["kraken_pair"]]):
+                        try:
+                            md = self.api_client.get_market_data(variant)
+                            if md:
+                                key = next(iter(md))
+                                initial_price = float(md[key]["c"][0])
+                                resolved_pair = variant
+                                break
+                        except Exception:
                             continue
-                    except Exception:
+                    if not resolved_pair or initial_price <= 0:
+                        self.logger.debug("NEW LISTING: %s — no Kraken price found, skipping", listing["symbol"])
                         continue
+                    listing["kraken_pair"] = resolved_pair  # use confirmed pair name
                     if _add_to_watchlist(self._listing_watchlist, listing, initial_price):
                         self.logger.info(
                             "NEW LISTING DETECTED: %s on Kraken @ %.6f EUR — buying in 60 min if trending up",

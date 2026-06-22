@@ -94,7 +94,14 @@ def fetch_new_kraken_listings(hours_lookback: int = 48) -> list:
                 "symbol":      symbol,
                 "name":        item.get("name", symbol),
                 "listed_at":   listed_ts,
+                # Try plain EUR first; bot will test variants at buy time
                 "kraken_pair": symbol + "EUR",
+                "pair_variants": [
+                    symbol + "EUR",
+                    "X" + symbol + "ZEUR",
+                    "X" + symbol + "EUR",
+                    symbol + "USDT",   # fallback if no EUR pair
+                ],
             })
 
         logger.info("Sharpe.ai: %d new Kraken listing(s) in last %dh", len(results), hours_lookback)
