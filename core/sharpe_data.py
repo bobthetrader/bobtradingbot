@@ -27,10 +27,16 @@ _CACHE: dict = {}
 _CACHE_TTL = 540   # 9 minutes
 
 _PAIR_TO_COIN = {
-    "XBTEUR": "BTC",
-    "ETHEUR": "ETH",
-    "SOLEUR": "SOL",
-    "XRPEUR": "XRP",
+    "XBTEUR":   "BTC",
+    "XXBTZEUR": "BTC",
+    "ETHEUR":   "ETH",
+    "XETHZEUR": "ETH",
+    "SOLEUR":   "SOL",
+    "XRPEUR":   "XRP",
+    "XXRPZEUR": "XRP",
+    "ADAEUR":   "ADA",
+    "DOTEUR":   "DOT",
+    "LINKEUR":  "LINK",
 }
 
 

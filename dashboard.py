@@ -554,9 +554,17 @@ def _build_page() -> str:
     if funding:
         sharpe_rows = ""
         for coin, f_score in sorted(funding.items()):
-            f_col = "#ff4444" if f_score < -1 else ("#00c851" if f_score > 1 else "#ffbb33")
-            f_str = f'<span style="color:{f_col};font-weight:bold">{f_score:+.1f}</span>'
-            sharpe_rows += f'<tr><td>{coin}</td><td>{f_str}</td></tr>'
+            f_col  = "#ff4444" if f_score < -1 else ("#00c851" if f_score > 1 else "#ffbb33")
+            bar_w  = int(abs(f_score) / 5.0 * 100)
+            f_str  = f'<span style="color:{f_col};font-weight:bold">{f_score:+.1f}</span>'
+            bias   = "bearish (longs crowded)" if f_score < -1 else ("bullish (shorts crowded)" if f_score > 1 else "neutral")
+            bar    = (f'<div style="background:#21262d;border-radius:3px;height:4px;margin-top:3px">'
+                      f'<div style="background:{f_col};width:{bar_w}%;height:4px;border-radius:3px"></div></div>')
+            sharpe_rows += (
+                f'<tr><td><b>{coin}</b></td>'
+                f'<td>{f_str}{bar}</td>'
+                f'<td class="grey" style="font-size:11px">{bias}</td></tr>'
+            )
         ins_str = ""
         if insider_sig is not None:
             ins_col = "#ff4444" if insider_sig < -1 else ("#00c851" if insider_sig > 0 else "#8b949e")
@@ -567,8 +575,9 @@ def _build_page() -> str:
             )
         sharpe_html = (
             '<table><tr>'
-            '<th>Pair</th>'
-            '<th>Funding Signal<br><span class="grey" style="font-size:10px">- = longs crowded (bearish) | + = shorts crowded (bullish)</span></th>'
+            '<th>Coin</th>'
+            '<th>Funding Signal</th>'
+            '<th>Market Bias</th>'
             '</tr>'
             + sharpe_rows + '</table>' + ins_str
         )
