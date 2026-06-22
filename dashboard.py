@@ -437,6 +437,8 @@ def _build_page() -> str:
         exp = opt.get("current_experiment")
         baseline = opt.get("baseline_sharpe")
         if exp and exp.get("param"):
+            bt_sharpe = exp.get("backtest_sharpe")
+            bt_str    = f" | backtest pre-screened: {bt_sharpe:.3f}" if bt_sharpe else ""
             opt_lines.append(
                 f'<div style="margin-bottom:10px;padding:10px;background:#161b22;border:1px solid #30363d;border-radius:6px">'
                 f'<span style="color:#ffbb33;font-weight:bold">ACTIVE EXPERIMENT</span> &nbsp; '
@@ -445,7 +447,7 @@ def _build_page() -> str:
                 f'&rarr; <span style="color:#58a6ff;font-weight:bold">{exp["new_value"]}</span> '
                 f'({exp.get("direction","?")})'
                 f'<span class="grey" style="margin-left:12px;font-size:11px">'
-                f'Sharpe at start: {exp.get("sharpe_at_start") or "—"}'
+                f'Sharpe at start: {exp.get("sharpe_at_start") or "—"}{bt_str}'
                 f'</span></div>'
             )
         elif baseline is not None:

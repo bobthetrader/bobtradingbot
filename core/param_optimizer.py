@@ -21,10 +21,13 @@ bot restarts. Config is written back to the active config TOML file.
 import copy
 import json
 import logging
+import math
 import os
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
+import requests
 import toml
 
 try:
@@ -41,7 +44,163 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 MIN_EVAL_TRADES = 10   # closed trades needed to evaluate an experiment
-_STATE_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "optimizer_state.json")
+_STATE_FILE   = os.path.join(os.path.dirname(__file__), "..", "data", "optimizer_state.json")
+_BT_CACHE_FILE= os.path.join(os.path.dirname(__file__), "..", "data", "backtest_cache.json")
+
+# ── Backtest gate ──────────────────────────────────────────────────────────────
+
+def _fetch_ohlc_kraken(pair: str = "XBTEUR", interval: int = 240, limit: int = 180) -> list:
+    """Fetch OHLC closes from Kraken public API. 240m candles × 180 = 30 days."""
+    cache_key = f"{pair}_{interval}"
+    cache_ttl  = 3600  # refresh hourly
+
+    # Check disk cache
+    try:
+        if os.path.exists(_BT_CACHE_FILE):
+            with open(_BT_CACHE_FILE) as f:
+                cache = json.load(f)
+            entry = cache.get(cache_key, {})
+            if time.time() - entry.get("ts", 0) < cache_ttl:
+                return entry.get("closes", [])
+    except Exception:
+        pass
+
+    try:
+        r = requests.get(
+            "https://api.kraken.com/0/public/OHLC",
+            params={"pair": pair, "interval": interval},
+            headers={"User-Agent": "tradingbot/1.0"},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return []
+        result = r.json().get("result", {})
+        key    = next((k for k in result if k != "last"), None)
+        if not key:
+            return []
+        closes = [float(row[4]) for row in result[key][-limit:]]
+
+        # Save to disk cache
+        try:
+            cache = {}
+            if os.path.exists(_BT_CACHE_FILE):
+                with open(_BT_CACHE_FILE) as f:
+                    cache = json.load(f)
+            cache[cache_key] = {"closes": closes, "ts": time.time()}
+            with open(_BT_CACHE_FILE, "w") as f:
+                json.dump(cache, f)
+        except Exception:
+            pass
+
+        return closes
+    except Exception as exc:
+        logger.debug("OHLC fetch for backtest failed: %s", exc)
+        return []
+
+
+def _backtest_sharpe(closes: list, rsi_buy: float, rsi_sell: float,
+                     tp_pct: float, sl_pct: float) -> Optional[float]:
+    """
+    Walk-forward simulation on OHLC closes with given parameters.
+    Returns Sharpe ratio or None if insufficient data.
+
+    Strategy: buy when RSI < rsi_buy, sell at TP or SL.
+    """
+    if len(closes) < 30:
+        return None
+
+    # Simple RSI calculation
+    def _rsi(prices: list, period: int = 14) -> Optional[float]:
+        if len(prices) < period + 1:
+            return None
+        deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+        gains  = [max(d, 0) for d in deltas[-period:]]
+        losses = [abs(min(d, 0)) for d in deltas[-period:]]
+        avg_g  = sum(gains)  / period
+        avg_l  = sum(losses) / period
+        if avg_l == 0:
+            return 100.0
+        rs = avg_g / avg_l
+        return 100 - (100 / (1 + rs))
+
+    returns = []
+    in_trade = False
+    entry    = 0.0
+
+    for i in range(20, len(closes)):
+        price = closes[i]
+        rsi   = _rsi(closes[max(0, i-20):i+1])
+        if rsi is None:
+            continue
+
+        if not in_trade:
+            if rsi < rsi_buy:
+                entry    = price
+                in_trade = True
+        else:
+            change_pct = (price - entry) / entry * 100
+            if change_pct >= tp_pct:
+                returns.append(change_pct / 100)
+                in_trade = False
+            elif change_pct <= -sl_pct:
+                returns.append(change_pct / 100)
+                in_trade = False
+
+    if len(returns) < 3:
+        return None
+
+    mean = sum(returns) / len(returns)
+    var  = sum((r - mean) ** 2 for r in returns) / max(len(returns) - 1, 1)
+    std  = math.sqrt(var)
+    if std == 0:
+        return None
+    return round(mean / std, 3)
+
+
+def backtest_parameter_change(config: dict, section: str, key: str,
+                               new_value: float, baseline_sharpe: Optional[float]) -> dict:
+    """
+    Run a 30-day backtest with the proposed parameter change applied.
+    Returns {passed, backtest_sharpe, reason} dict.
+
+    Compares backtest Sharpe against baseline_sharpe.
+    If backtest is clearly worse (> 0.2 worse), rejects the change.
+    """
+    if baseline_sharpe is None:
+        return {"passed": True, "backtest_sharpe": None, "reason": "no baseline — skip gate"}
+
+    closes = _fetch_ohlc_kraken("XBTEUR", interval=240, limit=180)
+    if not closes:
+        return {"passed": True, "backtest_sharpe": None, "reason": "no OHLC data — skip gate"}
+
+    # Extract current relevant params from the proposed config
+    rm = config.get("risk_management", {})
+    rsi_buy = float(rm.get("mr_rsi_oversold_threshold",  30))
+    rsi_sell= float(rm.get("mr_rsi_overbought_threshold", 70))
+    tp_pct  = float(rm.get("take_profit_percent", 2.0))
+    sl_pct  = float(rm.get("stop_loss_percent",   1.0))
+
+    # Apply the proposed change to simulation params
+    if section == "risk_management":
+        if key == "mr_rsi_oversold_threshold":  rsi_buy  = new_value
+        if key == "mr_rsi_overbought_threshold": rsi_sell = new_value
+        if key == "take_profit_percent":          tp_pct   = new_value
+        if key == "stop_loss_percent":            sl_pct   = new_value
+
+    bt_sharpe = _backtest_sharpe(closes, rsi_buy, rsi_sell, tp_pct, sl_pct)
+
+    if bt_sharpe is None:
+        return {"passed": True, "backtest_sharpe": None, "reason": "insufficient trades in backtest"}
+
+    # Gate: reject if backtest is meaningfully worse than current baseline
+    threshold = baseline_sharpe - 0.2
+    passed    = bt_sharpe >= threshold
+    reason    = (
+        f"backtest Sharpe {bt_sharpe:.3f} vs baseline {baseline_sharpe:.3f} "
+        f"({'PASS' if passed else 'FAIL — worse by ' + str(round(baseline_sharpe - bt_sharpe, 3))})"
+    )
+    logger.info("Backtest gate: %s=%s->%.2f | %s", key, "current", new_value, reason)
+    return {"passed": passed, "backtest_sharpe": bt_sharpe, "reason": reason}
 
 # Each entry: (config_section, key, step_size, min_allowed, max_allowed)
 TUNABLE_PARAMS: list[tuple] = [
@@ -252,21 +411,39 @@ def run_optimizer(config_path: str, sharpe_result: dict) -> dict:
                 idx = (idx + 1) % len(TUNABLE_PARAMS)
                 continue
 
+            # ── Backtest gate: pre-screen before deploying live ───────────────
+            gate = backtest_parameter_change(
+                cfg, section, key, new_val, state["baseline_sharpe"]
+            )
+            if not gate["passed"]:
+                logger.info(
+                    "Optimizer SKIPPED %s %s->%.2f: backtest gate failed (%s)",
+                    key, cur, new_val, gate["reason"]
+                )
+                idx = (idx + 1) % len(TUNABLE_PARAMS)
+                continue   # try next parameter
+
+            # Gate passed — apply the change live
             cfg = _set(cfg, section, key, new_val)
             _write_config(config_path, cfg)
 
             state["current_experiment"] = {
-                "section":        section,
-                "key":            key,
-                "original":       cur,
-                "tested":         new_val,
-                "direction":      direction,
-                "sharpe_at_start":state["baseline_sharpe"],
+                "section":          section,
+                "key":              key,
+                "original":         cur,
+                "tested":           new_val,
+                "direction":        direction,
+                "sharpe_at_start":  state["baseline_sharpe"],
+                "backtest_sharpe":  gate.get("backtest_sharpe"),
+                "backtest_reason":  gate.get("reason", ""),
             }
-            state["param_index"]   = idx
+            state["param_index"]     = idx
             state["trades_at_start"] = n_trades
 
-            exp_msg = f"{key}: {cur} → {new_val} ({direction})"
+            exp_msg = (
+                f"{key}: {cur} → {new_val} ({direction}) "
+                f"| backtest Sharpe: {gate.get('backtest_sharpe') or '—'}"
+            )
             logger.info("Optimizer NEW EXPERIMENT: %s", exp_msg)
             summary.setdefault("action", "experiment_started")
             summary["new_experiment"] = exp_msg
