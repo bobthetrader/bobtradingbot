@@ -1,6 +1,6 @@
-# Paper config — high frequency learning mode
-# Goal: generate lots of trades quickly so optimizer and AI can learn
-# Accept small losses — the optimizer will correct over time
+# Paper trading config — week-long learning run
+# Balance: 100 EUR simulated | Goal: +3-8% per month
+# All core functions confirmed working (buy/sell/short/Telegram/dashboard)
 [kraken_api]
 key = ""
 secret = ""
@@ -8,39 +8,39 @@ secret = ""
 [bot_settings]
 base_currency = "EUR"
 auto_select_pair = true
-loop_interval_seconds = 30
+loop_interval_seconds = 60
 trade_pairs = [ "XXBTZEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR",]
-allocation_per_trade_percent = 15.0
+allocation_per_trade_percent = 10.0
 
 [risk_management]
 max_drawdown_percent = 15.0
-stop_loss_percent = 1.5              # Cut losses fast — 1.5% and out
-allocation_per_trade_percent = 15.0  # 15% per trade — enough to see real P&L movement
+stop_loss_percent = 1.0
+allocation_per_trade_percent = 10.0
 min_trade_eur = 5.0
-min_buy_score = 0.01                  # Very low — almost any signal fires
-take_profit_percent = 0.8            # Quick profits — 0.8% and close
-min_net_sell_profit_pct = 0.0        # Sell at any net level — don't block exits
+min_buy_score = 3.0
+min_auto_scale_notional = 0.1
+take_profit_percent = 1.5
+min_net_sell_profit_pct = 0.3
 enable_trading_hours = false
 enable_regime_filter = false
 enable_volume_filter = false
 enable_daily_drawdown = false
 enable_bear_shield = false
 enable_atr_dynamic_tp = false
-enable_mean_reversion_signals = false         # use fixed 0.8% TP not ATR-inflated target
-min_auto_scale_notional = 0.1
-mr_rsi_oversold_threshold = 45
-mr_rsi_overbought_threshold = 55
-max_consecutive_losses = 10
-max_open_positions = 20
+enable_mean_reversion_signals = true
+mr_rsi_oversold_threshold = 35
+mr_rsi_overbought_threshold = 65
+max_consecutive_losses = 5
 pause_after_loss_streak_minutes = 0
+max_open_positions = 4
 
 [intelligence]
 refresh_seconds = 600
-score_weight = 0.3                   # Reduce AI influence so signals fire more freely
+score_weight = 0.5
 
 [execution]
-signal_refresh_interval_seconds = 60  # Refresh signals every 60s (was 300s)
-regime_cache_ttl_seconds = 120
+signal_refresh_interval_seconds = 120
+regime_cache_ttl_seconds = 300
 
 [technical]
 enable_ema_crossover_filter = false
@@ -50,7 +50,7 @@ ema_slow_period = 21
 
 [optimizer]
 enabled = true
-eval_every_n_trades = 5              # Run optimizer every 5 trades (was 10 — quicker learning)
+eval_every_n_trades = 10
 
 [logging]
 log_level = "INFO"
@@ -73,12 +73,12 @@ bot_token = ""
 chat_id = ""
 
 [bot_settings.trade_amounts]
-trade_amount_eur = 15.0
+trade_amount_eur = 10.0
 initial_balance = 100.0
 
 [shorting]
-enabled = true
+enabled = false
 leverage = "2"
-max_short_notional_eur = 15.0
-short_take_profit_percent = 0.8      # Match long TP — quick closes
-short_stop_loss_percent = 2.0        # Cut short losses at 2%
+max_short_notional_eur = 10.0
+short_take_profit_percent = 2.0
+short_stop_loss_percent = 1.5

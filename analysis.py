@@ -448,7 +448,7 @@ class TechnicalAnalysis:
                     sma21 = float(np.mean(prices[-21:]))
                     if sma21 > 0:
                         sma_gap_pct   = (sma8 - sma21) / sma21 * 100
-                        momentum_score = max(-15.0, min(15.0, sma_gap_pct * 200))
+                        momentum_score = max(-15.0, min(15.0, sma_gap_pct * 50))
                         if signal == "HOLD" and abs(momentum_score) >= 0.5:
                             # No existing signal — use momentum as primary
                             signal = "BUY" if momentum_score > 0 else "SELL"
