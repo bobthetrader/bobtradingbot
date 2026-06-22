@@ -155,6 +155,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {monthly_html}
     </div>
 
+    <!-- Alpaca card -->
+    <div class="card full">
+      <h2>Alpaca Correlated Stocks &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">MSTR · COIN · MARA — mirrors BTC/ETH signals</span></h2>
+      {alpaca_html}
+    </div>
+
     <!-- Kraken news card -->
     <div class="card full">
       <h2>Kraken News &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">blog.kraken.com — refreshed every 10 min</span></h2>
@@ -284,6 +290,37 @@ def _build_page() -> str:
     <div style="display:flex;justify-content:space-between;font-size:10px;color:#8b949e;margin-top:3px">
       <span>0%</span><span style="color:#ffbb33">+{target_lo}% target floor</span><span style="color:#ffd700">+{target_hi}% cap</span>
     </div>"""
+
+    # ── Alpaca ────────────────────────────────────────────────────────────────
+    alpaca_data = status.get("alpaca", {})
+    if alpaca_data:
+        mkt_col  = "#00c851" if alpaca_data.get("market_open") else "#ff4444"
+        mkt_label= "OPEN" if alpaca_data.get("market_open") else "CLOSED"
+        a_rows   = ""
+        for pos in alpaca_data.get("positions", []):
+            pl      = pos.get("unrealized_pl", 0)
+            pl_pct  = pos.get("unrealized_plpc", 0)
+            pl_col  = "#00c851" if pl >= 0 else "#ff4444"
+            a_rows += (
+                f'<tr>'
+                f'<td><b>{pos.get("symbol")}</b></td>'
+                f'<td>{pos.get("qty"):.4f} shares</td>'
+                f'<td>${pos.get("market_value", 0):.2f}</td>'
+                f'<td style="color:{pl_col}">{pl:+.2f} ({pl_pct:+.2f}%)</td>'
+                f'</tr>'
+            )
+        pos_table = (
+            '<table><tr><th>Symbol</th><th>Qty</th><th>Value</th><th>P&amp;L</th></tr>'
+            + a_rows + '</table>'
+        ) if a_rows else '<div class="grey">No open positions — waiting for strong BTC/ETH signal (score &ge;10)</div>'
+        alpaca_html = (
+            f'<div style="margin-bottom:10px">'
+            f'Portfolio: <b>${alpaca_data.get("portfolio_value", 0):,.2f}</b> &nbsp;'
+            f'Market: <span style="color:{mkt_col};font-weight:bold">{mkt_label}</span>'
+            f'</div>' + pos_table
+        )
+    else:
+        alpaca_html = '<div class="grey" style="padding:8px 0">Add ALPACA_API_KEY, ALPACA_API_SECRET and ALPACA_BASE_URL to Railway Variables to enable.</div>'
 
     # ── Kraken news ───────────────────────────────────────────────────────────
     headlines = status.get("kraken_headlines", [])
@@ -616,6 +653,7 @@ def _build_page() -> str:
         btc_mode      = btc_mode,
         signal_rows   = signal_rows,
         monthly_html  = monthly_html,
+        alpaca_html      = alpaca_html,
         kraken_news_html = kraken_news_html,
         optimizer_html = optimizer_html,
         listings_html = listings_html,

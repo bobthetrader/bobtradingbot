@@ -129,6 +129,18 @@ except ImportError:
     _HISTORY_DB_AVAILABLE = False
 
 try:
+    from core.alpaca_interface import (
+        get_client as _alpaca_client,
+        is_available as _alpaca_available,
+        BTC_CORRELATES as _BTC_CORRELATES,
+        ETH_CORRELATES as _ETH_CORRELATES,
+        ALPACA_ALLOCATION_PCT as _ALPACA_ALLOC_PCT,
+    )
+    _ALPACA_ENABLED = True
+except ImportError:
+    _ALPACA_ENABLED = False
+
+try:
     from core.listings_monitor import (
         fetch_new_kraken_listings as _fetch_listings,
         fetch_kraken_blog_listings as _fetch_blog_listings,
@@ -303,6 +315,10 @@ class TradingBot:
         self._listing_hold_hours: int = 12
         self._listing_trend_pct: float = 2.0
         self._kraken_headlines: list = []
+
+        # Alpaca correlation trading state
+        self._alpaca_positions: dict = {}   # symbol -> {bought_at, kraken_signal}
+        self._alpaca_last_sync: float = 0.0
 
         # â”€â”€ Monthly return target (3-8% per month) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self._monthly_start_balance: float = 0.0
@@ -3022,6 +3038,72 @@ class TradingBot:
         else:
             self._log_empty_sell_signal_throttled(pair)
 
+    def _handle_alpaca_correlations(self, best_pair: str, best_signal: str, best_score: float) -> None:
+        """
+        When a strong BTC or ETH signal fires on Kraken, mirror it on Alpaca
+        by buying correlated stocks (MSTR, COIN, MARA).
+
+        Entry: strong BUY signal (score >= 10) on XBTEUR/XETHZEUR
+        Exit:  SELL signal on the same Kraken pair, OR market closes
+        """
+        if not _ALPACA_ENABLED or not _alpaca_available():
+            return
+
+        alpaca = _alpaca_client()
+
+        # Only trade during US market hours
+        if not alpaca.is_market_open():
+            return
+
+        # Determine which correlates apply
+        correlates = []
+        if best_pair in ("XBTEUR", "XXBTZEUR") and abs(best_score) >= 10:
+            correlates = _BTC_CORRELATES
+        elif best_pair in ("XETHZEUR", "ETHEUR") and abs(best_score) >= 10:
+            correlates = _ETH_CORRELATES
+
+        if not correlates:
+            return
+
+        portfolio_value = alpaca.get_portfolio_value()
+        if portfolio_value <= 0:
+            return
+        notional = portfolio_value * (_ALPACA_ALLOC_PCT / 100)
+
+        if best_signal == "BUY":
+            for symbol in correlates:
+                if alpaca.has_position(symbol):
+                    continue
+                result = alpaca.market_buy(symbol, notional)
+                if result:
+                    self._alpaca_positions[symbol] = {
+                        "kraken_pair":  best_pair,
+                        "kraken_score": best_score,
+                        "notional_usd": notional,
+                    }
+                    try:
+                        _notifier.send(
+                            f"[ALPACA BUY] {symbol}\n"
+                            f"Triggered by: {best_pair} score {best_score:+.2f}\n"
+                            f"Notional: ${notional:.2f}"
+                        )
+                    except Exception:
+                        pass
+
+        elif best_signal == "SELL":
+            for symbol in correlates:
+                if not alpaca.has_position(symbol):
+                    continue
+                alpaca.market_sell_all(symbol)
+                self._alpaca_positions.pop(symbol, None)
+                try:
+                    _notifier.send(
+                        f"[ALPACA SELL] {symbol}\n"
+                        f"Triggered by: {best_pair} SELL signal"
+                    )
+                except Exception:
+                    pass
+
     def _handle_new_listing_cycle(self) -> None:
         """
         New listings strategy — runs every loop:
@@ -3380,6 +3462,29 @@ class TradingBot:
                         _status["new_listings"]     = _listings_display
                         _status["kraken_headlines"] = getattr(self, '_kraken_headlines', [])
 
+                        # Alpaca positions
+                        if _ALPACA_ENABLED and _alpaca_available():
+                            try:
+                                _ac = _alpaca_client()
+                                _apv = _ac.get_portfolio_value()
+                                _apos = _ac.get_positions()
+                                _status["alpaca"] = {
+                                    "portfolio_value": round(_apv, 2),
+                                    "market_open": _ac.is_market_open(),
+                                    "positions": [
+                                        {
+                                            "symbol":    p.get("symbol"),
+                                            "qty":       float(p.get("qty", 0)),
+                                            "market_value": float(p.get("market_value", 0)),
+                                            "unrealized_pl": float(p.get("unrealized_pl", 0)),
+                                            "unrealized_plpc": round(float(p.get("unrealized_plpc", 0)) * 100, 2),
+                                        }
+                                        for p in (_apos or [])
+                                    ],
+                                }
+                            except Exception:
+                                pass
+
                         if _HISTORY_DB_AVAILABLE:
                             try:
                                 _status["db_stats"] = _get_db_stats()
@@ -3424,6 +3529,9 @@ class TradingBot:
                     # â”€â”€ Phase 6: Trade execution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     # New listings strategy (runs every loop, polls API every 10 min)
                     self._handle_new_listing_cycle()
+
+                    # Alpaca correlated stocks (mirrors strong Kraken signals)
+                    self._handle_alpaca_correlations(best_pair, best_signal, best_score)
 
                     self._handle_trade_execution(best_pair, best_signal, best_score)
 
