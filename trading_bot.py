@@ -796,7 +796,7 @@ class TradingBot:
         return 1.2
 
     def _is_btc_downtrend(self) -> bool:
-        """Return True when BTC close is below its 20-period SMA â€” BEAR regime.
+        """Return True when BTC close is below its 20-period SMA â€' BEAR regime.
         Mirrors the TR-GC-Crypto-LS-2 BTC regime flag from step 3."""
         btc_pair = next((p for p in self.trade_pairs if 'XBT' in p or 'BTC' in p), None)
         if not btc_pair:
@@ -888,16 +888,16 @@ class TradingBot:
 
     def _breakout_size_multiplier(self, pair) -> float:
         """Size multiplier based on breakout recency (TR-GC inspired).
-        Recent BB breakout (< 25 days) â†’ 2Ã— allocation.
-        No recent breakout â†’ 0.5Ã— allocation.
+        Recent BB breakout (< 25 days) â†' 2Ã— allocation.
+        No recent breakout â†' 0.5Ã— allocation.
         This encourages entering bigger on fresh signals."""
         last_ts = self._breakout_timestamps.get(pair, 0)
         if last_ts <= 0:
-            return 0.5   # no recorded breakout â†’ conservative
+            return 0.5   # no recorded breakout â†' conservative
         days_ago = (time.time() - last_ts) / 86400
         if days_ago <= 25:
-            return 2.0   # fresh breakout â†’ double allocation
-        return 0.5       # stale breakout â†’ halve allocation
+            return 2.0   # fresh breakout â†' double allocation
+        return 0.5       # stale breakout â†' halve allocation
 
     def _get_dynamic_trade_amount_eur(self, pair, available_eur):
         """Dynamic sizing: adjusted by ATR volatility and available EUR."""
@@ -3371,8 +3371,8 @@ class TradingBot:
                     # Detect full market regime and switch strategy accordingly
                     self._current_market_regime = self._detect_market_regime()
                     _rc = self._regime_strategy_config()
-                    self.analysis_tool.enable_mr_signals    = _rc[“enable_mr”]
-                    self.analysis_tool.enable_trend_signals = _rc[“enable_trend”]
+                    self.analysis_tool.enable_mr_signals    = _rc.get('enable_mr', True)
+                    self.analysis_tool.enable_trend_signals = _rc.get('enable_trend', True)
 
                     # Force buy/sell demo triggers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     _data_dir = os.path.join(os.path.dirname(__file__), 'data')
