@@ -155,6 +155,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {monthly_html}
     </div>
 
+    <!-- Kraken news card -->
+    <div class="card full">
+      <h2>Kraken News &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">blog.kraken.com — refreshed every 10 min</span></h2>
+      {kraken_news_html}
+    </div>
+
     <!-- Optimizer card -->
     <div class="card full">
       <h2>Scientific Method Optimizer &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Sharpe target: &ge;3.0 success | &lt;1.0 failure</span></h2>
@@ -278,6 +284,37 @@ def _build_page() -> str:
     <div style="display:flex;justify-content:space-between;font-size:10px;color:#8b949e;margin-top:3px">
       <span>0%</span><span style="color:#ffbb33">+{target_lo}% target floor</span><span style="color:#ffd700">+{target_hi}% cap</span>
     </div>"""
+
+    # ── Kraken news ───────────────────────────────────────────────────────────
+    headlines = status.get("kraken_headlines", [])
+    if headlines:
+        news_rows = ""
+        for h in headlines:
+            is_listing = h.get("is_listing", False)
+            ts         = h.get("ts", 0)
+            from datetime import datetime, timezone
+            try:
+                age_h = (datetime.now(timezone.utc).timestamp() - ts) / 3600
+                age   = f"{int(age_h)}h ago" if age_h < 24 else f"{int(age_h/24)}d ago"
+            except Exception:
+                age = ""
+            row_style = "background:#1a2420;" if is_listing else ""
+            tag = '<span style="color:#00c851;font-size:10px;font-weight:bold"> [LISTING]</span>' if is_listing else ""
+            link = h.get("link", "#")
+            news_rows += (
+                f'<tr style="{row_style}">'
+                f'<td style="font-size:11px;color:#8b949e;white-space:nowrap">{age}</td>'
+                f'<td><a href="{link}" style="color:#e6edf3;text-decoration:none" target="_blank">'
+                f'{h.get("title","")}</a>{tag}</td>'
+                f'</tr>'
+            )
+        kraken_news_html = (
+            '<table style="width:100%">'
+            '<tr><th style="width:60px">When</th><th>Headline</th></tr>'
+            + news_rows + '</table>'
+        )
+    else:
+        kraken_news_html = '<div class="grey" style="padding:8px 0">Fetching Kraken blog headlines — updates every 10 minutes.</div>'
 
     # ── Optimizer ─────────────────────────────────────────────────────────────
     opt = status.get("optimizer", {})
@@ -579,6 +616,7 @@ def _build_page() -> str:
         btc_mode      = btc_mode,
         signal_rows   = signal_rows,
         monthly_html  = monthly_html,
+        kraken_news_html = kraken_news_html,
         optimizer_html = optimizer_html,
         listings_html = listings_html,
         sharpe_html   = sharpe_html,

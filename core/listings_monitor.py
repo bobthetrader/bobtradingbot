@@ -195,6 +195,50 @@ def fetch_kraken_blog_listings(hours_lookback: int = 48) -> list:
         logger.info("Kraken blog RSS: %d potential listing(s) found", len(results))
         return results
 
+
+def fetch_kraken_blog_headlines(limit: int = 8) -> list:
+    """
+    Return the latest headlines from the Kraken blog RSS regardless of whether
+    they are listing announcements. Used for the dashboard news feed.
+    Returns list of {title, link, date, is_listing} dicts.
+    """
+    try:
+        resp = requests.get(
+            _KRAKEN_BLOG_RSS,
+            headers={"User-Agent": "tradingbot/1.0"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return []
+        root    = ET.fromstring(resp.text)
+        channel = root.find("channel")
+        if channel is None:
+            return []
+
+        listing_keywords = ["available", "listed", "trading", "launched",
+                            "now live", "new listing", "now on kraken", "adds"]
+        results = []
+        for item in channel.findall("item")[:limit]:
+            title    = item.findtext("title", "").strip()
+            link     = item.findtext("link", "").strip()
+            pub_date = item.findtext("pubDate", "").strip()
+            if not title:
+                continue
+            try:
+                ts = parsedate_to_datetime(pub_date).timestamp()
+            except Exception:
+                ts = 0
+            results.append({
+                "title":      title,
+                "link":       link,
+                "ts":         ts,
+                "is_listing": any(kw in title.lower() for kw in listing_keywords),
+            })
+        return results
+    except Exception as exc:
+        logger.debug("Kraken blog headlines failed: %s", exc)
+        return []
+
     except Exception as exc:
         logger.debug("Kraken blog RSS failed: %s", exc)
         return []

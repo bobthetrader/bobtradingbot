@@ -133,6 +133,7 @@ try:
         fetch_new_kraken_listings as _fetch_listings,
         fetch_kraken_blog_listings as _fetch_blog_listings,
         fetch_kraken_new_pairs as _fetch_new_pairs,
+        fetch_kraken_blog_headlines as _fetch_blog_headlines,
         load_watchlist as _load_watchlist,
         save_watchlist as _save_watchlist,
         add_to_watchlist as _add_to_watchlist,
@@ -301,6 +302,7 @@ class TradingBot:
         self._listings_check_interval: int = 600
         self._listing_hold_hours: int = 12
         self._listing_trend_pct: float = 2.0
+        self._kraken_headlines: list = []
 
         # â”€â”€ Monthly return target (3-8% per month) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self._monthly_start_balance: float = 0.0
@@ -3042,6 +3044,7 @@ class TradingBot:
                 blog_listings   = _fetch_blog_listings(hours_lookback=48)
                 pairs_listings  = _fetch_new_pairs(hours_lookback=48)
                 sharpe_listings = _fetch_listings(hours_lookback=24)
+                self._kraken_headlines = _fetch_blog_headlines(limit=8)
 
                 # Prioritise: AssetPairs (exact) > Blog RSS (early) > Sharpe.ai (hourly)
                 new_listings = []
@@ -3374,7 +3377,8 @@ class TradingBot:
                                 }
                         except Exception:
                             pass
-                        _status["new_listings"] = _listings_display
+                        _status["new_listings"]     = _listings_display
+                        _status["kraken_headlines"] = getattr(self, '_kraken_headlines', [])
 
                         if _HISTORY_DB_AVAILABLE:
                             try:
