@@ -131,6 +131,8 @@ except ImportError:
 try:
     from core.listings_monitor import (
         fetch_new_kraken_listings as _fetch_listings,
+        fetch_kraken_blog_listings as _fetch_blog_listings,
+        fetch_kraken_new_pairs as _fetch_new_pairs,
         load_watchlist as _load_watchlist,
         save_watchlist as _save_watchlist,
         add_to_watchlist as _add_to_watchlist,
@@ -3035,7 +3037,25 @@ class TradingBot:
         if now - self._listings_last_check >= self._listings_check_interval:
             self._listings_last_check = now
             try:
-                new_listings = _fetch_listings(hours_lookback=24)
+                # Three sources combined — deduplicated by symbol
+                seen_symbols = set(self._listing_watchlist.keys())
+                blog_listings   = _fetch_blog_listings(hours_lookback=48)
+                pairs_listings  = _fetch_new_pairs(hours_lookback=48)
+                sharpe_listings = _fetch_listings(hours_lookback=24)
+
+                # Prioritise: AssetPairs (exact) > Blog RSS (early) > Sharpe.ai (hourly)
+                new_listings = []
+                for lst in pairs_listings + blog_listings + sharpe_listings:
+                    if lst["symbol"] not in seen_symbols:
+                        seen_symbols.add(lst["symbol"])
+                        new_listings.append(lst)
+
+                if new_listings:
+                    self.logger.info(
+                        "Listings sources: %d blog, %d pairs, %d sharpe = %d unique new",
+                        len(blog_listings), len(pairs_listings),
+                        len(sharpe_listings), len(new_listings)
+                    )
                 for listing in new_listings:
                     symbol = listing["symbol"]
                     if symbol in self._listing_watchlist:
@@ -3065,10 +3085,15 @@ class TradingBot:
                             symbol, initial_price
                         )
                         try:
+                            source_label = {
+                                "kraken_assetpairs": "Kraken API (live)",
+                                "kraken_blog":       "Kraken Blog (early)",
+                            }.get(listing.get("source", ""), "Sharpe.ai")
                             _notifier.send(
-                                f"[NEW LISTING] {listing.get('name', symbol)} ({symbol})\n"
-                                f"Just listed on Kraken @ {initial_price:.6f} EUR\n"
-                                f"Monitoring for 12 hours — will buy if +2% trend detected"
+                                f"[NEW LISTING] {listing.get('name', symbol)[:60]}\n"
+                                f"Symbol: {symbol} | Source: {source_label}\n"
+                                f"Pair: {resolved_pair} @ {initial_price:.6f} EUR\n"
+                                f"Watching 60 min then buy if +2% trend"
                             )
                         except Exception:
                             pass

@@ -18,12 +18,27 @@ tracked listings.
 
 import os
 import json
+import re
 import time
 import logging
 import requests
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+_KRAKEN_BLOG_RSS  = "https://blog.kraken.com/feed"
+_KRAKEN_ASSET_PAIRS = "https://api.kraken.com/0/public/AssetPairs"
+_KNOWN_PAIRS_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "known_kraken_pairs.json")
+
+# Words that appear in ALLCAPS in blog titles but aren't coin symbols
+_EXCLUDE_WORDS = {
+    'EUR','USD','USDT','USDC','NOW','NEW','THE','FOR','AND','WITH',
+    'ON','AT','IS','ARE','HAS','GET','ALL','ETF','API','DCA',
+    'NFT','DAO','TVL','APY','APR','CEX','DEX','IPO','ICO','KYC',
+    'AML','SOC','SEC','ETF','BTC','ETH','SOL','XRP','ADA','DOT',
+}
 
 _BASE_URL    = "https://www.sharpe.ai/api"
 _STATE_FILE  = os.path.join(os.path.dirname(__file__), "..", "data", "listing_watchlist.json")
@@ -109,6 +124,156 @@ def fetch_new_kraken_listings(hours_lookback: int = 48) -> list:
 
     except Exception as exc:
         logger.debug("listings_monitor fetch failed: %s", exc)
+        return []
+
+
+# ── Kraken blog RSS ────────────────────────────────────────────────────────────
+
+def fetch_kraken_blog_listings(hours_lookback: int = 48) -> list:
+    """
+    Parse the Kraken blog RSS feed for new listing announcements.
+    Often published hours before the pair goes live — gives early warning.
+    No API key needed.
+    """
+    try:
+        resp = requests.get(
+            _KRAKEN_BLOG_RSS,
+            headers={"User-Agent": "tradingbot/1.0"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return []
+        root    = ET.fromstring(resp.text)
+        channel = root.find("channel")
+        if channel is None:
+            return []
+
+        cutoff   = time.time() - hours_lookback * 3600
+        keywords = ["available", "listed", "trading", "launched", "now live",
+                    "new listing", "now on kraken", "adds", "token launch"]
+        results  = []
+
+        for item in channel.findall("item"):
+            title    = item.findtext("title", "")
+            link     = item.findtext("link", "")
+            pub_date = item.findtext("pubDate", "")
+
+            try:
+                listed_ts = parsedate_to_datetime(pub_date).timestamp()
+            except Exception:
+                continue
+            if listed_ts < cutoff:
+                continue
+            if not any(kw in title.lower() for kw in keywords):
+                continue
+
+            # Extract symbol — parentheses first: "Bitcoin Cash (BCH)"
+            symbols = re.findall(r"\(([A-Z]{2,10})\)", title)
+            if not symbols:
+                # fallback: ALLCAPS words not in exclude list
+                symbols = [
+                    w for w in re.findall(r"\b([A-Z]{3,8})\b", title)
+                    if w not in _EXCLUDE_WORDS
+                ]
+
+            for symbol in symbols[:2]:
+                results.append({
+                    "symbol":       symbol,
+                    "name":         title[:80],
+                    "listed_at":    listed_ts,
+                    "kraken_pair":  symbol + "EUR",
+                    "source":       "kraken_blog",
+                    "link":         link,
+                    "pair_variants": [
+                        symbol + "EUR",
+                        "X" + symbol + "ZEUR",
+                        "X" + symbol + "EUR",
+                        symbol + "USDT",
+                    ],
+                })
+
+        logger.info("Kraken blog RSS: %d potential listing(s) found", len(results))
+        return results
+
+    except Exception as exc:
+        logger.debug("Kraken blog RSS failed: %s", exc)
+        return []
+
+
+# ── Kraken AssetPairs polling ──────────────────────────────────────────────────
+
+def _load_known_pairs() -> set:
+    try:
+        if os.path.exists(_KNOWN_PAIRS_FILE):
+            with open(_KNOWN_PAIRS_FILE, "r") as f:
+                return set(json.load(f))
+    except Exception:
+        pass
+    return set()
+
+
+def _save_known_pairs(pairs: set) -> None:
+    try:
+        os.makedirs(os.path.dirname(_KNOWN_PAIRS_FILE), exist_ok=True)
+        with open(_KNOWN_PAIRS_FILE, "w") as f:
+            json.dump(sorted(pairs), f)
+    except Exception:
+        pass
+
+
+def fetch_kraken_new_pairs(hours_lookback: int = 48) -> list:
+    """
+    Poll Kraken's public AssetPairs endpoint and compare against stored list.
+    Returns pairs that are NEW since last check — no API key, real-time.
+    This is the most reliable source: detects the exact moment a pair is tradeable.
+    """
+    try:
+        resp = requests.get(
+            _KRAKEN_ASSET_PAIRS,
+            headers={"User-Agent": "tradingbot/1.0"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return []
+
+        current = set(resp.json().get("result", {}).keys())
+        known   = _load_known_pairs()
+
+        if not known:
+            # First run — just save the current list, no "new" pairs yet
+            _save_known_pairs(current)
+            logger.info("Kraken AssetPairs: baseline saved (%d pairs)", len(current))
+            return []
+
+        new_pairs = current - known
+        if new_pairs:
+            _save_known_pairs(current)
+            logger.info("Kraken AssetPairs: %d NEW pair(s) detected: %s",
+                        len(new_pairs), new_pairs)
+
+        results = []
+        now = time.time()
+        for pair_name in new_pairs:
+            # Only interested in EUR pairs
+            if not (pair_name.endswith("EUR") or pair_name.endswith("ZEUR")):
+                continue
+            # Derive base symbol
+            symbol = pair_name.replace("ZEUR", "").replace("EUR", "").lstrip("X")
+            if not symbol or symbol in _EXCLUDE_WORDS:
+                continue
+            results.append({
+                "symbol":       symbol,
+                "name":         f"{symbol} (new Kraken listing)",
+                "listed_at":    now,
+                "kraken_pair":  pair_name,   # exact name, no guessing needed
+                "source":       "kraken_assetpairs",
+                "pair_variants": [pair_name],
+            })
+
+        return results
+
+    except Exception as exc:
+        logger.debug("Kraken AssetPairs poll failed: %s", exc)
         return []
 
 
