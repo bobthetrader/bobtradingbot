@@ -195,6 +195,10 @@ def fetch_kraken_blog_listings(hours_lookback: int = 48) -> list:
         logger.info("Kraken blog RSS: %d potential listing(s) found", len(results))
         return results
 
+    except Exception as exc:
+        logger.debug("Kraken blog RSS (listings) failed: %s", exc)
+        return []
+
 
 def fetch_kraken_blog_headlines(limit: int = 8) -> list:
     """
