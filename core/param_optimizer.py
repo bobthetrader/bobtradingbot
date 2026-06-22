@@ -161,36 +161,45 @@ def backtest_parameter_change(config: dict, section: str, key: str,
                                new_value: float, baseline_sharpe: Optional[float]) -> dict:
     """
     Run a 30-day backtest with the proposed parameter change applied.
+    Tests on ALL configured trade pairs and averages the Sharpe.
     Returns {passed, backtest_sharpe, reason} dict.
-
-    Compares backtest Sharpe against baseline_sharpe.
-    If backtest is clearly worse (> 0.2 worse), rejects the change.
     """
     if baseline_sharpe is None:
         return {"passed": True, "backtest_sharpe": None, "reason": "no baseline — skip gate"}
 
-    closes = _fetch_ohlc_kraken("XBTEUR", interval=240, limit=180)
-    if not closes:
+    # Read configured pairs from config — use each pair's OHLC, not just BTC
+    raw_pairs = config.get("bot_settings", {}).get("trade_pairs", ["XXBTZEUR"])
+    # Normalise pair names to Kraken format (strip non-alphanumeric)
+    pairs = [p.strip('"').strip("'") for p in raw_pairs if p.strip('"').strip("'")]
+    if not pairs:
+        pairs = ["XBTEUR"]
+
+    pair_sharpes = []
+    for pair in pairs:
+        closes = _fetch_ohlc_kraken(pair, interval=240, limit=180)
+        if not closes:
+            continue
+        # Build simulation params from current config + proposed change
+        rm       = config.get("risk_management", {})
+        rsi_buy  = float(rm.get("mr_rsi_oversold_threshold",  30))
+        rsi_sell = float(rm.get("mr_rsi_overbought_threshold", 70))
+        tp_pct   = float(rm.get("take_profit_percent", 2.0))
+        sl_pct   = float(rm.get("stop_loss_percent",   1.0))
+        if section == "risk_management":
+            if key == "mr_rsi_oversold_threshold":   rsi_buy  = new_value
+            if key == "mr_rsi_overbought_threshold": rsi_sell = new_value
+            if key == "take_profit_percent":         tp_pct   = new_value
+            if key == "stop_loss_percent":           sl_pct   = new_value
+        bt = _backtest_sharpe(closes, rsi_buy, rsi_sell, tp_pct, sl_pct)
+        if bt is not None:
+            pair_sharpes.append(bt)
+            logger.debug("Backtest %s → Sharpe %.3f", pair, bt)
+
+    if not pair_sharpes:
         return {"passed": True, "backtest_sharpe": None, "reason": "no OHLC data — skip gate"}
 
-    # Extract current relevant params from the proposed config
-    rm = config.get("risk_management", {})
-    rsi_buy = float(rm.get("mr_rsi_oversold_threshold",  30))
-    rsi_sell= float(rm.get("mr_rsi_overbought_threshold", 70))
-    tp_pct  = float(rm.get("take_profit_percent", 2.0))
-    sl_pct  = float(rm.get("stop_loss_percent",   1.0))
-
-    # Apply the proposed change to simulation params
-    if section == "risk_management":
-        if key == "mr_rsi_oversold_threshold":  rsi_buy  = new_value
-        if key == "mr_rsi_overbought_threshold": rsi_sell = new_value
-        if key == "take_profit_percent":          tp_pct   = new_value
-        if key == "stop_loss_percent":            sl_pct   = new_value
-
-    bt_sharpe = _backtest_sharpe(closes, rsi_buy, rsi_sell, tp_pct, sl_pct)
-
-    if bt_sharpe is None:
-        return {"passed": True, "backtest_sharpe": None, "reason": "insufficient trades in backtest"}
+    bt_sharpe = round(sum(pair_sharpes) / len(pair_sharpes), 3)
+    logger.info("Backtest gate (%d pairs avg): Sharpe %.3f", len(pair_sharpes), bt_sharpe)
 
     # Gate: reject if backtest is meaningfully worse than current baseline
     threshold = baseline_sharpe - 0.2
