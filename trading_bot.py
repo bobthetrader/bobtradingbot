@@ -892,6 +892,29 @@ class TradingBot:
                 "label":            "RANGING",
             }
 
+    # Per-pair strategy profiles — each coin gets the approach that suits its behaviour
+    _PAIR_PROFILES = {
+        # Large caps: slower moving, needs genuine trend confirmation
+        "XBTEUR":   {"rsi_buy": 32, "rsi_sell": 68, "min_score": 8,  "strategy": "trend"},
+        "XXBTZEUR": {"rsi_buy": 32, "rsi_sell": 68, "min_score": 8,  "strategy": "trend"},
+        "XETHZEUR": {"rsi_buy": 32, "rsi_sell": 68, "min_score": 8,  "strategy": "trend"},
+        "ETHEUR":   {"rsi_buy": 32, "rsi_sell": 68, "min_score": 8,  "strategy": "trend"},
+        # Mid caps: more volatile, mean reversion works well
+        "SOLEUR":   {"rsi_buy": 28, "rsi_sell": 72, "min_score": 5,  "strategy": "mean_reversion"},
+        "XXRPZEUR": {"rsi_buy": 28, "rsi_sell": 72, "min_score": 5,  "strategy": "mean_reversion"},
+        "XRPEUR":   {"rsi_buy": 28, "rsi_sell": 72, "min_score": 5,  "strategy": "mean_reversion"},
+        "ADAEUR":   {"rsi_buy": 28, "rsi_sell": 72, "min_score": 5,  "strategy": "mean_reversion"},
+        # Small/mid caps: higher volatility, accept weaker signals
+        "DOTEUR":   {"rsi_buy": 25, "rsi_sell": 75, "min_score": 3,  "strategy": "mean_reversion"},
+        "LINKEUR":  {"rsi_buy": 25, "rsi_sell": 75, "min_score": 3,  "strategy": "mean_reversion"},
+    }
+
+    def _pair_profile(self, pair: str) -> dict:
+        """Return the strategy profile for a pair, with sensible defaults."""
+        return self._PAIR_PROFILES.get(pair, {
+            "rsi_buy": 30, "rsi_sell": 70, "min_score": 5, "strategy": "mean_reversion"
+        })
+
     def _correlation_size_multiplier(self, pair: str) -> float:
         """Reduce position size when correlated assets are already held.
         All crypto pairs move together (~0.8 correlation) so n open positions
@@ -2456,12 +2479,21 @@ class TradingBot:
                 # Default signal via analysis tool (fallback)
                 signal, score = self.analysis_tool.generate_signal_with_score({pair: {'c': [last_close]}})
 
-                # Simplified mean-reversion override: RSI < oversold && price > SMA200 -> BUY
-                if self.enable_mr_signals and rsi_val is not None and sma200 is not None:
+                # Apply pair-specific RSI thresholds
+                _prof     = self._pair_profile(pair)
+                _rsi_buy  = _prof.get('rsi_buy',  self.mr_rsi_oversold)
+                _rsi_sell = _prof.get('rsi_sell', self.mr_rsi_overbought)
+
+                # Pair-specific mean-reversion override
+                if self.enable_mr_signals and rsi_val is not None:
                     try:
-                        if float(rsi_val) < float(self.mr_rsi_oversold) and float(last_close) > float(sma200):
-                            signal = 'BUY'
-                            score = 30.0
+                        if float(rsi_val) < float(_rsi_buy):
+                            if sma200 is None or float(last_close) > float(sma200) * 0.97:
+                                signal = 'BUY'
+                                score  = max(score, (float(_rsi_buy) - float(rsi_val)) * 1.5)
+                        elif float(rsi_val) > float(_rsi_sell):
+                            signal = 'SELL'
+                            score  = min(score, -(float(rsi_val) - float(_rsi_sell)) * 1.5)
                     except Exception:
                         pass
 
@@ -3056,13 +3088,16 @@ class TradingBot:
         with self._intel_lock:
             _iscore  = self._intelligence_score
             _iweight = self._intelligence_score_weight
-        _intel_adj    = -(_iscore * _iweight)
-        _effective_min = self.min_buy_score + _intel_adj
+        _intel_adj = -(_iscore * _iweight)
+        # Use pair-specific min_score if defined, otherwise global setting
+        _pair_min_score = self._pair_profile(pair).get('min_score', self.min_buy_score)
+        _effective_min  = _pair_min_score + _intel_adj
         if score < _effective_min:
             self.logger.info(
                 "BUY skipped for %s: score %.2f < effective_min %.2f "
-                "(base=%.2f intel_adj=%+.2f)",
-                pair, score, _effective_min, self.min_buy_score, _intel_adj
+                "(pair_base=%.2f intel_adj=%+.2f profile=%s)",
+                pair, score, _effective_min, _pair_min_score, _intel_adj,
+                self._pair_profile(pair).get('strategy', '?')
             )
             return
         _open_pos = self._count_open_positions()
