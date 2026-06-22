@@ -886,6 +886,17 @@ class TradingBot:
                 "label":            "RANGING",
             }
 
+    def _correlation_size_multiplier(self, pair: str) -> float:
+        """Reduce position size when correlated assets are already held.
+        All crypto pairs move together (~0.8 correlation) so n open positions
+        = one large bet, not n independent ones. Formula: 1/(1+n_open)."""
+        n_open = sum(
+            1 for p in self.trade_pairs
+            if p != pair and
+            (self.position_qty.get(p, 0) or self.holdings.get(p, 0)) >= self._get_min_volume(p)
+        )
+        return round(1.0 / (1.0 + n_open), 3)
+
     def _breakout_size_multiplier(self, pair) -> float:
         """Size multiplier based on breakout recency (TR-GC inspired).
         Recent BB breakout (< 25 days) â†' 2Ã— allocation.
@@ -933,7 +944,10 @@ class TradingBot:
         # 4. Breakout recency multiplier (TR-GC inspired)
         amount *= self._breakout_size_multiplier(pair)
 
-        # 5. Regime size multiplier — bigger in trends, smaller when ranging
+        # 5. Correlation-aware sizing — shrink when correlated positions already open
+        amount *= self._correlation_size_multiplier(pair)
+
+        # 6. Regime size multiplier — bigger in trends, smaller when ranging
         amount *= self._regime_strategy_config().get('size_multiplier', 1.0)
 
         # 6. Monthly return multiplier — protect gains, slight aggression when behind
@@ -3493,7 +3507,11 @@ class TradingBot:
                             "btc_downtrend":       self._btc_downtrend,
                             "short_mode":          "BEAR (5% NAV)" if self._btc_downtrend else "HEDGE (3% NAV)",
                             "market_regime":       self._current_market_regime,
-                            "regime_strategy":     self._regime_strategy_config().get("label", "RANGING"),
+                            "regime_strategy":     self._regime_strategy_config().get('label', 'RANGING'),
+                            "correlated_open":     sum(
+                                1 for p in self.trade_pairs
+                                if (self.position_qty.get(p, 0) or self.holdings.get(p, 0)) >= self._get_min_volume(p)
+                            ),
                             "monthly_return_pct":  round(self._monthly_return_pct(current_balance), 2),
                             "monthly_start_bal":   round(self._monthly_start_balance, 2),
                             "monthly_target_low":  3.0,
