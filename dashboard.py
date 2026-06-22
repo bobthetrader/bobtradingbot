@@ -157,7 +157,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <!-- On-chain card -->
     <div class="card full">
-      <h2>On-Chain Data &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Blockchain.info · CoinMetrics · Etherscan</span></h2>
+      <h2>On-Chain Data &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Blockchain.info · CoinMetrics · Alchemy</span></h2>
       {onchain_html}
     </div>
 

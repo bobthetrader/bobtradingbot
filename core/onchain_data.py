@@ -38,6 +38,7 @@ _CACHE_TTL  = 300   # 5 minutes
 _BTC_STATS_URL    = "https://api.blockchain.info/stats"
 _ETHERSCAN_URL    = "https://api.etherscan.io/api"
 _COINMETRICS_URL  = "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics"
+_ALCHEMY_ETH_URL  = "https://eth-mainnet.g.alchemy.com/v2/{key}"
 
 
 def _cached_get(url: str, params: dict = None, timeout: int = 8) -> Optional[dict]:
@@ -151,6 +152,72 @@ def get_eth_gas_stats() -> dict:
     }
 
 
+# ── Alchemy (free tier — set ALCHEMY_API_KEY in Railway Variables) ────────────
+
+def get_alchemy_eth_data() -> dict:
+    """
+    ETH network data from Alchemy — more reliable than Etherscan free tier.
+    Returns gas price, pending tx count, and a derived demand signal.
+
+    High pending tx = mempool congested = people urgently transacting = bullish ETH.
+    High gas price  = same signal, directly from the fee market.
+    """
+    key = os.getenv("ALCHEMY_API_KEY", "")
+    if not key:
+        return {}
+
+    base = _ALCHEMY_ETH_URL.format(key=key)
+
+    def _rpc(method: str, params: list = None) -> Optional[dict]:
+        try:
+            r = requests.post(
+                base,
+                json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []},
+                headers={"Content-Type": "application/json"},
+                timeout=8,
+            )
+            if r.status_code == 200:
+                return r.json().get("result")
+        except Exception as exc:
+            logger.debug("Alchemy RPC %s failed: %s", method, exc)
+        return None
+
+    # Gas price (in wei → convert to gwei)
+    gas_hex = _rpc("eth_gasPrice")
+    gas_gwei = int(gas_hex, 16) / 1e9 if gas_hex else 0
+
+    # Pending transaction count in mempool
+    pending_hex = _rpc("eth_getBlockTransactionCountByNumber", ["pending"])
+    pending_count = int(pending_hex, 16) if pending_hex else 0
+
+    # Priority fee (EIP-1559 tip)
+    tip_hex = _rpc("eth_maxPriorityFeePerGas")
+    tip_gwei = int(tip_hex, 16) / 1e9 if tip_hex else 0
+
+    if not gas_gwei and not pending_count:
+        return {}
+
+    # Signal: high gas + high pending = strong demand = bullish ETH
+    gas_signal    = 2.0 if gas_gwei > 50 else (1.0 if gas_gwei > 20 else (-0.5 if gas_gwei < 5 else 0.0))
+    pending_signal= 1.5 if pending_count > 200 else (0.5 if pending_count > 80 else 0.0)
+    combined      = round((gas_signal + pending_signal) / 2, 2)
+
+    return {
+        "gas_gwei":      round(gas_gwei, 1),
+        "tip_gwei":      round(tip_gwei, 1),
+        "pending_txs":   pending_count,
+        "gas_signal":    gas_signal,
+        "pending_signal":pending_signal,
+        "combined":      combined,
+        "source":        "alchemy",
+        "summary": (
+            f"ETH (Alchemy): gas {gas_gwei:.0f} gwei | "
+            f"pending {pending_count} txs | "
+            f"signal {combined:+.1f}"
+        ),
+    }
+
+
 # ── CoinMetrics Community (free, no API key) ──────────────────────────────────
 
 def get_coinmetrics_exchange_flows(asset: str = "btc") -> dict:
@@ -234,7 +301,9 @@ def fetch_all_onchain() -> dict:
     Gracefully degrades: works with zero API keys, improves with each one added.
     """
     btc       = get_btc_network_stats()
-    eth       = get_eth_gas_stats()
+    # Prefer Alchemy for ETH (richer data), fall back to Etherscan
+    alchemy   = get_alchemy_eth_data()
+    eth       = alchemy if alchemy else get_eth_gas_stats()
     btc_flows = get_coinmetrics_exchange_flows("btc")
     eth_flows = get_coinmetrics_exchange_flows("eth")
 
