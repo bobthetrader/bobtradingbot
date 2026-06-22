@@ -314,33 +314,42 @@ def _build_page() -> str:
       <span>0%</span><span style="color:#ffbb33">+{target_lo}% target floor</span><span style="color:#ffd700">+{target_hi}% cap</span>
     </div>"""
 
-    # ── LunarCrush ────────────────────────────────────────────────────────────
+    # ── Social Sentiment (CoinGecko trending + Fear & Greed) ──────────────────
     lc = status.get("lunarcrush", {})
     if lc:
-        combined = lc.get("combined", 0)
-        c_col    = "#00c851" if combined >= 1 else ("#ff4444" if combined <= -1 else "#ffbb33")
-        lc_rows  = ""
+        combined     = lc.get("combined", 0)
+        c_col        = "#00c851" if combined >= 1 else ("#ff4444" if combined <= -1 else "#ffbb33")
+        fg_val       = lc.get("fear_greed")
+        fg_str       = f"{fg_val}/100" if fg_val is not None else "n/a"
+        fg_col       = "#00c851" if fg_val and fg_val <= 30 else ("#ff4444" if fg_val and fg_val >= 70 else "#ffbb33")
+        trending_now = lc.get("trending_now", [])
+        lc_rows      = ""
         for pair, cd in lc.get("coins", {}).items():
-            sig     = cd.get("signal", 0)
-            sent    = cd.get("sentiment_pct", 50)
-            vol     = cd.get("social_volume", 0)
-            sig_col = "#00c851" if sig >= 1 else ("#ff4444" if sig <= -1 else "#8b949e")
-            sent_col= "#00c851" if sent >= 55 else ("#ff4444" if sent <= 45 else "#8b949e")
+            sig      = cd.get("signal", 0)
+            ch24     = cd.get("change_24h", 0)
+            is_trend = cd.get("is_trending", False)
+            sig_col  = "#00c851" if sig >= 1 else ("#ff4444" if sig <= -1 else "#8b949e")
+            ch_col   = "#00c851" if ch24 >= 0 else "#ff4444"
+            tr_badge = ' <span style="color:#00c851;font-size:10px;font-weight:bold">TRENDING</span>' if is_trend else ""
             lc_rows += (
-                f'<tr><td>{pair}</td>'
-                f'<td style="color:{sent_col}">{sent:.0f}%</td>'
-                f'<td class="grey">{vol:,}</td>'
+                f'<tr><td>{cd.get("symbol","")}{tr_badge}</td>'
+                f'<td style="color:{ch_col}">{ch24:+.1f}%</td>'
                 f'<td style="color:{sig_col};font-weight:bold">{sig:+.1f}</td></tr>'
             )
+        trending_str = (
+            f'<div style="margin-top:8px;font-size:11px;color:#8b949e">'
+            f'Trending now: {", ".join(trending_now[:10])}</div>'
+        ) if trending_now else ""
         lunar_html = (
-            f'<div style="margin-bottom:10px">Combined social signal: '
-            f'<span style="color:{c_col};font-size:20px;font-weight:bold">{combined:+.2f}</span>'
+            f'<div style="display:flex;gap:20px;margin-bottom:10px;flex-wrap:wrap">'
+            f'<div>Social signal: <span style="color:{c_col};font-size:20px;font-weight:bold">{combined:+.2f}</span></div>'
+            f'<div>Fear &amp; Greed: <span style="color:{fg_col};font-weight:bold">{fg_str}</span></div>'
             f'</div>'
-            f'<table><tr><th>Pair</th><th>Sentiment</th><th>Social Volume 24h</th><th>Signal</th></tr>'
-            + lc_rows + '</table>'
+            f'<table><tr><th>Coin</th><th>24h Change</th><th>Signal</th></tr>'
+            + lc_rows + f'</table>{trending_str}'
         )
     else:
-        lunar_html = '<div class="grey" style="padding:8px 0">Social sentiment loading — updates every 10 loops (Reddit + CoinGecko, no API key needed).</div>'
+        lunar_html = '<div class="grey" style="padding:8px 0">Social sentiment loading — CoinGecko trending + Fear &amp; Greed (free, no API key).</div>'
 
     # ── On-chain ──────────────────────────────────────────────────────────────
     oc = status.get("onchain", {})

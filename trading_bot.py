@@ -3632,12 +3632,15 @@ class TradingBot:
                                 _lc = _fetch_lunar_status(self.trade_pairs)
                                 if _lc.get("available"):
                                     _status["lunarcrush"] = {
-                                        "combined": _lc.get("combined", 0),
+                                        "combined":     _lc.get("combined", 0),
+                                        "fear_greed":   _lc.get("fear_greed"),
+                                        "trending_now": _lc.get("trending_now", []),
                                         "coins": {
                                             p: {
-                                                "sentiment_pct": v.get("sentiment_pct", 50),
-                                                "social_volume": v.get("social_volume_24h", 0),
-                                                "signal":        v.get("signal", 0),
+                                                "symbol":       v.get("symbol", p),
+                                                "is_trending":  v.get("is_trending", False),
+                                                "change_24h":   v.get("change_24h", 0),
+                                                "signal":       v.get("signal", 0),
                                             }
                                             for p, v in _lc.get("coins", {}).items()
                                         },
