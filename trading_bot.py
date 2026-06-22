@@ -135,6 +135,12 @@ except ImportError:
     _ONCHAIN_AVAILABLE = False
 
 try:
+    from core.lunarcrush_data import fetch_all_sentiment as _fetch_lunar_status
+    _LUNAR_STATUS_AVAILABLE = True
+except ImportError:
+    _LUNAR_STATUS_AVAILABLE = False
+
+try:
     from core.alpaca_interface import (
         get_client as _alpaca_client,
         is_available as _alpaca_available,
@@ -3573,6 +3579,25 @@ class TradingBot:
                             pass
                         _status["new_listings"]     = _listings_display
                         _status["kraken_headlines"] = getattr(self, '_kraken_headlines', [])
+
+                        # LunarCrush social sentiment (every 10 loops)
+                        if _LUNAR_STATUS_AVAILABLE and iteration % 10 == 0:
+                            try:
+                                _lc = _fetch_lunar_status(self.trade_pairs)
+                                if _lc.get("available"):
+                                    _status["lunarcrush"] = {
+                                        "combined": _lc.get("combined", 0),
+                                        "coins": {
+                                            p: {
+                                                "sentiment_pct": v.get("sentiment_pct", 50),
+                                                "social_volume": v.get("social_volume_24h", 0),
+                                                "signal":        v.get("signal", 0),
+                                            }
+                                            for p, v in _lc.get("coins", {}).items()
+                                        },
+                                    }
+                            except Exception:
+                                pass
 
                         # On-chain data (cached, runs every 5 min via market_intelligence)
                         if _ONCHAIN_AVAILABLE and iteration % 5 == 0:

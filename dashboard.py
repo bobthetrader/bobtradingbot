@@ -155,6 +155,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {monthly_html}
     </div>
 
+    <!-- LunarCrush card -->
+    <div class="card full">
+      <h2>LunarCrush Social Sentiment &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Twitter · Reddit · social volume leads price by 1-6h</span></h2>
+      {lunar_html}
+    </div>
+
     <!-- On-chain card -->
     <div class="card full">
       <h2>On-Chain Data &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Blockchain.info · CoinMetrics · Alchemy</span></h2>
@@ -296,6 +302,34 @@ def _build_page() -> str:
     <div style="display:flex;justify-content:space-between;font-size:10px;color:#8b949e;margin-top:3px">
       <span>0%</span><span style="color:#ffbb33">+{target_lo}% target floor</span><span style="color:#ffd700">+{target_hi}% cap</span>
     </div>"""
+
+    # ── LunarCrush ────────────────────────────────────────────────────────────
+    lc = status.get("lunarcrush", {})
+    if lc:
+        combined = lc.get("combined", 0)
+        c_col    = "#00c851" if combined >= 1 else ("#ff4444" if combined <= -1 else "#ffbb33")
+        lc_rows  = ""
+        for pair, cd in lc.get("coins", {}).items():
+            sig     = cd.get("signal", 0)
+            sent    = cd.get("sentiment_pct", 50)
+            vol     = cd.get("social_volume", 0)
+            sig_col = "#00c851" if sig >= 1 else ("#ff4444" if sig <= -1 else "#8b949e")
+            sent_col= "#00c851" if sent >= 55 else ("#ff4444" if sent <= 45 else "#8b949e")
+            lc_rows += (
+                f'<tr><td>{pair}</td>'
+                f'<td style="color:{sent_col}">{sent:.0f}%</td>'
+                f'<td class="grey">{vol:,}</td>'
+                f'<td style="color:{sig_col};font-weight:bold">{sig:+.1f}</td></tr>'
+            )
+        lunar_html = (
+            f'<div style="margin-bottom:10px">Combined social signal: '
+            f'<span style="color:{c_col};font-size:20px;font-weight:bold">{combined:+.2f}</span>'
+            f'</div>'
+            f'<table><tr><th>Pair</th><th>Sentiment</th><th>Social Volume 24h</th><th>Signal</th></tr>'
+            + lc_rows + '</table>'
+        )
+    else:
+        lunar_html = '<div class="grey" style="padding:8px 0">LunarCrush loading — updates every 10 loops. Requires LUNARCRUSH_API_KEY in Railway Variables.</div>'
 
     # ── On-chain ──────────────────────────────────────────────────────────────
     oc = status.get("onchain", {})
@@ -696,6 +730,7 @@ def _build_page() -> str:
         btc_mode      = btc_mode,
         signal_rows   = signal_rows,
         monthly_html  = monthly_html,
+        lunar_html       = lunar_html,
         onchain_html     = onchain_html,
         alpaca_html      = alpaca_html,
         kraken_news_html = kraken_news_html,

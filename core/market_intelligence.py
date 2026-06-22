@@ -38,6 +38,12 @@ except ImportError:
     _ONCHAIN_AVAILABLE = False
 
 try:
+    from core.lunarcrush_data import fetch_all_sentiment as _fetch_lunar
+    _LUNAR_AVAILABLE = True
+except ImportError:
+    _LUNAR_AVAILABLE = False
+
+try:
     from core.sharpe_data import fetch_all as _sharpe_fetch_all
     _SHARPE_AVAILABLE = True
 except ImportError:
@@ -224,6 +230,23 @@ def _build_market_context(pairs: list, bot_context: dict, sharpe_data: dict = No
             lines.append(f"  • {art.get('title', '')}")
 
     lines.append(f"\nBot pairs: {', '.join(pairs)}")
+
+    # ── LunarCrush social sentiment ───────────────────────────────────────────
+    if _LUNAR_AVAILABLE:
+        try:
+            _lc = _fetch_lunar(pairs)
+            if _lc.get("available"):
+                lines.append("\n--- LUNARCRUSH SOCIAL SENTIMENT ---")
+                lines.append(_lc.get("summary", ""))
+                for pair, cd in _lc.get("coins", {}).items():
+                    if cd.get("summary"):
+                        lines.append(f"  {cd['summary']}")
+                lines.append(
+                    "Interpretation: high social volume + bullish sentiment = "
+                    "crowd momentum building. Low volume = ignore the sentiment score."
+                )
+        except Exception as _lce:
+            logger.debug("LunarCrush context failed: %s", _lce)
 
     # ── On-chain data ─────────────────────────────────────────────────────────
     if _ONCHAIN_AVAILABLE:
