@@ -708,6 +708,43 @@ class TradingBot:
         except Exception:
             return 30.0
 
+    def _get_optimizer_status(self) -> dict:
+        """Return current optimizer experiment + recent history for dashboard."""
+        try:
+            if not _OPTIMIZER_AVAILABLE:
+                return {}
+            from core.param_optimizer import _load_state as _opt_state
+            state = _opt_state()
+            exp   = state.get("current_experiment")
+            hist  = state.get("history", [])[-10:]   # last 10 decisions
+            return {
+                "baseline_sharpe":  state.get("baseline_sharpe"),
+                "current_experiment": {
+                    "param":     exp.get("key") if exp else None,
+                    "old_value": exp.get("original") if exp else None,
+                    "new_value": exp.get("tested") if exp else None,
+                    "direction": exp.get("direction") if exp else None,
+                    "sharpe_at_start": exp.get("sharpe_at_start") if exp else None,
+                } if exp else None,
+                "history": [
+                    {
+                        "param":         h.get("key"),
+                        "old":           h.get("original"),
+                        "new":           h.get("tested"),
+                        "sharpe_before": h.get("sharpe_before"),
+                        "sharpe_after":  h.get("sharpe_after"),
+                        "verdict":       h.get("verdict"),
+                        "pct_change":    round(
+                            ((h.get("sharpe_after") or 0) - (h.get("sharpe_before") or 0))
+                            / max(abs(h.get("sharpe_before") or 1), 0.001) * 100, 1
+                        ) if h.get("sharpe_after") is not None else None,
+                    }
+                    for h in reversed(hist)
+                ],
+            }
+        except Exception:
+            return {}
+
     def _monthly_return_pct(self, current_balance: float) -> float:
         """Return % gain since the start of the current calendar month."""
         if self._monthly_start_balance <= 0:
@@ -3264,6 +3301,8 @@ class TradingBot:
                             "sharpe":         self._sharpe_result.get('sharpe'),
                             "sharpe_verdict": self._sharpe_result.get('verdict', 'insufficient_data'),
                             "sharpe_trending":self._sharpe_result.get('trending', 'stable'),
+                            "sharpe_n_trades":self._sharpe_result.get('n_trades', 0),
+                            "optimizer":      self._get_optimizer_status(),
                             "open_positions": {},
                             "open_shorts":    {},
                         }

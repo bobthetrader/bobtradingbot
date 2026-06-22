@@ -155,6 +155,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {monthly_html}
     </div>
 
+    <!-- Optimizer card -->
+    <div class="card full">
+      <h2>Scientific Method Optimizer &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Sharpe target: &ge;3.0 success | &lt;1.0 failure</span></h2>
+      {optimizer_html}
+    </div>
+
     <!-- New listings card -->
     <div class="card full">
       <h2>New Listings Monitor &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">60 min wait → buy if +2% → sell after 12h</span></h2>
@@ -272,6 +278,71 @@ def _build_page() -> str:
     <div style="display:flex;justify-content:space-between;font-size:10px;color:#8b949e;margin-top:3px">
       <span>0%</span><span style="color:#ffbb33">+{target_lo}% target floor</span><span style="color:#ffd700">+{target_hi}% cap</span>
     </div>"""
+
+    # ── Optimizer ─────────────────────────────────────────────────────────────
+    opt = status.get("optimizer", {})
+    n_trades_sharpe = status.get("sharpe_n_trades", 0)
+    if opt:
+        opt_lines = []
+        # Current experiment
+        exp = opt.get("current_experiment")
+        baseline = opt.get("baseline_sharpe")
+        if exp and exp.get("param"):
+            opt_lines.append(
+                f'<div style="margin-bottom:10px;padding:10px;background:#161b22;border:1px solid #30363d;border-radius:6px">'
+                f'<span style="color:#ffbb33;font-weight:bold">ACTIVE EXPERIMENT</span> &nbsp; '
+                f'<code>{exp["param"]}</code>: '
+                f'<span class="grey">{exp["old_value"]}</span> '
+                f'&rarr; <span style="color:#58a6ff;font-weight:bold">{exp["new_value"]}</span> '
+                f'({exp.get("direction","?")})'
+                f'<span class="grey" style="margin-left:12px;font-size:11px">'
+                f'Sharpe at start: {exp.get("sharpe_at_start") or "—"}'
+                f'</span></div>'
+            )
+        elif baseline is not None:
+            opt_lines.append(
+                f'<div class="grey" style="margin-bottom:10px">Baseline Sharpe: <b>{baseline:.3f}</b> | '
+                f'Waiting for next experiment trigger ({n_trades_sharpe} closed trades so far)</div>'
+            )
+
+        # History table
+        hist = opt.get("history", [])
+        if hist:
+            rows = ""
+            for h in hist:
+                pct = h.get("pct_change")
+                verdict = h.get("verdict", "?")
+                if verdict == "kept":
+                    v_col, v_icon = "#00c851", "KEPT"
+                else:
+                    v_col, v_icon = "#ff4444", "REVERTED"
+                pct_str = ""
+                if pct is not None:
+                    pct_col = "#00c851" if pct > 0 else "#ff4444"
+                    pct_str = f'<span style="color:{pct_col};font-weight:bold">{pct:+.1f}%</span>'
+                s_before = f'{h["sharpe_before"]:.3f}' if h.get("sharpe_before") is not None else "—"
+                s_after  = f'{h["sharpe_after"]:.3f}'  if h.get("sharpe_after")  is not None else "—"
+                rows += (
+                    f'<tr>'
+                    f'<td><code>{h.get("param","?")}</code></td>'
+                    f'<td class="grey">{h.get("old","?")} &rarr; {h.get("new","?")}</td>'
+                    f'<td>{s_before}</td><td>{s_after}</td>'
+                    f'<td>{pct_str}</td>'
+                    f'<td style="color:{v_col};font-weight:bold">{v_icon}</td>'
+                    f'</tr>'
+                )
+            opt_lines.append(
+                '<table><tr><th>Parameter</th><th>Change</th>'
+                '<th>Sharpe Before</th><th>Sharpe After</th>'
+                '<th>Impact</th><th>Result</th></tr>'
+                + rows + '</table>'
+            )
+        else:
+            opt_lines.append('<div class="grey">No experiments completed yet — runs after every 10 closed trades.</div>')
+
+        optimizer_html = "\n".join(opt_lines)
+    else:
+        optimizer_html = '<div class="grey" style="padding:8px 0">Optimizer initialising — needs 5+ closed trades to establish Sharpe baseline.</div>'
 
     # ── New listings ──────────────────────────────────────────────────────────
     new_listings = status.get("new_listings", {})
@@ -508,6 +579,7 @@ def _build_page() -> str:
         btc_mode      = btc_mode,
         signal_rows   = signal_rows,
         monthly_html  = monthly_html,
+        optimizer_html = optimizer_html,
         listings_html = listings_html,
         sharpe_html   = sharpe_html,
         model_html    = model_html,
