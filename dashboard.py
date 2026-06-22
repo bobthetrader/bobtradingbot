@@ -157,7 +157,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <!-- LunarCrush card -->
     <div class="card full">
-      <h2>LunarCrush Social Sentiment &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Twitter · Reddit · social volume leads price by 1-6h</span></h2>
+      <h2>Social Sentiment &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Reddit · CoinGecko community — activity leads price by 1-6h</span></h2>
       {lunar_html}
     </div>
 
@@ -329,7 +329,7 @@ def _build_page() -> str:
             + lc_rows + '</table>'
         )
     else:
-        lunar_html = '<div class="grey" style="padding:8px 0">LunarCrush loading — updates every 10 loops. Requires LUNARCRUSH_API_KEY in Railway Variables.</div>'
+        lunar_html = '<div class="grey" style="padding:8px 0">Social sentiment loading — updates every 10 loops (Reddit + CoinGecko, no API key needed).</div>'
 
     # ── On-chain ──────────────────────────────────────────────────────────────
     oc = status.get("onchain", {})
