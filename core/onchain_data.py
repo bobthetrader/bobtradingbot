@@ -35,10 +35,9 @@ logger = logging.getLogger(__name__)
 _CACHE: dict = {}
 _CACHE_TTL  = 300   # 5 minutes
 
-_BTC_STATS_URL  = "https://api.blockchain.info/stats"
-_BTC_MEMPOOL_URL= "https://api.blockchain.info/mempool?format=json"
-_ETHERSCAN_URL  = "https://api.etherscan.io/api"
-_GLASSNODE_URL  = "https://api.glassnode.com/v1/metrics"
+_BTC_STATS_URL    = "https://api.blockchain.info/stats"
+_ETHERSCAN_URL    = "https://api.etherscan.io/api"
+_COINMETRICS_URL  = "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics"
 
 
 def _cached_get(url: str, params: dict = None, timeout: int = 8) -> Optional[dict]:
@@ -152,58 +151,78 @@ def get_eth_gas_stats() -> dict:
     }
 
 
-# ── Glassnode (optional — add GLASSNODE_API_KEY to unlock) ────────────────────
+# ── CoinMetrics Community (free, no API key) ──────────────────────────────────
 
-def get_glassnode_exchange_flows(asset: str = "BTC") -> dict:
+def get_coinmetrics_exchange_flows(asset: str = "btc") -> dict:
     """
-    Exchange inflow/outflow from Glassnode.
-    High inflow = coins heading TO exchanges = selling pressure = bearish.
-    High outflow = coins leaving exchanges = accumulation = bullish.
+    Exchange inflow/outflow from CoinMetrics Community API.
+    Completely free — no API key required.
 
-    Requires GLASSNODE_API_KEY (free at glassnode.com).
+    FlowInExNtv  = coins flowing INTO exchanges (selling pressure = bearish)
+    FlowOutExNtv = coins flowing OUT of exchanges (accumulation = bullish)
+    AdrActCnt    = active addresses (high = network activity = bullish)
     """
-    key = os.getenv("GLASSNODE_API_KEY", "")
-    if not key:
+    # Fetch last 2 days to get latest completed day
+    import datetime
+    end   = datetime.date.today().isoformat()
+    start = (datetime.date.today() - datetime.timedelta(days=2)).isoformat()
+
+    data = _cached_get(_COINMETRICS_URL, params={
+        "assets":      asset,
+        "metrics":     "FlowInExNtv,FlowOutExNtv,AdrActCnt",
+        "start_time":  start,
+        "end_time":    end,
+        "frequency":   "1d",
+        "page_size":   5,
+    })
+
+    if not data or not data.get("data"):
         return {}
 
-    params = {"a": asset, "api_key": key, "i": "24h"}
-
-    inflow  = _cached_get(f"{_GLASSNODE_URL}/transactions/transfers_volume_to_exchanges_sum", params)
-    outflow = _cached_get(f"{_GLASSNODE_URL}/transactions/transfers_volume_from_exchanges_sum", params)
-
-    if not inflow or not outflow:
-        return {}
-
-    # Glassnode returns list of {t: timestamp, v: value}
     try:
-        in_val  = float(inflow[-1]["v"])  if isinstance(inflow,  list) else 0
-        out_val = float(outflow[-1]["v"]) if isinstance(outflow, list) else 0
-        net     = out_val - in_val        # positive = net outflow = bullish
-        ratio   = out_val / max(in_val, 1)
+        rows = data["data"]
+        if not rows:
+            return {}
 
+        latest = rows[-1]
+        in_val  = float(latest.get("FlowInExNtv")  or 0)
+        out_val = float(latest.get("FlowOutExNtv") or 0)
+        adr_cnt = int(float(latest.get("AdrActCnt") or 0))
+        net     = out_val - in_val
+        ratio   = out_val / max(in_val, 0.001)
+
+        # Flow signal
         flow_signal = 0.0
         if ratio > 1.5:
-            flow_signal = 2.0    # strong net outflow = accumulation
+            flow_signal = 2.0    # strong outflow = accumulation = bullish
         elif ratio > 1.1:
             flow_signal = 1.0
         elif ratio < 0.7:
-            flow_signal = -2.0   # strong net inflow = distribution
+            flow_signal = -2.0   # strong inflow = distribution = bearish
         elif ratio < 0.9:
             flow_signal = -1.0
+
+        # Active addresses bonus
+        adr_signal = 0.5 if adr_cnt > 900000 else (-0.5 if adr_cnt < 500000 else 0)
+        combined   = round((flow_signal + adr_signal) / 2, 2)
 
         return {
             "exchange_inflow":  round(in_val, 2),
             "exchange_outflow": round(out_val, 2),
             "net_flow":         round(net, 2),
             "flow_ratio":       round(ratio, 3),
+            "active_addresses": adr_cnt,
             "flow_signal":      flow_signal,
+            "combined":         combined,
             "summary": (
-                f"{asset} exchange flows: "
-                f"in={in_val:.0f} out={out_val:.0f} "
-                f"(net {'+' if net>0 else ''}{net:.0f}) | signal {flow_signal:+.1f}"
+                f"{asset.upper()} flows (CoinMetrics): "
+                f"in={in_val:,.0f} out={out_val:,.0f} "
+                f"net={'+'if net>0 else''}{net:,.0f} | "
+                f"active addr {adr_cnt:,} | signal {combined:+.1f}"
             ),
         }
-    except Exception:
+    except Exception as exc:
+        logger.debug("CoinMetrics parse failed: %s", exc)
         return {}
 
 
@@ -214,10 +233,10 @@ def fetch_all_onchain() -> dict:
     Fetch all available on-chain data and return combined dict.
     Gracefully degrades: works with zero API keys, improves with each one added.
     """
-    btc   = get_btc_network_stats()
-    eth   = get_eth_gas_stats()
-    btc_flows = get_glassnode_exchange_flows("BTC")
-    eth_flows = get_glassnode_exchange_flows("ETH")
+    btc       = get_btc_network_stats()
+    eth       = get_eth_gas_stats()
+    btc_flows = get_coinmetrics_exchange_flows("btc")
+    eth_flows = get_coinmetrics_exchange_flows("eth")
 
     # Combined signal: average of whatever is available
     signals = []

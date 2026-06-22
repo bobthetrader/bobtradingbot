@@ -157,7 +157,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <!-- On-chain card -->
     <div class="card full">
-      <h2>On-Chain Data &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Blockchain.info · Etherscan · Glassnode</span></h2>
+      <h2>On-Chain Data &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Blockchain.info · CoinMetrics · Etherscan</span></h2>
       {onchain_html}
     </div>
 
@@ -327,7 +327,7 @@ def _build_page() -> str:
             f'positive=bullish network activity | negative=bearish</span></div>'
             f'<table>{tbl}</table>'
             f'<div class="grey" style="font-size:11px;margin-top:6px">'
-            f'Add ETHERSCAN_API_KEY for ETH gas · GLASSNODE_API_KEY for exchange flows</div>'
+            f'Exchange flows via CoinMetrics (free) · Add ETHERSCAN_API_KEY for ETH gas data</div>'
         )
     else:
         onchain_html = '<div class="grey" style="padding:8px 0">On-chain data loading — updates every 5 loops.</div>'
