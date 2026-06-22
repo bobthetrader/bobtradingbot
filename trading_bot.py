@@ -956,6 +956,15 @@ class TradingBot:
         # 6. Regime size multiplier — bigger in trends, smaller when ranging
         amount *= self._regime_strategy_config().get('size_multiplier', 1.0)
 
+        # 7. Half-Kelly sizing — scale by 0.5 x Kelly fraction from actual trade history
+        # Uses 0.5x (half-Kelly) not full Kelly to reduce variance while keeping the edge.
+        # Needs 10+ closed trades to activate; defaults to 0.1 (10%) before then.
+        kelly = getattr(self, 'kelly_fraction', 0.1)
+        half_kelly = kelly * 0.5
+        # Map kelly [0.01, 0.5] -> multiplier [0.3, 1.5] so it meaningfully adjusts size
+        kelly_multiplier = max(0.3, min(1.5, half_kelly / 0.1))
+        amount *= kelly_multiplier
+
         # 6. Monthly return multiplier — protect gains, slight aggression when behind
         amount *= self._monthly_size_multiplier(available_eur)
 
@@ -3514,6 +3523,8 @@ class TradingBot:
                             "short_mode":          "BEAR (5% NAV)" if self._btc_downtrend else "HEDGE (3% NAV)",
                             "market_regime":       self._current_market_regime,
                             "regime_strategy":     self._regime_strategy_config().get('label', 'RANGING'),
+                            "kelly_fraction":      round(getattr(self, 'kelly_fraction', 0.1), 3),
+                            "kelly_multiplier":    round(max(0.3, min(1.5, getattr(self,'kelly_fraction',0.1)*0.5/0.1)), 2),
                             "correlated_open":     sum(
                                 1 for p in self.trade_pairs
                                 if (self.position_qty.get(p, 0) or self.holdings.get(p, 0)) >= self._get_min_volume(p)
@@ -3929,6 +3940,8 @@ class TradingBot:
             if ttype in ('SELL', 'SHORT_CLOSE') and _OPTIMIZER_AVAILABLE:
                 try:
                     self._closed_trades_count += 1
+                    # Update Kelly fraction from latest trade history
+                    self.kelly_fraction = self._calculate_kelly_fraction()
                     # Recalculate Sharpe every 5 closed trades (not just optimizer intervals)
                     if self._closed_trades_count % 5 == 0 or self._closed_trades_count < 10:
                         self._sharpe_result = _calculate_sharpe(self.json_journal_path)

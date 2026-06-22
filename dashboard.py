@@ -131,7 +131,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <span class="pill" style="background:{sharpe_colour}22;color:{sharpe_colour}">{verdict}</span>
         &nbsp; {arrow} {trending}
       </div>
-      <div class="sub" style="margin-top:6px">Target: &gt;3.0 (success) &nbsp;&#x2022;&nbsp; Exit: &lt;1.0 (failure)</div>
+      <div class="sub" style="margin-top:6px">Target: &gt;3.0 (success) &nbsp;&#x2022;&nbsp; Exit: &lt;1.0 (failure) &nbsp;&#x2022;&nbsp; Kelly: {kelly_pct}% (half-Kelly sizing ×{kelly_mult})</div>
     </div>
 
     <!-- Signals card -->
@@ -724,6 +724,8 @@ def _build_page() -> str:
         verdict       = verdict.replace("_", " "),
         arrow         = _trending_arrow(trending),
         trending      = trending.replace("_", " "),
+        kelly_pct     = round((status.get("kelly_fraction", 0.1)) * 100, 1),
+        kelly_mult    = status.get("kelly_multiplier", 1.0),
         intel_score   = status.get("intelligence_score", 0.0),
         regime_label  = status.get("regime_strategy", "RANGING"),
         corr_open     = status.get("correlated_open", 0),
