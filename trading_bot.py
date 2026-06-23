@@ -3100,6 +3100,12 @@ class TradingBot:
                 self._pair_profile(pair).get('strategy', '?')
             )
             return
+        # Block re-buying a pair that already has an open position (prevents averaging down)
+        _existing_qty = self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)
+        if _existing_qty >= self._get_min_volume(pair):
+            self.logger.info("BUY skipped for %s: already have open position (qty=%.6f) — wait for TP/SL exit first", pair, _existing_qty)
+            return
+
         _open_pos = self._count_open_positions()
         if _open_pos >= self.max_open_positions:
             self.logger.info("BUY skipped: max open positions reached (%d/%d)", _open_pos, self.max_open_positions)
