@@ -69,11 +69,20 @@ def get_btc_network_stats() -> dict:
     if not data:
         return {}
 
-    n_tx      = int(data.get("n_tx", 0))               # transactions in last 24h
-    total_vol = float(data.get("estimated_btc_sent", 0)) # BTC volume (satoshis)
+    n_tx      = int(data.get("n_tx", 0))
     hash_rate = float(data.get("hash_rate", 0))
-    diff      = float(data.get("difficulty", 0))
-    mempool   = int(data.get("mempool_size", 0))         # unconfirmed tx count
+
+    # mempool_size is NOT in /stats — use the dedicated unconfirmed count endpoint
+    mempool = 0
+    try:
+        _r = requests.get(
+            "https://api.blockchain.info/q/unconfirmedcount",
+            headers={"User-Agent": "tradingbot/1.0"}, timeout=6
+        )
+        if _r.status_code == 200:
+            mempool = int(_r.text.strip())
+    except Exception:
+        pass
 
     # Transaction volume signal: high volume = active market = mild bullish
     # Normalise: >300k tx/day is high, <150k is low
