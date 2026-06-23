@@ -1,5 +1,5 @@
 # Paper trading — tightened for quality over quantity
-# Balance: 100 EUR | Goal: +3-8% per month | R:R = 2.5:1
+# Balance: 500 EUR | Goal: +3-8% per month | R:R = 2.5:1
 [kraken_api]
 key = ""
 secret = ""
@@ -73,8 +73,8 @@ bot_token = ""
 chat_id = ""
 
 [bot_settings.trade_amounts]
-trade_amount_eur = 5.0
-initial_balance = 100.0
+trade_amount_eur = 25.0
+initial_balance = 500.0
 
 [shorting]
 enabled = false
