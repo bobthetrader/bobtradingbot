@@ -137,7 +137,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <!-- Signals card -->
     <div class="card">
-      <h2>Pair Signals &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">AI: {intel_score:+.1f}</span> &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Regime: {regime_label}</span> &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">TP: {dynamic_tp}%</span> &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Correlated open: {corr_open}</span> &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Short: {btc_mode}</span></h2>
+      <h2>Pair Signals &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">AI: {intel_score:+.1f}</span> &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Regime: {regime_label}</span> &nbsp; <span class="badge" style="background:#00c85122;color:#00c851">TP: {dynamic_tp}%</span> &nbsp; <span class="badge" style="background:#ff444422;color:#ff4444">SL: {dynamic_sl}%</span> &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Correlated open: {corr_open}</span> &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Short: {btc_mode}</span></h2>
       <table>
         <tr><th>Pair</th><th>Signal</th><th>Score</th></tr>
         {signal_rows}
@@ -784,6 +784,7 @@ def _build_page() -> str:
         intel_score   = status.get("intelligence_score", 0.0),
         regime_label  = status.get("regime_strategy", "RANGING"),
         dynamic_tp    = status.get("dynamic_tp_pct", 2.0),
+        dynamic_sl    = status.get("dynamic_sl_pct", 0.8),
         corr_open     = status.get("correlated_open", 0),
         btc_mode      = btc_mode,
         signal_rows   = signal_rows,

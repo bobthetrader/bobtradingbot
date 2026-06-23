@@ -2183,6 +2183,31 @@ class TradingBot:
         except Exception:
             return None
 
+    def _dynamic_stop_loss_percent(self) -> float:
+        """
+        Regime-aware SL.
+        Bearish → cut losses faster (0.6%).
+        Bullish → give position room to breathe (1.2%).
+        Fine-tuned by AI intelligence score.
+        """
+        regime = getattr(self, '_current_market_regime', 'RANGING')
+        intel  = getattr(self, '_intelligence_score', 0.0)
+
+        if regime == 'TRENDING_DOWN':
+            sl = 0.6
+        elif regime == 'TRENDING_UP':
+            sl = 1.2
+        else:
+            sl = float(self.stop_loss_percent)  # config base (0.8%)
+
+        # AI fine-tune: ±0.1% nudge on strong signals
+        if intel < -2:
+            sl = max(sl - 0.1, 0.5)   # extra bearish → tighter SL
+        elif intel > 2:
+            sl = min(sl + 0.1, 1.5)   # extra bullish → more room
+
+        return round(sl, 2)
+
     def _dynamic_take_profit_percent(self) -> float:
         """
         Regime-aware TP target.
@@ -2409,6 +2434,11 @@ class TradingBot:
                             if current_stop < entry_price:
                                 self.stop_info[pair] = {'stop_price': entry_price, 'type': 'BREAK_EVEN'}
                                 self.logger.info(f"BREAK-EVEN activated for {pair}: SL moved to entry ({entry_price:.4f})")
+
+                    # Fixed dynamic stop-loss (regime-aware: 0.6% bearish / 0.8% ranging / 1.2% bullish)
+                    _dsl = self._dynamic_stop_loss_percent()
+                    if change_percent <= -abs(_dsl):
+                        return pair, "STOP_LOSS", change_percent
 
                     if self.enable_hard_stop_loss and change_percent <= -abs(self.hard_stop_loss_percent):
                         return pair, "HARD_STOP", change_percent
@@ -3587,6 +3617,7 @@ class TradingBot:
                             "market_regime":       self._current_market_regime,
                             "regime_strategy":     self._regime_strategy_config().get('label', 'RANGING'),
                             "dynamic_tp_pct":      self._dynamic_take_profit_percent(),
+                            "dynamic_sl_pct":      self._dynamic_stop_loss_percent(),
                             "kelly_fraction":      round(getattr(self, 'kelly_fraction', 0.1), 3),
                             "kelly_multiplier":    round(max(0.3, min(1.5, getattr(self,'kelly_fraction',0.1)*0.5/0.1)), 2),
                             "correlated_open":     sum(
@@ -3618,7 +3649,7 @@ class TradingBot:
                                     _pnl_pct = round(((_cur - _entry) / _entry) * 100, 3) if _entry > 0 else 0.0
                                     _pnl_eur = round((_cur - _entry) * _pos_qty, 4) if _entry > 0 else 0.0
                                     _tp_pct  = self._required_take_profit_percent(_p)
-                                    _sl_pct  = float(self.config.get('risk_management', {}).get('stop_loss_percent', 0.8))
+                                    _sl_pct  = self._dynamic_stop_loss_percent()
                                     _tp_price = round(_entry * (1 + _tp_pct / 100), 4) if _entry > 0 else 0
                                     _sl_price = round(_entry * (1 - _sl_pct / 100), 4) if _entry > 0 else 0
                                     _status["open_positions"][_p] = {
