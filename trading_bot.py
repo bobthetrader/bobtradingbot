@@ -2183,12 +2183,34 @@ class TradingBot:
         except Exception:
             return None
 
-    def _required_take_profit_percent(self, pair):
-        """Adaptive TP: in stronger momentum, demand a bit more profit before selling.
-        When enable_atr_dynamic_tp is on, the TP floor is raised to atr_tp_multiplier Ã— ATR%
-        so the bot doesn't exit on small wiggles in volatile markets.
+    def _dynamic_take_profit_percent(self) -> float:
         """
-        base_tp = self.take_profit_percent
+        Regime-aware TP target.
+        Bearish market → take smaller wins quickly.
+        Bullish market → let profits run further.
+        Fine-tuned by the AI intelligence score.
+        """
+        regime  = getattr(self, '_current_market_regime', 'RANGING')
+        intel   = getattr(self, '_intelligence_score', 0.0)
+
+        if regime == 'TRENDING_UP':
+            tp = 3.0
+        elif regime == 'TRENDING_DOWN':
+            tp = 1.25
+        else:
+            tp = float(self.take_profit_percent)  # config base (2.0%)
+
+        # AI fine-tune: ±0.25% nudge on strong signals
+        if intel > 2:
+            tp = min(tp + 0.25, 4.0)
+        elif intel < -2:
+            tp = max(tp - 0.25, 1.0)
+
+        return round(tp, 2)
+
+    def _required_take_profit_percent(self, pair):
+        """Adaptive TP using regime-aware dynamic base, optionally raised by ATR floor."""
+        base_tp = self._dynamic_take_profit_percent()
 
         # ATR-based dynamic floor: require at least atr_tp_multiplier Ã— ATR% profit
         if self.enable_atr_dynamic_tp:
@@ -3564,6 +3586,7 @@ class TradingBot:
                             "short_mode":          "BEAR (5% NAV)" if self._btc_downtrend else "HEDGE (3% NAV)",
                             "market_regime":       self._current_market_regime,
                             "regime_strategy":     self._regime_strategy_config().get('label', 'RANGING'),
+                            "dynamic_tp_pct":      self._dynamic_take_profit_percent(),
                             "kelly_fraction":      round(getattr(self, 'kelly_fraction', 0.1), 3),
                             "kelly_multiplier":    round(max(0.3, min(1.5, getattr(self,'kelly_fraction',0.1)*0.5/0.1)), 2),
                             "correlated_open":     sum(
