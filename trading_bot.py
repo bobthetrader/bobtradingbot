@@ -3525,6 +3525,22 @@ class TradingBot:
                         except Exception as exc:
                             self.logger.warning("FORCE_SELL error: %s", exc)
 
+                    # Manual sell for individual pair (from dashboard button)
+                    for _fp in list(self.trade_pairs):
+                        _ms_file = os.path.join(_data_dir, f'FORCE_SELL_{_fp}')
+                        if os.path.exists(_ms_file):
+                            try:
+                                os.remove(_ms_file)
+                                _fqty   = self.position_qty.get(_fp, self.holdings.get(_fp, 0))
+                                _fprice = self.pair_prices.get(_fp, 0)
+                                if _fqty > 0 and _fprice > 0:
+                                    self.logger.info("MANUAL_SELL: %s @ %.4f", _fp, _fprice)
+                                    self.execute_sell_order(_fp, _fprice, require_profit_target=False, reason="MANUAL_SELL")
+                                else:
+                                    self.logger.info("MANUAL_SELL: %s — no position to sell", _fp)
+                            except Exception as exc:
+                                self.logger.warning("MANUAL_SELL error for %s: %s", _fp, exc)
+
                     # â”€â”€ Phase 3: Portfolio risk management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     regime_state, pause_state, adjusted_pnl = self._manage_portfolio_risk(current_balance)
 

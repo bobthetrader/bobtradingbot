@@ -662,7 +662,10 @@ def _build_page() -> str:
             f'<td>&euro;{cur:,.4f}</td>'
             f'<td style="color:{pnl_col}">{pnl_pct:+.2f}% ({pnl_eur:+.4f})</td>'
             f'<td style="color:#00c851;font-size:11px">{tp_str}</td>'
-            f'<td style="color:#ff4444;font-size:11px">{sl_str}</td></tr>'
+            f'<td style="color:#ff4444;font-size:11px">{sl_str}</td>'
+            f'<td><button onclick="manualSell(\'{pair}\')" '
+            f'style="background:#ff4444;color:#fff;border:none;padding:4px 10px;'
+            f'border-radius:4px;cursor:pointer;font-size:11px">Sell</button></td></tr>'
         )
     for pair, info in shorts.items():
         pos_rows += (
@@ -675,8 +678,18 @@ def _build_page() -> str:
             '<table><tr><th>Pair</th><th>Side</th><th>Qty</th><th>Entry</th>'
             '<th>Current</th><th>P&amp;L</th>'
             '<th style="color:#00c851">TP Target</th>'
-            '<th style="color:#ff4444">SL Target</th></tr>'
+            '<th style="color:#ff4444">SL Target</th>'
+            '<th></th></tr>'
             + pos_rows + '</table>'
+            '<script>'
+            'function manualSell(pair) {'
+            '  if (confirm("Sell " + pair + "?\\n\\nAre you sure? This will market-sell the position immediately.")) {'
+            '    if (confirm("Second confirmation: close " + pair + " at market price NOW?")) {'
+            '      window.location.href = "/manual-sell/" + pair;'
+            '    }'
+            '  }'
+            '}'
+            '</script>'
         )
     else:
         positions_html = '<div class="grey" style="padding:8px 0">No open positions</div>'
@@ -852,6 +865,25 @@ def start_dashboard(port: int = 8080):
                     f"<p>Cleared: {', '.join(cleared) if cleared else 'nothing to clear'}</p>"
                     "<p>Restart the Railway service to reload with a clean slate.</p>"
                     "<a href='/' style='color:#58a6ff'>← Back to dashboard</a>"
+                    "</body></html>",
+                    mimetype="text/html"
+                )
+            except Exception as e:
+                return Response(f"Error: {e}", status=500)
+
+        @app.route("/manual-sell/<pair>")
+        def manual_sell(pair):
+            """Sell a single specific pair — triggered from the Open Positions button."""
+            try:
+                safe_pair = pair.upper().replace("/", "").replace("..", "")
+                path = os.path.join(DATA_DIR, f"FORCE_SELL_{safe_pair}")
+                open(path, "w").close()
+                return Response(
+                    "<html><body style='background:#0d1117;color:#ff4444;font-family:monospace;padding:40px'>"
+                    f"<h2>&#x2705; Manual SELL triggered for {safe_pair}</h2>"
+                    "<p>The bot will close this position on the next loop (within 60 seconds).</p>"
+                    "<p>Watch your Telegram for the SELL notification.</p>"
+                    "<a href='/' style='color:#58a6ff'>&#x2190; Back to dashboard</a>"
                     "</body></html>",
                     mimetype="text/html"
                 )
