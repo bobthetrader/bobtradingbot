@@ -228,9 +228,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   </div>
 
-  <div style="color:#30363d;font-size:11px;margin-top:8px">
-    Sharpe success &ge;3.0 &nbsp;&#x2022;&nbsp; Optimizer runs every 10 closed trades &nbsp;&#x2022;&nbsp; 4-model AI panel via OpenRouter + OpenAI
-    &nbsp;&#x2022;&nbsp; {db_summary}
+  <div class="card full" style="margin-top:12px;background:#0d1117;border-color:#21262d">
+    <div style="display:flex;flex-wrap:wrap;gap:24px;font-size:12px;color:#8b949e">
+      <div><span style="color:#58a6ff">Sharpe</span> &nbsp; success &ge;3.0 &nbsp;&#x2022;&nbsp; failure &lt;1.0 &nbsp;&#x2022;&nbsp; optimizer every 10 closed trades</div>
+      <div><span style="color:#58a6ff">AI Panel</span> &nbsp; 5 models via OpenRouter &nbsp;&#x2022;&nbsp; Hermes &nbsp;&#x2022;&nbsp; Sonar &nbsp;&#x2022;&nbsp; DeepSeek &nbsp;&#x2022;&nbsp; Llama &nbsp;&#x2022;&nbsp; GPT-4o-mini</div>
+      <div><span style="color:#58a6ff">Data</span> &nbsp; Sharpe.ai &nbsp;&#x2022;&nbsp; Alchemy &nbsp;&#x2022;&nbsp; CoinMetrics &nbsp;&#x2022;&nbsp; CoinGecko &nbsp;&#x2022;&nbsp; Blockchain.info &nbsp;&#x2022;&nbsp; Kraken RSS</div>
+      <div><span style="color:#58a6ff">Exchanges</span> &nbsp; Kraken (7 pairs) &nbsp;&#x2022;&nbsp; Alpaca (MSTR &nbsp;&#x2022;&nbsp; COIN &nbsp;&#x2022;&nbsp; MARA)</div>
+      <div><span style="color:#58a6ff">History</span> &nbsp; {db_summary}</div>
+    </div>
   </div>
 </body>
 </html>"""
