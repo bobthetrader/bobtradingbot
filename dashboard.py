@@ -366,7 +366,7 @@ def _build_page() -> str:
             ("BTC Mempool Size",       f'{oc.get("btc_mempool", 0):,} txs', "#e6edf3"),
             ("BTC Network Signal",     f'{oc.get("btc_score", 0):+.1f}',
              "#00c851" if oc.get("btc_score", 0) >= 0 else "#ff4444"),
-            ("ETH Gas (fast)",         f'{oc.get("eth_gas", 0):.0f} gwei', "#e6edf3"),
+            ("ETH Gas (fast)",         f'{oc.get("eth_gas", 0):.2f} gwei', "#e6edf3"),
             ("ETH Gas Signal",         f'{oc.get("eth_signal", 0):+.1f}',
              "#00c851" if oc.get("eth_signal", 0) >= 0 else "#ff4444"),
         ]

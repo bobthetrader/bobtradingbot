@@ -211,7 +211,7 @@ def get_alchemy_eth_data() -> dict:
         "combined":      combined,
         "source":        "alchemy",
         "summary": (
-            f"ETH (Alchemy): gas {gas_gwei:.0f} gwei | "
+            f"ETH (Alchemy): gas {gas_gwei:.2f} gwei | "
             f"pending {pending_count} txs | "
             f"signal {combined:+.1f}"
         ),
