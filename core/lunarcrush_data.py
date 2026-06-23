@@ -96,18 +96,17 @@ def get_fear_greed() -> Optional[int]:
 
 
 def get_coin_price_change(cg_id: str) -> dict:
-    """24h and 7d price change from CoinGecko market data."""
+    """24h price change from CoinGecko simple/price — ~100 bytes vs 30KB for /coins/{id}."""
     data = _cached_get(
-        f"https://api.coingecko.com/api/v3/coins/{cg_id}",
-        params={"localization": "false", "tickers": "false",
-                "community_data": "false", "developer_data": "false", "sparkline": "false"},
+        "https://api.coingecko.com/api/v3/simple/price",
+        params={"ids": cg_id, "vs_currencies": "eur",
+                "include_24hr_change": "true"},
     )
-    if not data:
+    if not data or cg_id not in data:
         return {}
-    md = data.get("market_data", {})
     return {
-        "change_24h": float(md.get("price_change_percentage_24h") or 0),
-        "change_7d":  float(md.get("price_change_percentage_7d")  or 0),
+        "change_24h": float(data[cg_id].get("eur_24h_change") or 0),
+        "change_7d":  0.0,
     }
 
 
@@ -165,25 +164,63 @@ def get_coin_sentiment(pair: str) -> dict:
     }
 
 
+def _batch_price_changes(cg_ids: list) -> dict:
+    """Fetch 24h price changes for all coins in ONE request (~200 bytes vs 30KB×N)."""
+    ids_str = ",".join(set(cg_ids))
+    data = _cached_get(
+        "https://api.coingecko.com/api/v3/simple/price",
+        params={"ids": ids_str, "vs_currencies": "eur", "include_24hr_change": "true"},
+    )
+    if not data:
+        return {}
+    return {cg_id: float(data.get(cg_id, {}).get("eur_24h_change") or 0) for cg_id in cg_ids}
+
+
 def fetch_all_sentiment(pairs: list) -> dict:
     """Fetch social sentiment for all traded pairs."""
     trending = get_trending_symbols()
     fg       = get_fear_greed()
+
+    # Batch price changes — one request for all coins instead of one per coin
+    cg_ids = list({_PAIR_TO_CG_ID[p] for p in pairs if p in _PAIR_TO_CG_ID})
+    price_changes = _batch_price_changes(cg_ids)
 
     results = {}
     signals = []
     seen    = set()
 
     for pair in pairs:
-        sym = _PAIR_TO_SYMBOL.get(pair, "")
+        sym   = _PAIR_TO_SYMBOL.get(pair, "")
+        cg_id = _PAIR_TO_CG_ID.get(pair, "")
         if not sym or sym in seen:
             continue
         seen.add(sym)
 
-        data = get_coin_sentiment(pair)
-        if data:
-            results[pair] = data
-            signals.append(data["signal"])
+        is_trending = sym in trending
+        change_24h  = price_changes.get(cg_id, 0)
+
+        signal = 0.0
+        if is_trending:
+            signal += 3.0
+        if fg is not None:
+            if fg <= 20:   signal += 1.5
+            elif fg <= 35: signal += 0.5
+            elif fg >= 80: signal -= 1.5
+            elif fg >= 65: signal -= 0.5
+        if change_24h > 5:   signal += 0.5
+        elif change_24h < -5: signal -= 0.5
+        signal = round(max(-5.0, min(5.0, signal)), 1)
+
+        data = {
+            "symbol":      sym,
+            "is_trending": is_trending,
+            "fear_greed":  fg,
+            "change_24h":  change_24h,
+            "signal":      signal,
+            "summary": f"{sym}: {'TRENDING' if is_trending else 'not trending'} | F&G {fg} | 24h {change_24h:+.1f}% | signal {signal:+.1f}",
+        }
+        results[pair] = data
+        signals.append(signal)
 
     if not results:
         return {"available": False}

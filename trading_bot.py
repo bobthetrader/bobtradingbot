@@ -324,7 +324,9 @@ class TradingBot:
         # New listings monitor
         self._listing_watchlist: dict = _load_watchlist() if _LISTINGS_AVAILABLE else {}
         self._listings_last_check: float = 0.0
-        self._listings_check_interval: int = 600
+        self._listings_check_interval: int = 600    # Sharpe.ai + blog: every 10 min
+        self._assetpairs_last_check: float = 0.0
+        self._assetpairs_check_interval: int = 7200  # AssetPairs: every 2 hours (1.1MB per call)
         self._listing_hold_hours: int = 12
         self._listing_trend_pct: float = 2.0
         self._kraken_headlines: list = []
@@ -3332,9 +3334,13 @@ class TradingBot:
                 # Three sources combined — deduplicated by symbol
                 seen_symbols = set(self._listing_watchlist.keys())
                 blog_listings   = _fetch_blog_listings(hours_lookback=48)
-                pairs_listings  = _fetch_new_pairs(hours_lookback=48)
                 sharpe_listings = _fetch_listings(hours_lookback=24)
                 self._kraken_headlines = _fetch_blog_headlines(limit=8)
+                # AssetPairs is 1.1MB — only check every 2 hours
+                pairs_listings = []
+                if now - self._assetpairs_last_check >= self._assetpairs_check_interval:
+                    self._assetpairs_last_check = now
+                    pairs_listings = _fetch_new_pairs(hours_lookback=48)
 
                 # Prioritise: AssetPairs (exact) > Blog RSS (early) > Sharpe.ai (hourly)
                 new_listings = []
