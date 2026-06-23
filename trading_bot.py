@@ -3905,7 +3905,11 @@ class TradingBot:
             _pg.save_position(
                 pair=pair,
                 qty=float(meta.get('qty', 0)),
-                entry_price=float(meta.get('price', meta.get('entry_price', 0))),
+                entry_price=float(
+                    meta.get('last_buy') or
+                    meta.get('price') or
+                    meta.get('entry_price') or 0
+                ),
                 mode=_mode,
                 meta=meta,
             )
