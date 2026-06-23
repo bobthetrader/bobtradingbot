@@ -159,7 +159,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   </div><!-- end top grid -->
 
   <!-- ── 2-panel layout: analysis left, news right ─────────────────────── -->
-  <div style="display:grid;grid-template-columns:3fr 2fr;gap:12px;margin-bottom:12px;align-items:start">
+  <div style="display:grid;grid-template-columns:3fr 2fr;gap:12px;margin-bottom:12px;align-items:stretch">
 
     <!-- LEFT PANEL: analysis cards stacked -->
     <div style="display:flex;flex-direction:column;gap:12px">
@@ -187,9 +187,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div><!-- end left panel -->
 
     <!-- RIGHT PANEL: Kraken news feed -->
-    <div class="card" style="position:sticky;top:16px;max-height:calc(100vh - 32px);overflow-y:auto">
-      <h2>Kraken News &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">blog.kraken.com</span></h2>
-      {kraken_news_html}
+    <div class="card" style="display:flex;flex-direction:column;overflow:hidden">
+      <h2 style="flex-shrink:0">Kraken News &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">blog.kraken.com</span></h2>
+      <div style="overflow-y:auto;flex:1">{kraken_news_html}</div>
     </div>
 
   </div><!-- end 2-panel -->
