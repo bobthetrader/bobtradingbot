@@ -762,7 +762,7 @@ def _build_page() -> str:
     # ── DB stats ──────────────────────────────────────────────────────────────
     db_stats = status.get("db_stats", {})
     if db_stats:
-        oldest = db_stats.get("oldest_trade", "")[:10] or "today"
+        oldest = (db_stats.get("oldest_trade") or "")[:10] or "today"
         db_summary = (
             f"History DB: {db_stats.get('trades', 0)} trades | "
             f"{db_stats.get('ai_panels', 0)} AI panels | "
