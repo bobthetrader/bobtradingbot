@@ -2551,11 +2551,14 @@ class TradingBot:
                     except Exception:
                         pass
 
-                # Ensure score always matches signal direction — prevents contradictory display
+                # Contradictory signal (BUY + negative score, or SELL + positive score)
+                # means two indicators disagree — treat as HOLD rather than flipping score
                 if signal == 'BUY' and score < 0:
-                    score = abs(score)
+                    signal = 'HOLD'
+                    score  = 0.0
                 elif signal == 'SELL' and score > 0:
-                    score = -abs(score)
+                    signal = 'HOLD'
+                    score  = 0.0
 
                 self.pair_signals[pair] = signal
                 self.pair_scores[pair] = score
