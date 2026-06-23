@@ -14,4 +14,4 @@ COPY . .
 
 RUN mkdir -p data logs reports
 
-CMD ["python", "main.py"]
+CMD ["sh", "-c", "python main.py ${BOT_ARGS:-}"]
