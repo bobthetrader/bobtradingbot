@@ -3654,21 +3654,22 @@ class TradingBot:
                             except Exception:
                                 pass
 
-                        # On-chain data (cached, runs every 5 min via market_intelligence)
-                        if _ONCHAIN_AVAILABLE and iteration % 5 == 0:
+                        # On-chain data — refresh every loop (data is internally cached 5 min)
+                        if _ONCHAIN_AVAILABLE:
                             try:
                                 _oc = _fetch_onchain_status()
-                                _status["onchain"] = {
-                                    "btc_score":   _oc.get("btc_network", {}).get("combined_score", 0),
-                                    "btc_tx_24h":  _oc.get("btc_network", {}).get("n_tx_24h", 0),
-                                    "btc_mempool": _oc.get("btc_network", {}).get("mempool_size", 0),
-                                    "eth_gas":     _oc.get("eth_gas", {}).get("fast_gas_gwei", 0),
-                                    "eth_signal":  _oc.get("eth_gas", {}).get("gas_signal", 0),
-                                    "btc_flow_signal": _oc.get("btc_flows", {}).get("flow_signal"),
-                                    "combined":    _oc.get("combined_score", 0),
-                                }
-                            except Exception:
-                                pass
+                                if _oc.get("available") or _oc.get("btc_network"):
+                                    _status["onchain"] = {
+                                        "btc_score":       _oc.get("btc_network", {}).get("combined_score", 0),
+                                        "btc_tx_24h":      _oc.get("btc_network", {}).get("n_tx_24h", 0),
+                                        "btc_mempool":     _oc.get("btc_network", {}).get("mempool_size", 0),
+                                        "eth_gas":         _oc.get("eth_gas", {}).get("gas_gwei") or _oc.get("eth_gas", {}).get("fast_gas_gwei", 0),
+                                        "eth_signal":      _oc.get("eth_gas", {}).get("combined") or _oc.get("eth_gas", {}).get("gas_signal", 0),
+                                        "btc_flow_signal": _oc.get("btc_flows", {}).get("combined") or _oc.get("btc_flows", {}).get("flow_signal"),
+                                        "combined":        _oc.get("combined_score", 0),
+                                    }
+                            except Exception as _oce:
+                                self.logger.warning("On-chain status update failed: %s", _oce)
 
                         # Alpaca positions
                         if _ALPACA_ENABLED and _alpaca_available():
