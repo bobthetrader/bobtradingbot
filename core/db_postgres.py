@@ -59,6 +59,11 @@ def _get_conn():
         _conn.autocommit = True
         _available = True
         logger.info("PostgreSQL connected: %s", url.split("@")[-1])
+        # Create schema on first successful connection
+        try:
+            init_schema()
+        except Exception:
+            pass
         return _conn
     except Exception as exc:
         logger.warning("PostgreSQL unavailable: %s — using JSON fallback", exc)
