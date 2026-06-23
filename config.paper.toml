@@ -13,7 +13,7 @@ allocation_per_trade_percent = 5.0
 
 [risk_management]
 max_drawdown_percent = 10.0
-stop_loss_percent = 0.8              # Cut losses fast at 0.8%
+stop_loss_percent = 1.5              # Wider SL — volatile market needs more room
 allocation_per_trade_percent = 5.0  # 5% = ~5 EUR per trade, 4 positions max
 min_trade_eur = 4.0
 min_auto_scale_notional = 0.1
@@ -29,6 +29,7 @@ enable_atr_dynamic_tp = false
 enable_mean_reversion_signals = true
 mr_rsi_oversold_threshold = 30       # Only buy genuine oversold (RSI < 30)
 mr_rsi_overbought_threshold = 70     # Only sell genuine overbought (RSI > 70)
+break_even_trigger_percent = 1.0     # Move SL to entry only after +1.0% gain
 max_consecutive_losses = 5
 pause_after_loss_streak_minutes = 0
 max_open_positions = 4
