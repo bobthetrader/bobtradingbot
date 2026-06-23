@@ -3713,8 +3713,8 @@ class TradingBot:
                         _status["new_listings"]     = _listings_display
                         _status["kraken_headlines"] = getattr(self, '_kraken_headlines', [])
 
-                        # LunarCrush social sentiment (every 10 loops)
-                        if _LUNAR_STATUS_AVAILABLE and iteration % 10 == 0:
+                        # Social sentiment — run every loop (data cached 5 min internally)
+                        if _LUNAR_STATUS_AVAILABLE:
                             try:
                                 _lc = _fetch_lunar_status(self.trade_pairs)
                                 if _lc.get("available"):
