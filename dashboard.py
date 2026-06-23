@@ -649,21 +649,33 @@ def _build_page() -> str:
         pnl_eur = info.get("pnl_eur", 0.0)
         pnl_col = "#00c851" if pnl_pct >= 0 else "#ff4444"
         cur = info.get("current", 0)
+        tp_price = info.get("tp_price", 0)
+        sl_price = info.get("sl_price", 0)
+        tp_pct   = info.get("tp_pct", 0)
+        sl_pct   = info.get("sl_pct", 0)
+        tp_str   = f'&euro;{tp_price:,.4f} (+{tp_pct:.2f}%)' if tp_price else '—'
+        sl_str   = f'&euro;{sl_price:,.4f} (-{sl_pct:.2f}%)' if sl_price else '—'
         pos_rows += (
             f'<tr><td>{pair}</td><td class="green">LONG</td>'
             f'<td>{info["qty"]}</td>'
             f'<td>&euro;{info["entry"]}</td>'
             f'<td>&euro;{cur:,.4f}</td>'
-            f'<td style="color:{pnl_col}">{pnl_pct:+.2f}% ({pnl_eur:+.4f})</td></tr>'
+            f'<td style="color:{pnl_col}">{pnl_pct:+.2f}% ({pnl_eur:+.4f})</td>'
+            f'<td style="color:#00c851;font-size:11px">{tp_str}</td>'
+            f'<td style="color:#ff4444;font-size:11px">{sl_str}</td></tr>'
         )
     for pair, info in shorts.items():
         pos_rows += (
             f'<tr><td>{pair}</td><td class="red">SHORT</td>'
-            f'<td>{info["qty"]}</td><td>&euro;{info["entry"]}</td></tr>'
+            f'<td>{info["qty"]}</td><td>&euro;{info["entry"]}</td>'
+            f'<td colspan="4"></td></tr>'
         )
     if pos_rows:
         positions_html = (
-            '<table><tr><th>Pair</th><th>Side</th><th>Qty</th><th>Entry</th><th>Current</th><th>P&amp;L</th></tr>'
+            '<table><tr><th>Pair</th><th>Side</th><th>Qty</th><th>Entry</th>'
+            '<th>Current</th><th>P&amp;L</th>'
+            '<th style="color:#00c851">TP Target</th>'
+            '<th style="color:#ff4444">SL Target</th></tr>'
             + pos_rows + '</table>'
         )
     else:
