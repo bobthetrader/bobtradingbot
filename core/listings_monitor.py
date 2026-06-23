@@ -200,12 +200,17 @@ def fetch_kraken_blog_listings(hours_lookback: int = 48) -> list:
         return []
 
 
+_HEADLINES_CACHE: dict = {"data": [], "ts": 0.0}
+_HEADLINES_TTL = 4 * 3600   # 4 hours — Kraken blog posts rarely more than once a day
+
+
 def fetch_kraken_blog_headlines(limit: int = 8) -> list:
     """
-    Return the latest headlines from the Kraken blog RSS regardless of whether
-    they are listing announcements. Used for the dashboard news feed.
-    Returns list of {title, link, date, is_listing} dicts.
+    Return the latest headlines from the Kraken blog RSS.
+    Cached for 4 hours — Kraken rarely posts more than once a day.
     """
+    if time.time() - _HEADLINES_CACHE["ts"] < _HEADLINES_TTL:
+        return _HEADLINES_CACHE["data"][:limit]
     try:
         resp = requests.get(
             _KRAKEN_BLOG_RSS,
@@ -238,7 +243,9 @@ def fetch_kraken_blog_headlines(limit: int = 8) -> list:
                 "ts":         ts,
                 "is_listing": any(kw in title.lower() for kw in listing_keywords),
             })
-        return results
+        _HEADLINES_CACHE["data"] = results
+        _HEADLINES_CACHE["ts"]   = time.time()
+        return results[:limit]
     except Exception as exc:
         logger.debug("Kraken blog headlines failed: %s", exc)
         return []
