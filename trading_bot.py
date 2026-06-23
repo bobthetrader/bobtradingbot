@@ -2551,6 +2551,12 @@ class TradingBot:
                     except Exception:
                         pass
 
+                # Ensure score always matches signal direction — prevents contradictory display
+                if signal == 'BUY' and score < 0:
+                    score = abs(score)
+                elif signal == 'SELL' and score > 0:
+                    score = -abs(score)
+
                 self.pair_signals[pair] = signal
                 self.pair_scores[pair] = score
 
