@@ -14,4 +14,5 @@ COPY . .
 
 RUN mkdir -p data logs reports
 
-CMD ["sh", "-c", "python main.py ${BOT_ARGS:-}"]
+# Default to paper mode — must set LIVE_TRADING_ENABLED=true in env to go live
+CMD ["sh", "-c", "python main.py ${BOT_ARGS:---paper}"]

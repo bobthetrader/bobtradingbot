@@ -44,6 +44,15 @@ _parser.add_argument(
 )
 args = _parser.parse_args()
 
+# ── Safety gate: paper mode is the default ────────────────────────────────────
+# To go live you must BOTH: remove --paper flag AND set LIVE_TRADING_ENABLED=true
+if not args.paper and os.environ.get("LIVE_TRADING_ENABLED", "").lower() != "true":
+    print("=" * 60)
+    print("SAFETY: Defaulting to PAPER MODE.")
+    print("Set LIVE_TRADING_ENABLED=true to enable live trading.")
+    print("=" * 60)
+    args.paper = True
+
 if args.config:
     CONFIG_PATH = args.config
 elif args.paper:
