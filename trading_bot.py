@@ -135,10 +135,23 @@ except ImportError:
     _ONCHAIN_AVAILABLE = False
 
 try:
+    import core.db_postgres as _pg
+    _PG_AVAILABLE = True
+except ImportError:
+    _PG_AVAILABLE = False
+
+try:
     from core.lunarcrush_data import fetch_all_sentiment as _fetch_lunar_status
     _LUNAR_STATUS_AVAILABLE = True
 except ImportError:
     _LUNAR_STATUS_AVAILABLE = False
+
+# Initialise PostgreSQL schema on startup if available
+if _PG_AVAILABLE:
+    try:
+        _pg.init_schema()
+    except Exception as _pge:
+        pass
 
 try:
     from core.alpaca_interface import (
@@ -3868,9 +3881,7 @@ class TradingBot:
     # â”€â”€ Trade finalisation helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _persist_position_meta(self, meta: dict) -> None:
-        """Atomically write a position entry to the purchase-prices state file.
-        Replaces duplicated file-write logic in execute_buy_order and
-        execute_open_short_order."""
+        """Atomically write a position entry to JSON file + PostgreSQL (dual-write)."""
         pair = meta.get('pair', '')
         try:
             os.makedirs(os.path.dirname(self.data_purchase_prices_path), exist_ok=True)
@@ -3888,6 +3899,16 @@ class TradingBot:
             os.replace(tmp, self.data_purchase_prices_path)
         except OSError as exc:
             self.logger.warning("Could not persist position meta for %s: %s", pair, exc)
+        # Dual-write to PostgreSQL
+        if _PG_AVAILABLE:
+            _mode = 'paper' if getattr(self.api_client, 'paper_mode', True) else 'live'
+            _pg.save_position(
+                pair=pair,
+                qty=float(meta.get('qty', 0)),
+                entry_price=float(meta.get('price', meta.get('entry_price', 0))),
+                mode=_mode,
+                meta=meta,
+            )
 
     def _remove_position_meta(self, pair: str) -> None:
         """Atomically remove a position entry from the purchase-prices state file.
@@ -3910,6 +3931,10 @@ class TradingBot:
             os.replace(tmp, self.data_purchase_prices_path)
         except OSError as exc:
             self.logger.warning("Could not remove position meta for %s: %s", pair, exc)
+        # Dual-delete from PostgreSQL
+        if _PG_AVAILABLE:
+            _mode = 'paper' if getattr(self.api_client, 'paper_mode', True) else 'live'
+            _pg.delete_position(pair=pair, mode=_mode)
 
     def _finalise_trade(self, ttype: str, pair: str, volume: float, price: float,
                         pnl_eur: float = 0.0, reason: str = '',

@@ -299,6 +299,14 @@ def _default_state() -> dict:
 
 
 def _load_state() -> dict:
+    # Try PostgreSQL first, fall back to JSON file
+    try:
+        from core.db_postgres import load_optimizer_state as _pg_load
+        pg_state = _pg_load()
+        if pg_state:
+            return {**_default_state(), **pg_state}
+    except Exception:
+        pass
     try:
         if os.path.exists(_STATE_FILE):
             with open(_STATE_FILE, "r") as fh:
@@ -310,13 +318,20 @@ def _load_state() -> dict:
 
 
 def _save_state(state: dict) -> None:
+    state["last_updated"] = datetime.now(timezone.utc).isoformat()
+    # Write to JSON file
     try:
         os.makedirs(os.path.dirname(_STATE_FILE), exist_ok=True)
-        state["last_updated"] = datetime.now(timezone.utc).isoformat()
         with open(_STATE_FILE, "w") as fh:
             json.dump(state, fh, indent=2)
     except Exception as exc:
         logger.warning("Optimizer: state save failed: %s", exc)
+    # Dual-write to PostgreSQL
+    try:
+        from core.db_postgres import save_optimizer_state as _pg_save
+        _pg_save(state)
+    except Exception:
+        pass
 
 
 # ── Config helpers ─────────────────────────────────────────────────────────────

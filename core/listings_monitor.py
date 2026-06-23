@@ -335,7 +335,14 @@ def fetch_kraken_new_pairs(hours_lookback: int = 48) -> list:
 # ── Watchlist state ────────────────────────────────────────────────────────────
 
 def load_watchlist() -> dict:
-    """Load listing watchlist from disk."""
+    """Load listing watchlist — PostgreSQL first, JSON fallback."""
+    try:
+        from core.db_postgres import load_listing_watchlist as _pg_load
+        pg_data = _pg_load()
+        if pg_data is not None:
+            return pg_data
+    except Exception:
+        pass
     try:
         if os.path.exists(_STATE_FILE):
             with open(_STATE_FILE, "r") as f:
@@ -346,7 +353,7 @@ def load_watchlist() -> dict:
 
 
 def save_watchlist(watchlist: dict) -> None:
-    """Persist listing watchlist to disk."""
+    """Persist listing watchlist to JSON file + PostgreSQL (dual-write)."""
     try:
         os.makedirs(os.path.dirname(_STATE_FILE), exist_ok=True)
         tmp = _STATE_FILE + ".tmp"
@@ -354,7 +361,12 @@ def save_watchlist(watchlist: dict) -> None:
             json.dump(watchlist, f, indent=2)
         os.replace(tmp, _STATE_FILE)
     except Exception as exc:
-        logger.debug("save_watchlist failed: %s", exc)
+        logger.debug("save_watchlist JSON failed: %s", exc)
+    try:
+        from core.db_postgres import save_listing_watchlist as _pg_save
+        _pg_save(watchlist)
+    except Exception:
+        pass
 
 
 def add_to_watchlist(watchlist: dict, listing: dict, initial_price: float) -> bool:
