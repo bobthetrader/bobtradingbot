@@ -159,12 +159,15 @@ class ScalperEngine:
             recent      = list(self._trade_log[-20:])
             pair_scores = dict(self._pair_scores)
         wins  = sum(1 for t in self._trade_log if t.get("pnl_eur", 0) > 0)
+        losses = sum(1 for t in self._trade_log if t.get("pnl_eur", 0) < 0)
         total = len(self._trade_log)
         taker, round_trip, dynamic_tp = _fee_tier(self._volume_usd)
         return {
             "positions":     positions,
             "recent_trades": recent,
             "total_trades":  total,
+            "wins":          wins,
+            "losses":        losses,
             "win_rate":      round(wins / total * 100, 1) if total else 0,
             "total_pnl_eur": round(sum(t.get("pnl_eur", 0) for t in self._trade_log), 4),
             "volume_usd":    round(self._volume_usd, 2),
