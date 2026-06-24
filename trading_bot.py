@@ -3031,6 +3031,15 @@ class TradingBot:
                     _bot_ctx["recent_trades"] = [json.loads(l) for l in _lines if l]
             except Exception:
                 pass
+            # Include Ichimoku + Gaussian data so AI models can reason about trend structure
+            if _ICHI_AVAILABLE:
+                try:
+                    _bot_ctx["ichi"] = {
+                        p: _ichi_get_signal(p, self.api_client)
+                        for p in self.trade_pairs
+                    }
+                except Exception:
+                    pass
 
             self._intelligence_last_ts = time.time()
 

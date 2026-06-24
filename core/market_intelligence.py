@@ -388,6 +388,29 @@ def _build_market_context(pairs: list, bot_context: dict, sharpe_data: dict = No
         for pair in signals:
             lines.append(f"  {pair}: {signals[pair]} (score {scores.get(pair, 0):+.2f})")
 
+    # Ichimoku + Gaussian context — helps models reason about trend structure
+    ichi = bot_context.get("ichi", {})
+    if ichi:
+        lines.append("\n--- ICHIMOKU + GAUSSIAN CHANNEL (20/30/60 cycle, 1h candles) ---")
+        lines.append("(Use this to assess trend structure and entry quality per pair)")
+        for pair, sig in ichi.items():
+            vs    = sig.get("price_vs_cloud", "unknown")
+            trend = sig.get("trend", "unknown")
+            gauss = sig.get("gaussian_buy", False)
+            boost = sig.get("score_boost", 0)
+            ctop  = sig.get("cloud_top", 0)
+            cbot  = sig.get("cloud_bottom", 0)
+            gauss_str = "YES — price at Gaussian lower band (strong entry)" if gauss else "no"
+            lines.append(
+                f"  {pair}: cloud={vs.upper()} trend={trend} "
+                f"cloud_range={cbot:.2f}-{ctop:.2f} gaussian_buy={gauss_str}"
+                + (f" score_boost=+{boost:.1f}" if boost > 0 else "")
+            )
+        lines.append(
+            "Note: INSIDE cloud = choppy/indecisive market. "
+            "ABOVE cloud = confirmed uptrend. BELOW cloud = downtrend."
+        )
+
     balance = bot_context.get("balance_eur")
     if balance is not None:
         lines.append(f"Simulated balance: €{balance:.2f}")
