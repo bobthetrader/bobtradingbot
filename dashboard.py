@@ -13,6 +13,7 @@ Access at: your Railway service public URL (e.g. https://bobtradingbot-xxxx.rail
 
 import json
 import os
+import time
 import threading
 import logging
 from datetime import datetime, timezone
@@ -113,7 +114,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
   <h1>&#x1F916; Bob Trading Bot</h1>
   <div class="subtitle">Auto-refreshes every 30s &nbsp;&#x2022;&nbsp; Updated: {updated} &nbsp;&#x2022;&nbsp; Loop #{loop} &nbsp;&#x2022;&nbsp; {mode}</div>
-
+{circuit_breaker_banner}
   <div class="grid">
 
     <!-- Balance card -->
@@ -212,6 +213,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="card full">
       <h2>AI Model Panel &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Combined: {intel_score:+.1f} / 5</span></h2>
       {model_html}
+    </div>
+
+    <!-- Scalper card -->
+    <div class="card full">
+      <h2>Scalper &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">BTC/ETH &bull; 30s loop &bull; TP 0.7% / SL 0.35%</span> &nbsp; {scalper_stats}</h2>
+      {scalper_html}
     </div>
 
     <!-- Recent trades card -->
@@ -759,6 +766,60 @@ def _build_page() -> str:
     else:
         intel_log_html = '<div class="grey" style="padding:8px 0">No AI panel history yet — first entry appears after the next 10-minute refresh.</div>'
 
+    # ── Scalper card ──────────────────────────────────────────────────────────
+    scalper_data = status.get("scalper", {})
+    if scalper_data:
+        _sc_total  = scalper_data.get("total_trades", 0)
+        _sc_wr     = scalper_data.get("win_rate", 0)
+        _sc_pnl    = scalper_data.get("total_pnl_eur", 0)
+        _sc_pnl_c  = "#00c851" if _sc_pnl >= 0 else "#ff4444"
+        scalper_stats = (
+            f'<span class="badge" style="background:#21262d;color:#8b949e">{_sc_total} trades</span> &nbsp;'
+            f'<span class="badge" style="background:#21262d;color:#8b949e">WR {_sc_wr:.0f}%</span> &nbsp;'
+            f'<span class="badge" style="background:{_sc_pnl_c}22;color:{_sc_pnl_c}">P&amp;L {_sc_pnl:+.4f} EUR</span>'
+        )
+        # Open positions
+        _sc_pos = scalper_data.get("positions", {})
+        _pos_rows = ""
+        for _sp, _sv in _sc_pos.items():
+            _held = round((time.time() - _sv.get("ts", time.time())) / 60, 1)
+            _pos_rows += (
+                f'<tr><td>{_sp}</td><td>{_sv.get("entry", 0):.6f}</td>'
+                f'<td>{_sv.get("qty", 0):.8f}</td><td>{_held}m</td>'
+                f'<td><span style="color:#58a6ff">score {_sv.get("score", 0):.1f}</span></td></tr>'
+            )
+        # Recent scalp trades
+        _sc_trades = scalper_data.get("recent_trades", [])[-10:]
+        _trade_rows = ""
+        for _t in reversed(_sc_trades):
+            _tc = "#00c851" if _t.get("pnl_eur", 0) >= 0 else "#ff4444"
+            _trade_rows += (
+                f'<tr><td>{_t.get("ts","")[:19]}</td><td>{_t.get("pair","")}</td>'
+                f'<td>{_t.get("entry",0):.6f}</td><td>{_t.get("exit",0):.6f}</td>'
+                f'<td style="color:{_tc}">{_t.get("pnl_eur",0):+.4f}</td>'
+                f'<td style="color:{_tc}">{_t.get("pnl_pct",0):+.3f}%</td>'
+                f'<td>{_t.get("reason","")}</td><td>{_t.get("held_min",0):.1f}m</td></tr>'
+            )
+        scalper_html = ""
+        if _pos_rows:
+            scalper_html += (
+                '<b style="color:#8b949e;font-size:11px">OPEN POSITIONS</b>'
+                '<table><tr><th>Pair</th><th>Entry</th><th>Qty</th><th>Held</th><th>Signal</th></tr>'
+                + _pos_rows + '</table><br>'
+            )
+        if _trade_rows:
+            scalper_html += (
+                '<b style="color:#8b949e;font-size:11px">RECENT SCALP TRADES</b>'
+                '<table><tr><th>Time</th><th>Pair</th><th>Entry</th><th>Exit</th>'
+                '<th>P&amp;L EUR</th><th>P&amp;L %</th><th>Reason</th><th>Held</th></tr>'
+                + _trade_rows + '</table>'
+            )
+        if not scalper_html:
+            scalper_html = '<div class="grey" style="padding:8px 0">No scalp trades yet — waiting for signal score &ge;2</div>'
+    else:
+        scalper_stats = '<span class="badge" style="background:#21262d;color:#8b949e">not running</span>'
+        scalper_html  = '<div class="grey" style="padding:8px 0">Scalper engine not active (paper mode only)</div>'
+
     # ── DB stats ──────────────────────────────────────────────────────────────
     db_stats = status.get("db_stats", {})
     if db_stats:
@@ -771,6 +832,21 @@ def _build_page() -> str:
         )
     else:
         db_summary = "History DB: initialising…"
+
+    # ── Circuit breaker banner ────────────────────────────────────────────────
+    if status.get("circuit_breaker", False):
+        _peak = status.get("peak_balance", 0)
+        _bal  = status.get("balance_eur", 0)
+        _dd   = round((_peak - _bal) / _peak * 100, 1) if _peak > 0 else 0
+        circuit_breaker_banner = (
+            f'  <div style="background:#ff000022;border:1px solid #ff4444;border-radius:8px;'
+            f'padding:12px 16px;margin-bottom:12px;color:#ff4444;font-weight:bold;">'
+            f'&#x26A0; CIRCUIT BREAKER ACTIVE — Drawdown {_dd}% exceeded limit. '
+            f'All positions closed. Buying paused 24h. Peak: &euro;{_peak:,.2f}'
+            f'</div>'
+        )
+    else:
+        circuit_breaker_banner = ""
 
     # ── Render ────────────────────────────────────────────────────────────────
     ts_raw  = status.get("ts", "")
@@ -812,8 +888,11 @@ def _build_page() -> str:
         model_html    = model_html,
         positions_html= positions_html,
         trades_html    = trades_html,
-        intel_log_html = intel_log_html,
-        db_summary     = db_summary,
+        intel_log_html          = intel_log_html,
+        db_summary              = db_summary,
+        circuit_breaker_banner  = circuit_breaker_banner,
+        scalper_stats           = scalper_stats,
+        scalper_html            = scalper_html,
     )
 
 

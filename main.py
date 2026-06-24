@@ -186,6 +186,7 @@ if __name__ == "__main__":
                 ws_feed=_ws_feed,
             )
             _scalper.start()
+            trading_bot._scalper = _scalper  # expose for status writes
         except Exception as _se:
             logger.warning("Scalper failed to start: %s", _se)
 

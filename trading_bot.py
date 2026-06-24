@@ -242,6 +242,7 @@ class TradingBot:
         self.analysis_tool.mr_rsi_sell = self.mr_rsi_overbought
 
         self.trade_pairs = self.config['bot_settings'].get('trade_pairs', ['XBTEUR'])
+        self._core_trade_pairs = list(self.trade_pairs)  # permanent pairs; listing pairs are temporary
         self.pair_signals = {}
         self.pair_prices = {}
         self.pair_scores = {}
@@ -273,6 +274,7 @@ class TradingBot:
         self.trade_count = 0
         self.consecutive_losses = 0
         self.trading_paused_until_ts = 0
+        self._circuit_breaker_triggered = False
         self.target_balance_eur = self._get_target_balance()
         # stop info per pair (stop_price, type)
         self.stop_info = {}
@@ -323,6 +325,8 @@ class TradingBot:
         self._intelligence_model_outputs: dict = {}
         self._sharpe_funding_scores: dict = {}
         self._sharpe_insider_scores: dict = {}
+        self._lunarcrush_combined: float = 0.0   # -3..+3 from lunarcrush
+        self._onchain_combined: float = 0.0       # -3..+3 from on-chain data
         self._last_balance_eur: float = 0.0
         # Lock protecting all _intelligence_* and _sharpe_* fields so the
         # background intel-refresh thread doesn't race with main-loop reads.
@@ -3098,15 +3102,36 @@ class TradingBot:
             if self.peak_balance > 0:
                 current_dd_pct = ((self.peak_balance - portfolio_value) / self.peak_balance) * 100.0
                 max_dd_cfg = float(self.config.get('risk_management', {}).get('max_drawdown_percent', 10.0))
-                if current_dd_pct >= max_dd_cfg:
-                    pause_sec = int(self.pause_after_loss_streak_minutes * 60)
-                    self.trading_paused_until_ts = max(
-                        self.trading_paused_until_ts, int(time.time()) + pause_sec
-                    )
+                if current_dd_pct >= max_dd_cfg and not self._circuit_breaker_triggered:
+                    self._circuit_breaker_triggered = True
+                    # Pause all buying indefinitely until manually reset
+                    self.trading_paused_until_ts = int(time.time()) + 86400  # 24h hard pause
                     self.logger.warning(
-                        "Portfolio max-drawdown hit: %.2f%% >= %.2f%%. Pausing buys for %d minutes.",
-                        current_dd_pct, max_dd_cfg, self.pause_after_loss_streak_minutes
+                        "CIRCUIT BREAKER: drawdown %.2f%% >= %.2f%%. Closing all positions.",
+                        current_dd_pct, max_dd_cfg,
                     )
+                    # Force-close all open positions
+                    _cb_sold = False
+                    for _cb_pair in list(self.trade_pairs):
+                        _cb_qty = self.holdings.get(_cb_pair, 0.0)
+                        _cb_price = self.pair_prices.get(_cb_pair, 0.0)
+                        if _cb_qty >= self._get_min_volume(_cb_pair) and _cb_price > 0:
+                            self.logger.warning("CIRCUIT BREAKER: closing %s @ %.4f", _cb_pair, _cb_price)
+                            self.execute_sell_order(_cb_pair, _cb_price, require_profit_target=False, reason="CIRCUIT_BREAKER")
+                            _cb_sold = True
+                    # Telegram alert
+                    try:
+                        _notifier.send(
+                            f"[CIRCUIT BREAKER] Drawdown {current_dd_pct:.1f}% >= {max_dd_cfg:.1f}% limit. "
+                            f"All positions closed. Buying paused 24h. Peak: {self.peak_balance:.2f} EUR | "
+                            f"Now: {portfolio_value:.2f} EUR"
+                        )
+                    except Exception:
+                        pass
+                elif current_dd_pct < max_dd_cfg * 0.5 and self._circuit_breaker_triggered:
+                    # Reset once portfolio recovers to half the drawdown threshold
+                    self._circuit_breaker_triggered = False
+                    self.logger.info("CIRCUIT BREAKER reset: drawdown recovered to %.2f%%", current_dd_pct)
         except Exception as exc:
             self.logger.debug("Drawdown calculation failed: %s", exc)
 
@@ -3165,14 +3190,22 @@ class TradingBot:
             _iscore  = self._intelligence_score
             _iweight = self._intelligence_score_weight
         _intel_adj = -(_iscore * _iweight)
+
+        # Sentiment adjustments: LunarCrush and on-chain scores shift effective min
+        # Positive combined score = bullish sentiment = lower the bar to enter
+        # Negative combined score = bearish sentiment = raise the bar
+        _lunar_adj   = -(self._lunarcrush_combined * 0.5)   # max ±1.5 pts
+        _onchain_adj = -(self._onchain_combined * 0.5)       # max ±1.5 pts
+
         # Use pair-specific min_score if defined, otherwise global setting
         _pair_min_score = self._pair_profile(pair).get('min_score', self.min_buy_score)
-        _effective_min  = _pair_min_score + _intel_adj
+        _effective_min  = _pair_min_score + _intel_adj + _lunar_adj + _onchain_adj
         if score < _effective_min:
             self.logger.info(
                 "BUY skipped for %s: score %.2f < effective_min %.2f "
-                "(pair_base=%.2f intel_adj=%+.2f profile=%s)",
+                "(pair_base=%.2f intel_adj=%+.2f lunar_adj=%+.2f onchain_adj=%+.2f profile=%s)",
                 pair, score, _effective_min, _pair_min_score, _intel_adj,
+                _lunar_adj, _onchain_adj,
                 self._pair_profile(pair).get('strategy', '?')
             )
             return
@@ -3449,6 +3482,9 @@ class TradingBot:
                             require_profit_target=False,
                             reason="NEW_LISTING_12HR_EXIT"
                         )
+                    # Remove from trade_pairs — it's a temporary listing position
+                    if pair in self.trade_pairs and pair not in self._core_trade_pairs:
+                        self.trade_pairs.remove(pair)
                     to_remove.append(symbol)
             else:
                 # Check if expired without buying
@@ -3471,6 +3507,11 @@ class TradingBot:
                             symbol, current_price,
                             ((current_price - entry["initial_price"]) / entry["initial_price"]) * 100
                         )
+                        # Add to trade_pairs so TP/SL and price feeds monitor it
+                        if pair not in self.trade_pairs:
+                            self.trade_pairs.append(pair)
+                            self.pair_prices[pair] = current_price
+                            self.logger.info("NEW LISTING: added %s to trade_pairs for monitoring", pair)
                         self._breakout_timestamps[pair] = time.time()
                         self.execute_buy_order(pair, current_price)
                         _mark_bought(self._listing_watchlist, symbol, current_price)
@@ -3660,6 +3701,8 @@ class TradingBot:
                             "short_mode":          "BEAR (5% NAV)" if self._btc_downtrend else "HEDGE (3% NAV)",
                             "market_regime":       self._current_market_regime,
                             "regime_strategy":     self._regime_strategy_config().get('label', 'RANGING'),
+                            "circuit_breaker":     bool(self._circuit_breaker_triggered),
+                            "peak_balance":        round(float(getattr(self, 'peak_balance', 0)), 2),
                             "dynamic_tp_pct":      self._dynamic_take_profit_percent(),
                             "dynamic_sl_pct":      self._dynamic_stop_loss_percent(),
                             "kelly_fraction":      round(getattr(self, 'kelly_fraction', 0.1), 3),
@@ -3760,6 +3803,8 @@ class TradingBot:
                                             for p, v in _lc.get("coins", {}).items()
                                         },
                                     }
+                                    # Cache combined score for buy gate use
+                                    self._lunarcrush_combined = float(_lc.get("combined", 0))
                             except Exception:
                                 pass
 
@@ -3777,6 +3822,8 @@ class TradingBot:
                                         "btc_flow_signal": _oc.get("btc_flows", {}).get("combined") or _oc.get("btc_flows", {}).get("flow_signal"),
                                         "combined":        _oc.get("combined_score", 0),
                                     }
+                                    # Cache combined score for buy gate use
+                                    self._onchain_combined = float(_oc.get("combined_score", 0))
                             except Exception as _oce:
                                 self.logger.warning("On-chain status update failed: %s", _oce)
 
@@ -3808,6 +3855,13 @@ class TradingBot:
                                 _status["db_stats"] = _get_db_stats()
                             except Exception:
                                 pass
+                        # Scalper status (if engine is attached via main.py)
+                        try:
+                            _sc = getattr(self, '_scalper', None)
+                            if _sc is not None:
+                                _status["scalper"] = _sc.get_status()
+                        except Exception:
+                            pass
                         with open(os.path.join(os.path.dirname(__file__), 'data', 'bot_status.json'), 'w') as _sf:
                             json.dump(_status, _sf)
                         self.logger.debug("Dashboard status written (loop %d)", iteration)
