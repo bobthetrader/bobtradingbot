@@ -78,7 +78,7 @@ trade_amount_eur = 25.0
 initial_balance = 500.0
 
 [shorting]
-enabled = false
+enabled = true
 leverage = "2"
 max_short_notional_eur = 5.0
 short_take_profit_percent = 2.0
