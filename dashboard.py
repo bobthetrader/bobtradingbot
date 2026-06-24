@@ -355,9 +355,14 @@ def _build_page() -> str:
             is_trend = cd.get("is_trending", False)
             sig_col  = "#00c851" if sig >= 1 else ("#ff4444" if sig <= -1 else "#8b949e")
             ch_col   = "#00c851" if ch24 >= 0 else "#ff4444"
-            ch_arrow = "&#x25B2;" if ch24 >= 0 else "&#x25BC;"   # ▲ or ▼ for all coins
             tr_col   = "#00c851" if ch24 >= 0 else "#ff4444"
-            tr_badge = f' <span style="color:{tr_col};font-size:10px;font-weight:bold">TRENDING</span>' if is_trend else ""
+            if is_trend:
+                ch_arrow = "&#x25B2;" if ch24 >= 0 else "&#x25BC;"   # ▲ or ▼ when trending
+                tr_badge = f' <span style="color:{tr_col};font-size:10px;font-weight:bold">TRENDING</span>'
+            else:
+                ch_arrow = "&gt;"    # > when not trending
+                tr_col   = "#8b949e"
+                tr_badge = ""
             lc_rows += (
                 f'<tr><td><span style="color:{tr_col}">{ch_arrow}</span> {cd.get("symbol","")}{tr_badge}</td>'
                 f'<td style="color:{ch_col}">{ch24:+.1f}%</td>'
