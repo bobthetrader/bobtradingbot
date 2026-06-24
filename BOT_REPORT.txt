@@ -3,7 +3,7 @@ KRAKEN ALGORITHMIC TRADING BOT — COMPREHENSIVE BUILD REPORT
 ================================================================================
 Last updated: June 2026
 Repository:   https://github.com/bobthetrader/bobtradingbot
-Deployment:   Railway.app (primary) + Local Docker (standby)
+Deployment:   Hetzner VPS (primary) — bobtradingbot.com
 Exchange:     Kraken (paper mode active, live mode ready)
 Second broker:Alpaca Markets (correlated stocks)
 ================================================================================
@@ -16,34 +16,39 @@ CONTENTS
 4.  Per-Pair Strategy Profiles
 5.  Risk Management & Position Sizing
 6.  Market Regime Detection
-7.  AI Intelligence Panel (5 Models)
-8.  Data Sources
-9.  Self-Learning Systems
-10. New Listings Monitor
-11. Alpaca Correlated Stocks
-12. Persistent History Database
-13. Dashboard
-14. Deployment & Infrastructure
-15. Local Docker Standby
-16. Current Configuration (Paper Mode)
-17. Switching to Live Trading
-18. Known Issues & Future Improvements
+7.  Ichimoku Cloud + Gaussian Channel Filter
+8.  Scalping Strategy
+9.  AI Intelligence Panel (5 Models)
+10. Data Sources & Buy Gate Wiring
+11. Self-Learning Systems
+12. New Listings Monitor
+13. Alpaca Correlated Stocks
+14. Circuit Breaker
+15. Persistent History (PostgreSQL)
+16. Dashboard
+17. Deployment & Infrastructure
+18. Current Configuration (Paper Mode)
+19. Switching to Live Trading
+20. Known Issues & Future Improvements
 
 
 ================================================================================
 1. OVERVIEW
 ================================================================================
 
-A fully automated, multi-pair, multi-exchange cryptocurrency trading bot that:
-- Trades BTC, ETH, SOL, XRP, ADA, DOT, LINK against EUR on Kraken
-- Mirrors strong signals on Alpaca (MSTR, COIN, MARA correlated stocks)
-- Detects and trades new Kraken listings within 60 minutes of listing
+A fully automated, multi-pair, multi-strategy cryptocurrency trading bot that:
+- Trades BTC, ETH, SOL, XRP, ADA, DOT, LINK against EUR on Kraken (main bot)
+- Runs a concurrent scalping engine across 10 pairs (BTC, ETH, SOL, XRP, LINK,
+  AVAX, ADA, DOT, ATOM, UNI) with dynamic fee-aware take-profit targets
+- Uses Ichimoku Cloud + Gaussian Channel to filter buy signals by trend
 - Uses 5 AI models + 4 data streams to assess market conditions
+- Wires LunarCrush sentiment and on-chain data directly into the buy gate
+- Fires a circuit breaker when drawdown exceeds limit — closes all positions
 - Self-tunes parameters using the scientific method (one change at a time)
-- Pre-screens parameter changes with a 30-day per-pair backtest before deploying
+- Pre-screens parameter changes with a 30-day per-pair backtest
 - Sends Telegram notifications for every trade
-- Displays all data on a live web dashboard (Railway public URL)
-- Has a local Docker standby for Railway failover
+- Displays all data on a live web dashboard (bobtradingbot.com)
+- Deployed 24/7 on Hetzner VPS with Caddy reverse proxy + Cloudflare SSL
 
 
 ================================================================================
@@ -51,17 +56,19 @@ A fully automated, multi-pair, multi-exchange cryptocurrency trading bot that:
 ================================================================================
 
 D:\tradingbot\
-├── main.py                      Entry point — CLI args, config selection
+├── main.py                      Entry point — CLI args, config selection,
+│                                starts scalper engine alongside main bot
 ├── trading_bot.py               Core trading loop (~4500 lines)
 ├── kraken_interface.py          Kraken REST + WebSocket wrapper
-├── analysis.py                  Technical signal engine
-├── dashboard.py                 Flask web dashboard
+├── analysis.py                  Technical signal engine (RSI, BB, SMA, ATR)
+├── dashboard.py                 Flask web dashboard (bobtradingbot.com)
 ├── config.toml                  Live trading configuration
 ├── config.paper.toml            Paper trading configuration (active)
-├── docker-compose.yml           Local Docker standby setup
-├── monitor_railway.py           Railway health check with Telegram alerts
+├── docker-compose.yml           Hetzner Docker setup (bot + PostgreSQL)
 │
 ├── core/
+│   ├── scalper.py               10-pair scalping engine (15s loop, dynamic TP)
+│   ├── ichimoku_gaussian.py     Ichimoku Cloud + Gaussian Channel filter
 │   ├── market_intelligence.py   5-model AI panel orchestrator
 │   ├── sharpe_data.py           Sharpe.ai institutional data
 │   ├── onchain_data.py          On-chain: Blockchain.info + CoinMetrics + Alchemy
@@ -70,20 +77,21 @@ D:\tradingbot\
 │   ├── alpaca_interface.py      Alpaca Markets broker integration
 │   ├── sharpe_calculator.py     Sharpe ratio from trade journal
 │   ├── param_optimizer.py       Scientific method optimizer + backtest gate
-│   ├── history_db.py            SQLite persistent history store
-│   ├── ws_feed.py               Kraken WebSocket price feed
+│   ├── db_postgres.py           PostgreSQL state manager (positions, scalper trades)
+│   ├── history_db.py            SQLite history store (trades, AI panels, snapshots)
+│   ├── ws_feed.py               Kraken WebSocket real-time price feed
 │   └── notifier.py              Telegram notifications
 │
-└── data/                        Persisted state (Railway volume /app/data/)
-    ├── bot_history.db           SQLite: all trades, AI panels, Sharpe snapshots
+└── data/                        Persisted state (Docker volume /app/data/)
+    ├── bot_status.json             Written every loop, read by dashboard
     ├── purchase_prices_paper.json  Open paper positions
     ├── trade_events_paper.jsonl    Paper trade journal (Sharpe reads this)
     ├── intelligence_log.jsonl      AI panel decision history with outcomes
     ├── optimizer_state.json        Optimizer experiment state
     ├── listing_watchlist.json      New listings being tracked
-    ├── known_kraken_pairs.json     Baseline for AssetPairs change detection
-    ├── backtest_cache.json         OHLC data cache for backtest gate
-    ├── bot_status.json             Written every loop, read by dashboard
+    ├── scalper_positions.json      Open scalp positions (survives restarts)
+    ├── scalper_trades.jsonl        Scalp trade history (also in PostgreSQL)
+    ├── scalper_volume.json         Cumulative scalp volume for fee tier tracking
     └── history_buffer.json         Price history for RSI/SMA warmup
 
 
@@ -96,26 +104,24 @@ Signal Engine (analysis.py)
 Generates a (signal, score) tuple for each pair every loop:
 
 MEAN REVERSION PATH (per-pair RSI thresholds, see Section 4):
-  RSI oversold  → BUY signal,  score proportional to distance from threshold
+  RSI oversold  → BUY signal, score proportional to distance from threshold
   RSI overbought → SELL signal, score proportional to distance from threshold
 
 TREND/BREAKOUT PATH:
   Price above Bollinger upper band + RSI confirmation → BUY
   Price below Bollinger lower band + RSI confirmation → SELL
 
-SMA MOMENTUM PATH (always active, fills gaps when RSI/BB are neutral):
-  SMA8 > SMA21 → BUY bias with score proportional to gap (multiplier ×50)
+SMA MOMENTUM PATH (always active):
+  SMA8 > SMA21 → BUY bias, score proportional to gap (multiplier ×50)
   SMA8 < SMA21 → SELL bias
   Ensures the bot always has a signal even in quiet markets
 
 SIGNAL SELECTION:
-  Each pair is evaluated independently. The pair with the highest absolute
-  score among actionable signals is selected each loop.
-  Contradictory signals (BUY signal + negative score) are filtered out.
-  Non-actionable SELLs (no position + shorts disabled) are skipped so they
-  don't beat a genuine BUY signal.
+  Each pair evaluated independently. Highest absolute score among actionable
+  signals selected each loop. Contradictory signals filtered out.
+  Non-actionable SELLs (no position + shorts disabled) skipped.
 
-Price history: 200 candles per pair, seeded from 15-minute Kraken OHLC on
+Price history: 200 candles per pair, seeded from 60-minute Kraken OHLC on
 startup so RSI/SMA work immediately without a cold-start delay.
 
 
@@ -123,55 +129,52 @@ startup so RSI/SMA work immediately without a cold-start delay.
 4. PER-PAIR STRATEGY PROFILES
 ================================================================================
 
-Each coin gets its own RSI thresholds and minimum signal score:
-
   XBTEUR / ETHEUR   Strategy: Trend-following
                     RSI buy: 32 | RSI sell: 68 | Min score: 8
-                    Rationale: Large caps move in clearer trends,
-                               need stronger confirmation before entry
+                    Large caps move in clearer trends, need stronger confirmation
 
   SOLEUR / XRPEUR / ADAEUR   Strategy: Mean reversion
                                RSI buy: 28 | RSI sell: 72 | Min score: 5
-                               Rationale: Mid caps overshoot RSI extremes,
-                                          reversals are more reliable
+                               Mid caps overshoot RSI extremes, reversals reliable
 
   DOTEUR / LINKEUR   Strategy: Mean reversion
                      RSI buy: 25 | RSI sell: 75 | Min score: 3
-                     Rationale: Smaller caps have bigger swings,
-                                even RSI 25 is worth acting on
+                     Smaller caps have bigger swings, even RSI 25 worth acting on
 
 
 ================================================================================
 5. RISK MANAGEMENT & POSITION SIZING
 ================================================================================
 
-Seven multipliers are applied in sequence to the base allocation:
+Seven multipliers applied in sequence to the base allocation:
 
   BASE          allocation_per_trade_percent × available_eur
   × VOLATILITY  ATR scaling (target volatility per trade)
   × REGIME      risk_off_allocation_multiplier when regime is RISK_OFF
   × BREAKOUT    2× for fresh Bollinger breakout (<25 days), 0.5× if stale
   × CORRELATION 1/(1+n_correlated_open) — prevents stacking correlated bets
-                All crypto pairs are treated as one correlation group
                 0 open: 1.00× | 1 open: 0.67× | 2 open: 0.50× | 3: 0.33×
-  × REGIME_SIZE 1.2× trending markets (bigger bets), 0.7× ranging markets
-  × KELLY       Half-Kelly fraction from actual win rate and avg win/loss
+  × REGIME_SIZE 1.2× trending markets, 0.7× ranging markets
+  × KELLY       Half-Kelly fraction from actual win rate and avg win/loss ratio
                 Updates after every closed trade. Needs 10+ trades.
-                Maps kelly [0.01-0.5] to multiplier [0.3-1.5]
-  × MONTHLY     0.3× when monthly return >8% (protect gains)
-                0.7× when 3-8% (on track, slightly conservative)
-                1.0× when 0-3% (normal)
-                1.2× when negative (slight aggression)
+  × MONTHLY     0.3× when monthly return >8% | 0.7× when 3-8% | 1.0× normal
+                1.2× when negative (slight aggression to recover)
 
 Stop Loss Mechanisms (3 layers):
   1. SOFT STOP   stop_loss_percent — regular exit on position loss
   2. HARD STOP   hard_stop_loss_percent — force-close backstop
   3. BREAK-EVEN  After +0.5% move, stop moves to entry price
 
-Intelligence-Adjusted Buy Gate:
-  effective_min = pair_min_score - (intelligence_score × score_weight)
-  Bullish AI → lower gate (easier to buy)
-  Bearish AI → higher gate (harder to buy)
+Buy Gate Adjustments (stacked):
+  effective_min = pair_min_score
+                - (intelligence_score × score_weight)     [AI panel]
+                - (lunarcrush_combined × 0.5)             [social sentiment]
+                - (onchain_combined × 0.5)                [on-chain data]
+                + ichimoku_gaussian_score_boost           [if near Gaussian band]
+
+  Bullish signals lower the gate (easier to buy)
+  Bearish signals raise the gate (harder to buy)
+  Ichimoku inside/below cloud → buy blocked entirely
 
 
 ================================================================================
@@ -198,18 +201,124 @@ BTC downtrend flag (separate from above):
 
 
 ================================================================================
-7. AI INTELLIGENCE PANEL (5 MODELS)
+7. ICHIMOKU CLOUD + GAUSSIAN CHANNEL FILTER
 ================================================================================
 
+File: core/ichimoku_gaussian.py
+Data: 1-hour OHLC candles from Kraken REST API
+Cache: 5-minute TTL per pair (no extra REST calls per loop)
+
+ICHIMOKU CLOUD (non-standard 20/30/60 cycle — faster than traditional 9/26/52)
+  Tenkan-sen:   (20-period high + low) / 2   (conversion line)
+  Kijun-sen:    (30-period high + low) / 2   (base line)
+  Senkou Span A: (Tenkan + Kijun) / 2         (leading span A)
+  Senkou Span B: (60-period high + low) / 2   (leading span B)
+  Cloud = area between Span A and Span B
+
+Price position determines trade gate:
+  ABOVE cloud   → uptrend confirmed, buys allowed
+  INSIDE cloud  → choppy/indecisive, BUY BLOCKED
+  BELOW cloud   → downtrend, BUY BLOCKED
+
+GAUSSIAN CHANNEL (30-period, 2.0× standard deviation)
+  Gaussian-weighted moving average (smooth, noise-reduced)
+  Upper band = GMA + 2.0 × std
+  Lower band = GMA - 2.0 × std
+
+  Buy signal: price is within 0.5% of the lower band (touching, not crashed)
+  Only signals when price is AT the band, not when it has broken through
+
+COMBINED RULES
+  1. Ichimoku inside or below cloud → block buy regardless of other signals
+  2. Ichimoku above cloud + Gaussian lower band touch → score boost +1.5
+  3. Ichimoku above cloud, no Gaussian signal → existing signals proceed normally
+
+AI INTEGRATION
+  All 5 AI models receive per-pair Ichimoku + Gaussian data in their prompts
+  so they can reason about trend structure and calibrate scores accordingly.
+
+DASHBOARD CARD
+  Shows per-pair: cloud position (ABOVE/INSIDE/BELOW), trend, cloud price range,
+  Gaussian buy signal, score boost
+
+
+================================================================================
+8. SCALPING STRATEGY
+================================================================================
+
+File: core/scalper.py
+Mode: Paper only (runs concurrently with main bot, separate position tracking)
+Loop: Every 15 seconds (independent of main 5-minute loop)
+
+PAIRS TRADED (10 pairs)
+  XBTEUR, XETHZEUR, SOLEUR, XXRPZEUR, LINKEUR, AVAXEUR,
+  ADAEUR, DOTEUR, ATOMEUR, UNIEUR
+
+SIGNALS (scored, threshold ≥ 1.5 to enter)
+  1-min RSI < 35        → +2  (oversold, buy)
+  1-min RSI > 65        → -2  (overbought, sell)
+  Price < VWAP by >0.3% → +1  (below fair value, buy)
+  Price > VWAP by >0.3% → -1  (above fair value, sell)
+  Order book bid vol > ask vol by >20% → +1  (buying pressure)
+  Order book ask vol > bid vol by >20% → -1  (selling pressure)
+
+DYNAMIC FEE-AWARE TAKE PROFIT
+  Purpose: covers Kraken round-trip fees + 6 basis points net profit minimum
+  TP adjusts automatically as cumulative trade volume builds through fee tiers:
+
+  Volume      Taker fee   Round trip   TP set to   Net per win
+  ──────────────────────────────────────────────────────────────
+  <$50k        0.26%       0.52%        0.58%       +0.06%
+  $50k+        0.24%       0.48%        0.54%       +0.06%
+  $100k+       0.22%       0.44%        0.50%       +0.06%
+  $250k+       0.20%       0.40%        0.46%       +0.06%
+  $500k+       0.18%       0.36%        0.42%       +0.06%
+  $1M+         0.16%       0.32%        0.38%       +0.06%
+  $2.5M+       0.14%       0.28%        0.34%       +0.06%
+  $5M+         0.12%       0.24%        0.30%       +0.06%
+  $10M+        0.10%       0.20%        0.26%       +0.06%
+
+  Volume tracked in data/scalper_volume.json (survives restarts)
+  Dashboard shows: current fee tier, active TP%, cumulative volume
+
+STOP LOSS: 0.20% (tight, cuts losses fast)
+FORCE EXIT: after 60 minutes regardless of P&L
+
+ALLOCATION: €10 per scalp trade (max 10 concurrent positions = €100 total)
+
+POSITION TRACKING
+  Positions: data/scalper_positions.json (survives restarts)
+  Trade log:  data/scalper_trades.jsonl + PostgreSQL scalper_trades table
+
+PURPOSE
+  Primary goal is to build Kraken 30-day trading volume quickly, accelerating
+  progress through fee tiers so the main bot's trades become more profitable.
+  Secondary goal is independent P&L from the scalping strategy itself.
+
+DASHBOARD
+  Two cards:
+  - Scalper Positions: compact card alongside Open Positions (top of dashboard)
+  - Full Scalper Card: positions + recent trade history with P&L further down
+
+
+================================================================================
+9. AI INTELLIGENCE PANEL (5 MODELS)
+================================================================================
+
+File: core/market_intelligence.py
 All via OpenRouter (OPENROUTER_API_KEY). Runs every 10 minutes.
 
-  Model              Weight  Role
-  ───────────────────────────────────────────────────────────────────
-  Hermes 3 70B        1.0×   Strategy & positioning
-  Perplexity Sonar    1.5×   LIVE WEB SEARCH — real-time news
-  DeepSeek R1         1.0×   Technical pattern reasoning
-  Llama 3.1 8B        0.75×  Fast sentiment cross-check
-  GPT-4o-mini         1.0×   General market sentiment (via OpenRouter)
+  Model              Weight  Frequency  Role
+  ──────────────────────────────────────────────────────────────────────
+  Hermes 3 70B        1.0×   Every 20m  Strategy & positioning
+  Perplexity Sonar    1.5×   Every 20m  LIVE WEB SEARCH — real-time news
+  DeepSeek R1         1.0×   Every 20m  Technical pattern reasoning
+  Llama 3.1 8B        0.75×  Every 10m  Fast sentiment cross-check
+  GPT-4o-mini         1.0×   Every 10m  General market sentiment
+
+Sonar has 1.5× weight because it has live internet access (real news).
+Expensive models (Hermes, Sonar, DeepSeek) run every other call to cut costs.
+Cheap models (Llama, GPT-4o-mini) run every call.
 
 Each model receives:
   - Fear & Greed index (last 3 days)
@@ -217,20 +326,18 @@ Each model receives:
   - Sharpe.ai funding rates per coin
   - CoinGecko trending + social sentiment
   - On-chain: BTC mempool, ETH gas (Alchemy), exchange flows (CoinMetrics)
-  - Bot performance context: Sharpe score, last 10 trades, open positions
-  - Recent AI panel history (did past calls predict correctly?)
-  - Optimizer decisions (what changed, Sharpe impact)
+  - Bot performance: Sharpe score, last 10 trades, open positions
+  - Recent AI panel history + outcomes (did past calls predict correctly?)
+  - Optimizer decisions (what parameter changed, Sharpe impact)
+  - Ichimoku + Gaussian data per pair (trend, cloud position, buy signal)
 
-Combined score (-5 to +5) adjusts the buy gate:
-  Bullish AI → lower effective min_score
-  Bearish AI → higher effective min_score (harder to buy)
-
-All AI decisions are logged to data/intelligence_log.jsonl with the
-subsequent trade outcome written retrospectively for calibration.
+Combined score (-5 to +5) adjusts the buy gate (see Section 5).
+All AI decisions logged to intelligence_log.jsonl with trade outcome written
+retrospectively so models can calibrate against their own accuracy over time.
 
 
 ================================================================================
-8. DATA SOURCES
+10. DATA SOURCES & BUY GATE WIRING
 ================================================================================
 
 FREE (no API key):
@@ -239,120 +346,117 @@ FREE (no API key):
   Alternative.me       Fear & Greed index
   CoinGecko            Trending coins, price data
   Kraken public API    OHLC candles, orderbook, ticker
-  Kraken WebSocket     Real-time price feed
-  Kraken Blog RSS      New listing announcements (blog.kraken.com/feed)
+  Kraken WebSocket     Real-time price feed (10 pairs, continuous)
+  Kraken Blog RSS      New listing announcements
 
 PAID (API key required):
   OPENROUTER_API_KEY   5 AI models (Hermes, Sonar, DeepSeek, Llama, GPT)
   SHARPE_API_KEY       Funding rates, insider selling, derivatives OI
-  ALCHEMY_API_KEY      ETH gas price, pending tx count, mempool (free tier)
+  ALCHEMY_API_KEY      ETH gas price, pending tx count (free tier)
   ALPACA_API_KEY       Alpaca broker (paper: paper-api.alpaca.markets)
   KRAKEN_API_KEY       Kraken exchange (private endpoints for trading)
 
-Data refresh:
-  WebSocket prices     Real-time (continuous)
-  Intelligence panel   Every 600 seconds (10 minutes)
-  Sharpe.ai data       Every 540 seconds (9 minutes, cached)
-  On-chain data        Every 5 loops (~2.5 minutes at 30s loop)
-  Social sentiment     Every 10 loops (~5 minutes)
+BUY GATE WIRING (data that directly affects trade decisions)
+  Previously these data sources were fetched but only shown on the dashboard.
+  They now actively adjust the effective buy score threshold:
+
+  LunarCrush combined score  → -(score × 0.5) adjustment (max ±1.5 pts)
+    Bullish social sentiment lowers buy threshold (easier to enter)
+    Bearish social sentiment raises buy threshold (harder to enter)
+
+  On-chain combined score    → -(score × 0.5) adjustment (max ±1.5 pts)
+    Strong BTC network activity, low mempool → bullish adjustment
+    High gas, heavy sell flows → bearish adjustment
+
+  AI panel score             → -(score × weight) adjustment (max ±10 pts)
+  Ichimoku cloud position    → BLOCK buy entirely if inside/below cloud
+
+Data refresh intervals:
+  WebSocket prices     Continuous (real-time)
+  Intelligence panel   Every 600s (10 min) — cheap models every run,
+                       expensive every other run (every 20 min)
+  Ichimoku + Gaussian  5-minute cache per pair
+  Sharpe.ai data       Every 540s (9 min, cached)
+  On-chain data        Every 5 loops (~2.5 min at 30s interval)
+  Social sentiment     Every 10 loops (~5 min)
   New listings check   Every 10 minutes (3 sources)
-  Config hot-reload    Every 60 seconds
+  Scalper loop         Every 15 seconds
 
 
 ================================================================================
-9. SELF-LEARNING SYSTEMS
+11. SELF-LEARNING SYSTEMS
 ================================================================================
 
 A. SCIENTIFIC METHOD PARAMETER OPTIMIZER (core/param_optimizer.py)
 ──────────────────────────────────────────────────────────────────
 Process:
   1. Establish Sharpe ratio baseline from closed trade history
-  2. Pre-screen with 30-day backtest (see below)
+  2. Pre-screen with 30-day backtest (Kraken OHLC, conservative slippage)
   3. Change exactly ONE parameter by ONE step (up or down)
-  4. Wait for MIN_EVAL_TRADES (10) new closed trades
+  4. Wait for eval_every_n_trades (10) new closed trades
   5. Measure new Sharpe — KEEP if improved, REVERT if not
   6. Advance to next parameter
 
 Parameters cycled:
-  min_buy_score (5-50, step 2), take_profit_percent (1-6%, step 0.25)
-  stop_loss_percent (1.5-10%, step 0.5), mr_rsi_oversold (20-45, step 2)
-  mr_rsi_overbought (50-75, step 2), volume_filter_min_ratio (0.2-2, step 0.1)
-  allocation_per_trade_percent (5-70%, step 5)
+  min_buy_score, take_profit_percent, stop_loss_percent,
+  mr_rsi_oversold, mr_rsi_overbought, volume_filter_min_ratio,
+  allocation_per_trade_percent
+
+Optimizer activates after first 10 closed trades.
 
 B. BACKTEST GATE (before any parameter change is deployed)
 ──────────────────────────────────────────────────────────
-Each pair is backtested independently using its own RSI profile:
-  - BTC/ETH: tested with their trend-following RSI thresholds (32/68)
-  - SOL/XRP/ADA: tested with mean-reversion thresholds (28/72)
-  - DOT/LINK: tested with small-cap thresholds (25/75)
-  - RSI changes only test pairs using mean reversion strategy
-  - TP/SL changes test all pairs
-
+Each pair backtested independently using its own RSI profile.
 Data: Kraken OHLC API (240-minute candles × 180 = 30 days, cached 1 hour)
+Exit slippage correctly applied to conservative backtest exits.
 Threshold: rejects change if avg backtest Sharpe < baseline - 0.2
-Result: shows which pairs helped vs hurt by the change
 
 C. KELLY CRITERION POSITION SIZING
 ────────────────────────────────────
 Kelly = win_rate - ((1 - win_rate) / avg_win_loss_ratio)
-Half-Kelly applied (0.5× Kelly) for lower variance
-Updates after every closed trade
-Needs 10+ closed trades to activate (defaults to 0.1 before then)
+Half-Kelly applied (0.5×) for lower variance
+Updates after every closed trade. Needs 10+ trades to activate.
 
 D. AI CALIBRATION FROM HISTORY
 ────────────────────────────────
-All AI models receive their own past decisions and outcomes:
-  "Last time score was -3, BTC dropped 2% — correct call"
-  "Score was +2, ETH fell 1% — incorrect call"
+All AI models receive their own past decisions and outcomes in every prompt.
 Models calibrate over time based on what actually happened.
+Ichimoku + Gaussian data included so models learn trend context vs outcomes.
 
 E. SHARPE RATIO TRACKING
 ────────────────────────
 Goal thresholds: Success ≥ 3.0 | Failure < 1.0 | Neutral 1.0-3.0
-Calculated from data/trade_events_paper.jsonl or trade_events_live.jsonl
-Minimum 5 closed trades for calculation
-Updated every 5 closed trades
-Initialised from file on startup (survives restarts)
-
-Separate journals for paper and live mode — live Sharpe is never
-diluted by paper trading data.
+Minimum 5 closed trades for calculation. Updated every 5 closed trades.
+Separate journals for paper and live mode.
+Scalper trades tracked separately — not mixed into main bot Sharpe.
 
 
 ================================================================================
-10. NEW LISTINGS MONITOR (core/listings_monitor.py)
+12. NEW LISTINGS MONITOR (core/listings_monitor.py)
 ================================================================================
 
 Three detection sources (polled every 10 minutes):
 
-  1. Kraken AssetPairs API (fastest — detects the moment a pair goes live)
-     GET https://api.kraken.com/0/public/AssetPairs
-     Compares against saved baseline, alerts on new EUR pairs
-     Free, no key required
-
-  2. Kraken Blog RSS (early warning — often hours before trading starts)
-     GET https://blog.kraken.com/feed
-     Parses listing keywords, extracts coin symbols
-     Free, no key required
-
+  1. Kraken AssetPairs API (fastest — exact moment pair goes live)
+  2. Kraken Blog RSS (early warning — hours before trading starts)
   3. Sharpe.ai /v1/listings/recent (hourly aggregated)
-     Requires SHARPE_API_KEY
 
 Strategy for each detected listing:
-  T+0:     Detection → Telegram alert → record price
-  T+60min: Start checking if price is trending up
-  +2%:     BUY (up to trade_amount_eur size)
-  +12h:    FORCE SELL regardless of P&L (exit the pump before the dump)
+  T+0:     Detection → Telegram alert → record price → add to watchlist
+  T+60min: Start checking if price is trending up (+2% threshold)
+  +2%:     BUY — pair dynamically added to trade_pairs for TP/SL monitoring
+  +12h:    FORCE SELL — pair removed from trade_pairs, watchlist cleared
 
-Pair name auto-resolution:
-  Tries COINEUR, XCOINZEUR, XCOINEUR in order until Kraken returns price
-  If no price found → skip safely
+Key fix: listing pairs are now added to trade_pairs on buy so the main bot's
+TP/SL and price feed machinery monitors them. Previously they were bought but
+never monitored for exits.
 
 State persisted in data/listing_watchlist.json (survives restarts).
 Dashboard card shows: status, price vs detection, qty held, P&L, 12h timer.
 
 
 ================================================================================
-11. ALPACA CORRELATED STOCKS (core/alpaca_interface.py)
+13. ALPACA CORRELATED STOCKS (core/alpaca_interface.py)
 ================================================================================
 
 Trades crypto-correlated stocks on Alpaca when strong Kraken signals fire.
@@ -362,241 +466,251 @@ Strategy:
   ETH BUY signal (score ≥ 10) → buy COIN on Alpaca
   SELL signal on same pair    → close the Alpaca positions
 
-Rationale:
-  BTC price moves tend to flow into crypto-proxy stocks 1-3 hours later.
-  This captures the lag between crypto and stock market reaction.
-  Alpaca is commission-free; positions are fractional shares.
-
 Sizing: 5% of Alpaca portfolio value per correlated stock
 Only trades when US market is open (checked via /v2/clock)
-Sends separate Telegram notifications for Alpaca trades.
-
-Configuration:
-  ALPACA_API_KEY      — from alpaca.markets
-  ALPACA_API_SECRET   — same
-  ALPACA_BASE_URL     — https://paper-api.alpaca.markets (paper)
-                        https://api.alpaca.markets (live)
 
 
 ================================================================================
-12. PERSISTENT HISTORY DATABASE (core/history_db.py)
+14. CIRCUIT BREAKER
 ================================================================================
 
-SQLite database at data/bot_history.db — persisted on Railway volume.
-Survives all restarts and redeploys. Max 5,000 rows per table.
+Protects capital during severe drawdown events.
 
-Tables:
-  trades              Every trade (type, pair, volume, price, P&L, balance)
-  ai_panels           Every AI panel result with per-model scores + outcome
-  sharpe_snapshots    Funding rates, insider signal, OI per refresh
-  bot_snapshots       Balance, regime, signals, Sharpe every 10 loops
-  optimizer_decisions Every parameter experiment result
+Trigger:
+  When peak-to-current portfolio drawdown >= max_drawdown_percent (default 10%)
 
-On every AI refresh, models receive the last N rows from all tables so
-they can see whether their past calls were correct. This is the core
-of the AI learning loop.
+Actions on trigger:
+  1. Force-close ALL open positions immediately (market sell)
+  2. Send Telegram alert with drawdown % and portfolio values
+  3. Pause all buying for 24 hours
+  4. Show red warning banner on dashboard
+
+Reset:
+  Auto-resets when drawdown recovers below 50% of the threshold
+  (e.g. if limit is 10%, resets when drawdown recovers to <5%)
+
+Config: risk_management.max_drawdown_percent in config.paper.toml
+Dashboard: Red banner appears at top of page when circuit breaker is active
 
 
 ================================================================================
-13. DASHBOARD (dashboard.py)
+15. PERSISTENT HISTORY (PostgreSQL + SQLite)
 ================================================================================
 
-URL: Your Railway service public URL (port 8080)
+PostgreSQL (Docker container, same Hetzner server as bot)
+  Connection: DATABASE_URL in .env → postgres:5432 (Docker network)
+  Tables:
+    positions         Open trading positions (pair, qty, entry_price, mode)
+    optimizer_state   Scientific method experiment state
+    listing_watchlist New listings being tracked
+    known_pairs       Kraken pairs baseline
+    scalper_trades    All closed scalp trades with P&L, reason, held time
+
+SQLite (data/bot_history.db, Docker volume)
+  Tables:
+    trades            Every main bot trade
+    ai_panels         Every AI panel result with per-model scores + outcome
+    sharpe_snapshots  Funding rates, insider signal, OI per refresh
+    bot_snapshots     Balance, regime, signals, Sharpe every 10 loops
+    optimizer_decisions Parameter experiment results
+
+On every AI refresh, models receive recent rows from all tables so they can
+see whether their past calls were correct — the core AI learning loop.
+
+
+================================================================================
+16. DASHBOARD (dashboard.py)
+================================================================================
+
+URL: https://bobtradingbot.com
 Refresh: Every 30 seconds (auto)
+SSL: Cloudflare (Flexible mode) — server IP hidden
 
-Layout (top to bottom):
-  ROW 1 (2-column):
-    Balance | Sharpe Score | Pair Signals | Open Positions
-  ROW 2 (full):
+Cards (top to bottom):
+  ROW 1 (4 cards):
+    Balance | Sharpe Score | Pair Signals | Ichimoku + Gaussian
+
+  ROW 2 (2 cards):
+    Open Positions | Scalper Positions (compact)
+
+  ROW 3 (full):
     Monthly Return Target (progress bar vs 3-8% goal)
-  ROW 3 (2-panel side by side):
+
+  ROW 4 (2-panel side by side):
     LEFT:  Social Sentiment | On-Chain Data | New Listings | Optimizer
-    RIGHT: Kraken News (sticky sidebar, scrolls independently)
-  ROW 4 (full-width):
+    RIGHT: Kraken News (sticky sidebar)
+
+  ROW 5 (full-width):
     Alpaca Correlated Stocks
-    Sharpe.ai Derivatives (funding rates + insider signal for all 7 coins)
+    Sharpe.ai Derivatives (funding rates + insider signal for all coins)
     AI Model Panel (5 models, scores + reasoning text)
+    Scalper Card (positions + recent scalp trade history + fee tier stats)
     Recent Trades
     AI Panel History (last 10 AI decisions + trade outcomes)
     History DB footer
 
-Key cards:
-  Optimizer card  — Shows active experiment (what param changing, direction)
-                    History table: param, change, Sharpe before/after,
-                    % impact, KEPT/REVERTED, which pairs helped vs hurt
-  Social card     — CoinGecko trending coins (TRENDING badge),
-                    Fear & Greed index, 24h change, signal per coin
-  On-chain card   — BTC tx count + mempool, ETH gas (Alchemy),
-                    BTC exchange flows (CoinMetrics), combined signal
-  New listings    — Status, current price vs detection price, qty held,
-                    unrealised P&L, 12h countdown timer
-
-Force trade buttons available at /force-buy and /force-sell endpoints.
-State clear at /clear-state endpoint (for resetting paper positions).
+Special UI elements:
+  Circuit Breaker Banner — red warning bar at top when drawdown limit hit
+  Scalper stats badge — live fee tier, active TP%, cumulative volume, win rate
+  Ichimoku card — per-pair cloud position with colour coding (green/orange/red)
 
 
 ================================================================================
-14. DEPLOYMENT & INFRASTRUCTURE
+17. DEPLOYMENT & INFRASTRUCTURE
 ================================================================================
 
-Primary: Railway.app
-  - Auto-deploys on every git push to main branch
-  - Persistent volume at /app/data/ (all state files)
-  - Environment variables set in Railway dashboard
-  - Build: Docker (python:3.11-slim)
-  - Start command: python main.py --paper (remove --paper for live)
+Primary: Hetzner VPS (178.105.159.157)
+  - Bot + PostgreSQL run in Docker containers (docker-compose.yml)
+  - Caddy reverse proxy: port 80/443 → Docker port 8080
+  - Cloudflare proxy: orange cloud, Flexible SSL, hides server IP
+  - Domain: bobtradingbot.com (Namecheap → Cloudflare nameservers)
+  - UFW firewall: ports 22, 80, 443, 8080 open
+  - Hetzner cloud firewall: same ports
+  - Persistent Docker volume at /app/data/
 
-Required Railway Variables:
-  KRAKEN_API_KEY          Kraken exchange
-  KRAKEN_API_SECRET
+Deployment process:
+  1. git push to bobthetrader/bobtradingbot (from local D:\tradingbot)
+  2. SSH to server: git pull && docker compose up --build -d
+
+Local Docker standby (D:\tradingbot):
+  - Auto-updates daily at 9:30am via Windows Scheduled Task
+  - Always runs in paper mode (BOT_ARGS: "--paper")
+  - Dashboard at http://localhost:8080
+  - Only activate if Hetzner goes down
+
+Required environment variables (.env on server):
+  KRAKEN_API_KEY / KRAKEN_API_SECRET
   OPENROUTER_API_KEY      AI panel (Hermes, Sonar, DeepSeek, Llama, GPT)
   SHARPE_API_KEY          Institutional derivatives data
   ALCHEMY_API_KEY         ETH on-chain data
-  ALPACA_API_KEY          Alpaca broker
-  ALPACA_API_SECRET
-  ALPACA_BASE_URL         https://paper-api.alpaca.markets
+  ALPACA_API_KEY / ALPACA_API_SECRET
+  ALPACA_BASE_URL         https://paper-api.alpaca.markets (paper)
   TELEGRAM_BOT_TOKEN      Bot notifications
   TELEGRAM_CHAT_ID        6136855271
-  BOT_ARGS=--paper        Remove this to go live
-
-Local .env (D:\tradingbot\.env):
-  Same keys as Railway. Does NOT need to match Railway exactly.
-  Add RAILWAY_URL=https://your-service.railway.app for health monitor.
+  DATABASE_URL            postgresql://tradingbot:...@postgres:5432/tradingbot
+  BOT_ARGS=--paper        Remove to go live
 
 
 ================================================================================
-15. LOCAL DOCKER STANDBY
-================================================================================
-
-Provides hot standby in case Railway goes down.
-
-Setup:
-  1. Install Docker Desktop (docker.com)
-  2. Enable "Start Docker Desktop when you log in" in Docker settings
-  3. cd D:\tradingbot && docker-compose up -d
-  4. Dashboard available at http://localhost:8080
-
-docker-compose.yml:
-  - Always starts in --paper mode (BOT_ARGS: "--paper")
-  - Persistent local volume for data
-  - restart: unless-stopped (auto-restarts on PC reboot)
-
-Failover procedure:
-  1. Run: python monitor_railway.py
-     Checks Railway every 5 minutes, Telegram alert if 2+ consecutive failures
-  2. If alert received: docker-compose up -d
-  3. Local bot is in paper mode — to switch live:
-     Edit docker-compose.yml: set BOT_ARGS: "" and docker-compose restart
-  4. When Railway recovers: docker-compose down
-
-CRITICAL: Never run both Railway AND local in live mode simultaneously.
-          They would both place orders on the same Kraken account.
-
-
-================================================================================
-16. CURRENT CONFIGURATION (PAPER MODE)
+18. CURRENT CONFIGURATION (PAPER MODE)
 ================================================================================
 
 Active config: config.paper.toml
-Mode: Paper trading (€100 simulated)
-Pairs: BTC, ETH, SOL, XRP, ADA, DOT, LINK vs EUR (7 pairs)
+Mode: Paper trading (€500 simulated)
+Main pairs: BTC, ETH, SOL, XRP, ADA, DOT, LINK vs EUR (7 pairs)
+Scalper pairs: BTC, ETH, SOL, XRP, LINK, AVAX, ADA, DOT, ATOM, UNI (10 pairs)
 
-Signal settings:
-  min_buy_score              5.0   (paper global default)
-  Per-pair scores            3-8   (see Section 4)
-  RSI oversold/overbought    30/70 (paper global; per-pair varies)
-  SMA momentum multiplier    50    (gap × 50 = score)
+Main bot signal settings:
+  min_buy_score              5.0 (global default, per-pair varies 3-8)
+  RSI oversold/overbought    30/70 (global; per-pair varies 25-32/68-75)
   enable_mean_reversion      true
   enable_ema_crossover_filter false
-  enable_volume_filter        false
   enable_regime_filter        false
+  signal_refresh_interval    300 seconds (5 minutes)
 
-Risk settings:
+Main bot risk settings:
   stop_loss_percent          0.8%
   take_profit_percent        2.0%
-  allocation_per_trade       5% (~€5 per trade)
+  allocation_per_trade       5% (~€25 per trade at €500 balance)
   max_open_positions         4
-  pause_after_losses         0 minutes
+  max_drawdown_percent       10% (circuit breaker trigger)
+
+Scalper settings:
+  loop_interval              15 seconds
+  score_threshold            1.5
+  take_profit                dynamic (starts 0.58%, drops as fees drop)
+  stop_loss                  0.20%
+  allocation_per_trade       €10
+  max_hold                   60 minutes
 
 Optimizer: every 10 closed trades
-Signal refresh: every 300 seconds (5 minutes)
-Loop interval: 60 seconds
-
-Sharpe score: targets ≥3.0 (success), warns at <1.0 (failure)
+Sharpe target: ≥3.0 (success), <1.0 (failure zone)
 Monthly goal: +3% to +8%
 
 
 ================================================================================
-17. SWITCHING TO LIVE TRADING
+19. SWITCHING TO LIVE TRADING
 ================================================================================
 
 Pre-flight checklist:
-  [ ] Paper trade for minimum 2 weeks — Sharpe score should be >1.5
-  [ ] Confirm 30+ closed trades with positive Sharpe
-  [ ] Regenerate OPENROUTER_API_KEY (was briefly visible in development chat)
+  [ ] Paper trade minimum 2 weeks — Sharpe score should be >1.5
+  [ ] 30+ closed trades with positive Sharpe
+  [ ] Regenerate OPENROUTER_API_KEY (was visible in development chat)
   [ ] Regenerate SHARPE_API_KEY (same)
   [ ] Regenerate Telegram bot token (same)
-  [ ] Deposit EUR into Kraken account (minimum €50 recommended)
-  [ ] Verify Kraken account to Intermediate level (required for full trading)
-  [ ] Apply for Kraken margin trading (for shorts — 1-2 business day approval)
-  [ ] Create Alpaca live account (separate from paper account)
-  [ ] Update ALPACA_BASE_URL to https://api.alpaca.markets in Railway
+  [ ] Deposit EUR into Kraken account (minimum €200 recommended for scalper)
+  [ ] Verify Kraken account to Intermediate level
+  [ ] Apply for Kraken margin trading (if wanting shorts — 1-2 business days)
+  [ ] Create Alpaca live account
+  [ ] Update ALPACA_BASE_URL to https://api.alpaca.markets in .env
 
 To activate:
-  Railway → Service → Variables → remove BOT_ARGS=--paper → Redeploy
+  Edit /home/botuser/bobtradingbot/.env → remove BOT_ARGS=--paper
+  docker compose up -d (no rebuild needed)
 
-Revenue model:
-  Entry fee: ~0.26% (taker), ~0.16% (maker)
-  Exit fee:  ~0.26%
-  Round-trip cost: ~0.42-0.52%
-  Take profit (current): 2.0%
-  Net profit per winning trade: ~1.5%
+CRITICAL: Never run both Hetzner AND local Docker in live mode simultaneously.
+          They would both place orders on the same Kraken account.
+
+Revenue model (at current fee tier):
+  Scalper: round trip 0.52%, TP 0.58%, net +0.06% per win
+  Main bot: round trip 0.52%, TP 2.0%, net +1.48% per win
+  Break-even scalper win rate needed: ~83% (improves as fees drop)
 
 
 ================================================================================
-18. KNOWN ISSUES & FUTURE IMPROVEMENTS
+20. KNOWN ISSUES & FUTURE IMPROVEMENTS
 ================================================================================
 
-Known Issues (Low Priority):
+Recent Bug Fixes Applied:
+  - Fees no longer reset to 0% on config error (now default to Kraken rates)
+  - Partial exit now uses position_qty not holdings (was broken in paper mode)
+  - Backtester exit slippage correctly applied (was multiplied by 0.0)
+  - Gaussian buy signal only fires when price is near lower band (not below)
+  - EUR/USD conversion in volume tracking updated to 1.10
+
+Remaining Minor Issues:
   - RSI uses simple mean not Wilder's smoothed average (minor accuracy impact)
-  - _refresh_hourly_signals appends to tick buffer (minor contamination)
-  - TP/SL returns on first pair exit per cycle (others wait one more loop)
-  - Windows fcntl locks are no-ops — fixed on Railway (Linux) automatically
+  - TP/SL loop returns on first pair exit per cycle (others wait one more loop)
+  - Monthly 3% notification flag doesn't reset mid-month on dip and rebound
+  - Scalper paper trades don't update the Kraken paper balance (cosmetic only)
+  - realized_pnl and fees_paid dicts initialised but not updated during trading
 
 Future Improvements:
-  - Move to Frankfurt VPS (Hetzner ~€4/month) for 5ms latency to Kraken
-    (vs current ~100ms from Railway US) — critical for new listings strategy
-  - PostgreSQL for state when running multiple simultaneous instances
-  - Multi-strategy true parallelism (threading) for higher throughput
-  - Options/derivatives hedging via Deribit
-  - Walk-forward optimization (test over rolling windows, not just 30 days)
+  - Walk-forward optimization (rolling windows, not just fixed 30-day backtest)
   - Pump.fun / DEX new token detection (before CEX listing = bigger pump)
+  - Options/derivatives hedging via Deribit
+  - Add Ichimoku cloud position to scalper signal scoring
+  - Trailing stop on scalper positions (currently fixed SL only)
+  - Multi-strategy true parallelism for higher throughput
 
 
 ================================================================================
 SUMMARY
 ================================================================================
 
-This bot represents a complete institutional-grade algorithmic trading stack
-built from the ground up:
+This bot is a complete institutional-grade algorithmic trading stack:
 
   SIGNAL LAYER    → RSI/BB/SMA per pair with regime-aware switching
+  TREND FILTER    → Ichimoku Cloud (20/30/60) + Gaussian Channel on 1h candles
+  SCALPING        → 10-pair fast loop with dynamic fee-aware take profits
   INTELLIGENCE    → 5 AI models + 4 real-time data streams
+  BUY GATE        → AI score + social sentiment + on-chain + Ichimoku stacked
   ON-CHAIN        → BTC/ETH network metrics, exchange flows
-  SOCIAL          → CoinGecko trending, Fear & Greed
-  RISK MGMT       → 7-layer position sizing, 3-layer stop system
+  SOCIAL          → CoinGecko trending, Fear & Greed, LunarCrush
+  RISK MGMT       → 7-layer position sizing, 3-layer stops, circuit breaker
   SELF-LEARNING   → Backtest-gated optimizer + Kelly criterion + AI calibration
   MULTI-EXCHANGE  → Kraken (crypto) + Alpaca (correlated stocks)
-  NEW LISTINGS    → 3-source detection with 60-min wait + 12h exit
-  PERSISTENCE     → SQLite DB + JSONL journals + JSON state files
-  INFRASTRUCTURE  → Docker on Railway + local standby with health monitoring
-  MONITORING      → Live dashboard + Telegram notifications + health alerts
+  NEW LISTINGS    → 3-source detection, 60-min wait, 12h exit, TP/SL monitored
+  PERSISTENCE     → PostgreSQL (scalper + positions) + SQLite (history)
+  INFRASTRUCTURE  → Hetzner VPS + Docker + Caddy + Cloudflare SSL
+  MONITORING      → bobtradingbot.com dashboard + Telegram + health alerts
 
 The system improves automatically over time through:
   1. Scientific method optimizer (one parameter at a time, backtest-gated)
   2. Kelly criterion (bets bigger when winning, smaller when losing)
   3. AI panel calibration (models see if past calls were right)
   4. Sharpe-guided parameter selection (only changes that improve Sharpe deploy)
+  5. Dynamic scalper TP (automatically tightens as Kraken fees drop with volume)
 
 Monthly target: +3% to +8% return on starting balance.
 Success threshold: Sharpe ratio ≥ 3.0.
