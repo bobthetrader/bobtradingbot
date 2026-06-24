@@ -356,7 +356,10 @@ class TradingBot:
         self._assetpairs_last_check: float = 0.0
         self._assetpairs_check_interval: int = 7200  # AssetPairs: every 2 hours (1.1MB per call)
         self._listing_hold_hours: int = 12
-        self._listing_trend_pct: float = 1.2
+        self._listing_trend_pct: float = 0.8
+        self._listing_stop_loss_pct: float = 1.0    # dump if down this much from buy
+        self._listing_fee_pct: float = 0.52          # Kraken round-trip fee
+        self._listing_pullback_pct: float = 0.5     # sell if pulled back this much from peak while above fees
         self._kraken_headlines: list = []
         # CoinGecko pre-watchlist — monitors new CoinGecko coins against Kraken
         self._coingecko_prewatchlist: dict = _load_prewatchlist() if _LISTINGS_AVAILABLE else {}
@@ -3483,7 +3486,7 @@ class TradingBot:
                     listing["kraken_pair"] = resolved_pair  # use confirmed pair name
                     if _add_to_watchlist(self._listing_watchlist, listing, initial_price):
                         self.logger.info(
-                            "NEW LISTING DETECTED: %s on Kraken @ %.6f EUR — buying in 30 min if trending up",
+                            "NEW LISTING DETECTED: %s on Kraken @ %.6f EUR — buying in 15 min if trending up",
                             symbol, initial_price
                         )
                         try:
@@ -3495,7 +3498,7 @@ class TradingBot:
                                 f"[NEW LISTING] {listing.get('name', symbol)[:60]}\n"
                                 f"Symbol: {symbol} | Source: {source_label}\n"
                                 f"Pair: {resolved_pair} @ {initial_price:.6f} EUR\n"
-                                f"Watching 30 min then buy if +1.2% trend"
+                                f"Watching 15 min then buy if +0.8% trend"
                             )
                         except Exception:
                             pass
@@ -3518,12 +3521,57 @@ class TradingBot:
                 continue
 
             if entry.get("bought"):
-                # Check 12-hour exit
+                buy_price = float(entry.get("buy_price") or 0)
+                qty = self.position_qty.get(pair, self.holdings.get(pair, 0))
+
+                if buy_price > 0 and current_price > 0 and qty > 0:
+                    change_from_buy = (current_price - buy_price) / buy_price * 100
+
+                    # Hard stop loss — dump at loss if down >1.5%
+                    if change_from_buy <= -self._listing_stop_loss_pct:
+                        self.logger.warning(
+                            "NEW LISTING STOP LOSS: %s down %.2f%% from buy — dumping",
+                            symbol, change_from_buy,
+                        )
+                        self.execute_sell_order(pair, current_price,
+                                                require_profit_target=False,
+                                                reason="LISTING_STOP_LOSS")
+                        try:
+                            _notifier.send(
+                                f"[LISTING STOP] {symbol} dumped at {change_from_buy:.2f}% "
+                                f"(buy {buy_price:.6f} → now {current_price:.6f})"
+                            )
+                        except Exception:
+                            pass
+                        if pair in self.trade_pairs and pair not in self._core_trade_pairs:
+                            self.trade_pairs.remove(pair)
+                        to_remove.append(symbol)
+                        continue
+
+                    # Fee recovery — sell if above fee breakeven and pulling back from peak
+                    if change_from_buy >= self._listing_fee_pct:
+                        peak = self.peak_prices.get(pair, current_price)
+                        self.peak_prices[pair] = max(peak, current_price)
+                        pullback = (self.peak_prices[pair] - current_price) / self.peak_prices[pair] * 100
+                        if pullback >= self._listing_pullback_pct:
+                            self.logger.info(
+                                "NEW LISTING FEE RECOVERY: %s pulled back %.2f%% from peak "
+                                "(%.2f%% above buy) — selling to lock in gain",
+                                symbol, pullback, change_from_buy,
+                            )
+                            self.execute_sell_order(pair, current_price,
+                                                    require_profit_target=False,
+                                                    reason="LISTING_FEE_RECOVERY")
+                            if pair in self.trade_pairs and pair not in self._core_trade_pairs:
+                                self.trade_pairs.remove(pair)
+                            to_remove.append(symbol)
+                            continue
+
+                # 12-hour force exit
                 if _listing_expired(entry, self._listing_hold_hours):
                     self.logger.info(
                         "NEW LISTING EXIT: %s — 12h window expired, force-selling", symbol
                     )
-                    qty = self.position_qty.get(pair, self.holdings.get(pair, 0))
                     if qty > 0:
                         self.execute_sell_order(
                             pair, current_price,
@@ -3541,9 +3589,9 @@ class TradingBot:
                     to_remove.append(symbol)
                     continue
 
-                # Wait 30 min after detection before buying (let initial price settle)
+                # Wait 15 min after detection before buying (let initial price settle)
                 minutes_since_detection = (now - entry.get("detected_at", now)) / 60
-                if minutes_since_detection < 30:
+                if minutes_since_detection < 15:
                     continue
 
                 # Check trend — buy if up 2%+ from detection price
