@@ -413,8 +413,9 @@ class TradingBot:
             self.fees_maker_frac = pct_to_frac(self.fees_maker_percent)
             self.fees_taker_frac = pct_to_frac(self.fees_taker_percent)
         except Exception:
-            self.fees_maker_frac = 0.0
-            self.fees_taker_frac = 0.0
+            self.logger.warning("Fee config error — using Kraken defaults (maker 0.16%, taker 0.26%)")
+            self.fees_maker_frac = 0.0016
+            self.fees_taker_frac = 0.0026
         # Re-entry guard: only pairs listed here are subject to blocking new BUYs until
         # the last closed trade for that pair achieved min_reentry_profit_pct net profit
         self.reentry_guard_pairs = [p.upper() for p in self.config.get('risk_management', {}).get('reentry_guard_pairs', ['VER'])]
@@ -2721,7 +2722,7 @@ class TradingBot:
         - Sell volume is below the pair minimum
         """
         try:
-            full_volume = self.holdings.get(pair, 0.0)
+            full_volume = self.position_qty.get(pair, 0.0) or self.holdings.get(pair, 0.0)
             min_vol = self._get_min_volume(pair)
             if full_volume < min_vol:
                 self._partial_exit_done[pair] = True
@@ -4777,7 +4778,7 @@ class Backtester:
                 if fill_price is None:
                     sell_price_effective = price * (1.0 - exit_slippage_frac)
                 else:
-                    sell_price_effective = fill_price * (1.0 - 0.0)
+                    sell_price_effective = fill_price * (1.0 - exit_slippage_frac)
 
                 gross_pct = ((sell_price_effective - entry_prices[primary]) / entry_prices[primary]) * 100.0 if entry_prices[primary] > 0 else 0.0
                 fees_total_pct = (fees_maker_frac + fees_taker_frac) * 100.0

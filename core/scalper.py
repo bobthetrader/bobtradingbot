@@ -314,8 +314,8 @@ class ScalperEngine:
             "reason":   reason,
             "held_min": round(held_min, 1),
         }
-        # Accumulate trade volume (EUR → approximate USD via 1.08 conversion)
-        trade_value_usd = price * pos["qty"] * 1.08
+        # Accumulate trade volume (EUR → approximate USD, update _EUR_USD_APPROX if rate drifts)
+        trade_value_usd = price * pos["qty"] * 1.10
         self._volume_usd += trade_value_usd
         self._save_volume()
 
