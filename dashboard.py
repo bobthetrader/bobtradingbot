@@ -90,6 +90,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="refresh" content="30">
   <title>Bob Trading Bot</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230d1117'/><polyline points='3,26 9,18 15,22 21,10 29,14' stroke='%2358a6ff' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/><circle cx='29' cy='14' r='2.5' fill='%2300c851'/></svg>">
   <style>
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{ background: #0d1117; color: #e6edf3; font-family: 'Courier New', monospace; font-size: 14px; padding: 16px; }}
