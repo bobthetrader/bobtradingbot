@@ -1,23 +1,21 @@
 """
 Social Sentiment Module
 ========================
-Free social/trend data from CoinGecko and Alternative.me.
+Free social/trend data from CoinGecko, Reddit, and Alternative.me.
 
-Reddit API now requires OAuth2 (blocked free access in 2023).
-CoinGecko community data returns zeros on free tier.
-
-Working free sources:
+Sources:
   CoinGecko /search/trending  — top 7 trending coins RIGHT NOW (retail attention)
   CoinGecko /coins/{id}       — 24h/7d price change as momentum proxy
-  Alternative.me /fng         — Fear & Greed index (already used in AI panel,
-                                 applied here coin-specifically)
+  Reddit public JSON          — mention counts in r/cryptocurrency + r/bitcoin hot posts
+                                No OAuth needed — public subreddit JSON endpoint
+  Alternative.me /fng         — Fear & Greed index
 
 Signal logic:
-  Coin in trending list     → strong retail attention → bullish +2 to +3
-  Coin NOT trending         → no social momentum → neutral 0
-  Fear & Greed extreme fear  → contrarian bullish +1 (market oversold)
-  Fear & Greed extreme greed → contrarian bearish -1 (market overbought)
-  Strong 24h price change    → momentum confirmation
+  Coin in CoinGecko trending  → +2.0
+  Reddit mentions (high)      → +1.5 | (medium) → +0.5 | (low) → 0
+  Fear & Greed extreme fear   → contrarian bullish +1 (market oversold)
+  Fear & Greed extreme greed  → contrarian bearish -1 (market overbought)
+  Strong 24h price change     → momentum confirmation ±0.5
 """
 
 import time
@@ -82,6 +80,63 @@ def get_trending_symbols() -> set:
         if sym:
             symbols.add(sym)
     return symbols
+
+
+_REDDIT_SUBREDDITS = ["cryptocurrency", "bitcoin", "ethereum", "CryptoMarkets"]
+_REDDIT_SYMBOL_ALIASES = {
+    "BTC": ["BTC", "Bitcoin", "BITCOIN"],
+    "ETH": ["ETH", "Ethereum", "ETHEREUM"],
+    "SOL": ["SOL", "Solana", "SOLANA"],
+    "XRP": ["XRP", "Ripple", "RIPPLE"],
+    "ADA": ["ADA", "Cardano", "CARDANO"],
+    "DOT": ["DOT", "Polkadot", "POLKADOT"],
+    "LINK": ["LINK", "Chainlink", "CHAINLINK"],
+    "AVAX": ["AVAX", "Avalanche", "AVALANCHE"],
+    "ATOM": ["ATOM", "Cosmos", "COSMOS"],
+    "UNI": ["UNI", "Uniswap", "UNISWAP"],
+}
+
+
+def get_reddit_mentions(symbols: list) -> dict:
+    """Count symbol mentions in hot posts across crypto subreddits.
+
+    Uses public Reddit JSON (no OAuth needed).
+    Returns {symbol: mention_count} for the provided symbols.
+    Cached for 10 minutes to avoid hammering Reddit.
+    """
+    cache_key = "reddit_mentions_" + ",".join(sorted(symbols))
+    now = time.time()
+    if cache_key in _CACHE and (now - _CACHE[cache_key]["ts"]) < 600:
+        return _CACHE[cache_key]["data"]
+
+    mention_counts = {sym: 0 for sym in symbols}
+
+    for subreddit in _REDDIT_SUBREDDITS:
+        try:
+            url = f"https://www.reddit.com/r/{subreddit}/hot.json"
+            resp = requests.get(
+                url,
+                params={"limit": 50},
+                headers={"User-Agent": "tradingbot-sentiment/1.0"},
+                timeout=8,
+            )
+            if resp.status_code != 200:
+                continue
+
+            posts = resp.json().get("data", {}).get("children", [])
+            for post in posts:
+                data = post.get("data", {})
+                text = (data.get("title", "") + " " + data.get("selftext", "")).upper()
+                for sym in symbols:
+                    aliases = _REDDIT_SYMBOL_ALIASES.get(sym, [sym])
+                    for alias in aliases:
+                        mention_counts[sym] += text.count(alias.upper())
+        except Exception as exc:
+            logger.debug("Reddit fetch failed for r/%s: %s", subreddit, exc)
+
+    _CACHE[cache_key] = {"data": mention_counts, "ts": now}
+    logger.debug("Reddit mentions: %s", mention_counts)
+    return mention_counts
 
 
 def get_fear_greed() -> Optional[int]:
@@ -185,6 +240,19 @@ def fetch_all_sentiment(pairs: list) -> dict:
     cg_ids = list({_PAIR_TO_CG_ID[p] for p in pairs if p in _PAIR_TO_CG_ID})
     price_changes = _batch_price_changes(cg_ids)
 
+    # Reddit mention counts (cached 10 min)
+    all_symbols = list({_PAIR_TO_SYMBOL[p] for p in pairs if p in _PAIR_TO_SYMBOL})
+    reddit_mentions = {}
+    try:
+        reddit_mentions = get_reddit_mentions(all_symbols)
+    except Exception as exc:
+        logger.debug("Reddit mentions failed: %s", exc)
+
+    # Derive thresholds from total mentions across all coins
+    total_mentions = sum(reddit_mentions.values()) or 1
+    reddit_high_thresh  = max(10, total_mentions * 0.25)   # top 25% = high
+    reddit_med_thresh   = max(3,  total_mentions * 0.10)   # top 10% = medium
+
     results = {}
     signals = []
     seen    = set()
@@ -196,12 +264,18 @@ def fetch_all_sentiment(pairs: list) -> dict:
             continue
         seen.add(sym)
 
-        is_trending = sym in trending
-        change_24h  = price_changes.get(cg_id, 0)
+        is_trending  = sym in trending
+        change_24h   = price_changes.get(cg_id, 0)
+        reddit_count = reddit_mentions.get(sym, 0)
 
         signal = 0.0
         if is_trending:
-            signal += 3.0
+            signal += 2.0
+        # Reddit signal
+        if reddit_count >= reddit_high_thresh:
+            signal += 1.5
+        elif reddit_count >= reddit_med_thresh:
+            signal += 0.5
         if fg is not None:
             if fg <= 20:   signal += 1.5
             elif fg <= 35: signal += 0.5
@@ -212,12 +286,17 @@ def fetch_all_sentiment(pairs: list) -> dict:
         signal = round(max(-5.0, min(5.0, signal)), 1)
 
         data = {
-            "symbol":      sym,
-            "is_trending": is_trending,
-            "fear_greed":  fg,
-            "change_24h":  change_24h,
-            "signal":      signal,
-            "summary": f"{sym}: {'TRENDING' if is_trending else 'not trending'} | F&G {fg} | 24h {change_24h:+.1f}% | signal {signal:+.1f}",
+            "symbol":        sym,
+            "is_trending":   is_trending,
+            "fear_greed":    fg,
+            "change_24h":    change_24h,
+            "signal":        signal,
+            "reddit_count":  reddit_count,
+            "summary": (
+                f"{sym}: {'TRENDING' if is_trending else 'not trending'} | "
+                f"Reddit {reddit_count} mentions | F&G {fg} | "
+                f"24h {change_24h:+.1f}% | signal {signal:+.1f}"
+            ),
         }
         results[pair] = data
         signals.append(signal)

@@ -353,19 +353,23 @@ def _build_page() -> str:
             sig      = cd.get("signal", 0)
             ch24     = cd.get("change_24h", 0)
             is_trend = cd.get("is_trending", False)
+            reddit   = cd.get("reddit_count", 0)
             sig_col  = "#00c851" if sig >= 1 else ("#ff4444" if sig <= -1 else "#8b949e")
             ch_col   = "#00c851" if ch24 >= 0 else "#ff4444"
             tr_col   = "#00c851" if ch24 >= 0 else "#ff4444"
             if is_trend:
-                ch_arrow = "&#x25B2;" if ch24 >= 0 else "&#x25BC;"   # ▲ or ▼ when trending
+                ch_arrow = "&#x25B2;" if ch24 >= 0 else "&#x25BC;"
                 tr_badge = f' <span style="color:{tr_col};font-size:10px;font-weight:bold">TRENDING</span>'
             else:
-                ch_arrow = "&gt;"    # > when not trending
+                ch_arrow = "&gt;"
                 tr_col   = "#8b949e"
                 tr_badge = ""
+            reddit_col  = "#58a6ff" if reddit >= 10 else ("#8b949e" if reddit >= 3 else "#30363d")
+            reddit_html = f'<span style="color:{reddit_col}">{reddit}</span>'
             lc_rows += (
                 f'<tr><td><span style="color:{tr_col}">{ch_arrow}</span> {cd.get("symbol","")}{tr_badge}</td>'
                 f'<td style="color:{ch_col}">{ch24:+.1f}%</td>'
+                f'<td>{reddit_html}</td>'
                 f'<td style="color:{sig_col};font-weight:bold">{sig:+.1f}</td></tr>'
             )
         trending_str = (
@@ -377,7 +381,7 @@ def _build_page() -> str:
             f'<div>Social signal: <span style="color:{c_col};font-size:20px;font-weight:bold">{combined:+.2f}</span></div>'
             f'<div>Fear &amp; Greed: <span style="color:{fg_col};font-weight:bold">{fg_str}</span></div>'
             f'</div>'
-            f'<table><tr><th>Coin</th><th>24h Change</th><th>Signal</th></tr>'
+            f'<table><tr><th>Coin</th><th>24h</th><th>Reddit</th><th>Signal</th></tr>'
             + lc_rows + f'</table>{trending_str}'
         )
     else:

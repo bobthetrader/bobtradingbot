@@ -3922,6 +3922,7 @@ class TradingBot:
                                                 "is_trending":  v.get("is_trending", False),
                                                 "change_24h":   v.get("change_24h", 0),
                                                 "signal":       v.get("signal", 0),
+                                                "reddit_count": v.get("reddit_count", 0),
                                             }
                                             for p, v in _lc.get("coins", {}).items()
                                         },
