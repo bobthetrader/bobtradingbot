@@ -286,6 +286,7 @@ class ScalperEngine:
 
         self._save_positions()
         self._log_trade(trade)
+        self._persist_trade(trade)
         logger.info(
             "[SCALP] SELL %s @ %.6f  pnl=%.4f EUR (%.3f%%)  reason=%s  held=%.1fm  (paper)",
             pair, price, pnl_eur, pct, reason, held_min,
@@ -335,3 +336,25 @@ class ScalperEngine:
                 fh.write(json.dumps(trade) + "\n")
         except Exception as exc:
             logger.warning("[SCALP] Could not log trade: %s", exc)
+
+    def _persist_trade(self, trade: dict):
+        try:
+            from core.db_postgres import save_scalper_trade as _pg_save
+        except ImportError:
+            try:
+                from db_postgres import save_scalper_trade as _pg_save
+            except ImportError:
+                return
+        try:
+            _pg_save(
+                pair        = trade["pair"],
+                entry_price = trade["entry"],
+                exit_price  = trade["exit"],
+                qty         = trade["qty"],
+                pnl_eur     = trade["pnl_eur"],
+                pnl_pct     = trade["pnl_pct"],
+                reason      = trade["reason"],
+                held_min    = trade["held_min"],
+            )
+        except Exception as exc:
+            logger.warning("[SCALP] Could not persist trade to PostgreSQL: %s", exc)

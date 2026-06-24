@@ -109,6 +109,19 @@ def init_schema() -> bool:
                     pair        VARCHAR(20) PRIMARY KEY,
                     first_seen  TIMESTAMPTZ  DEFAULT NOW()
                 );
+
+                CREATE TABLE IF NOT EXISTS scalper_trades (
+                    id          SERIAL        PRIMARY KEY,
+                    ts          TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+                    pair        VARCHAR(20)   NOT NULL,
+                    entry_price DECIMAL(18,8) NOT NULL,
+                    exit_price  DECIMAL(18,8) NOT NULL,
+                    qty         DECIMAL(18,8) NOT NULL,
+                    pnl_eur     DECIMAL(12,6) NOT NULL,
+                    pnl_pct     DECIMAL(10,4) NOT NULL,
+                    reason      VARCHAR(30)   NOT NULL,
+                    held_min    DECIMAL(8,2)  NOT NULL
+                );
             """)
         logger.info("PostgreSQL schema initialised")
         return True
@@ -286,3 +299,25 @@ def load_known_pairs() -> Optional[set]:
     except Exception as exc:
         logger.warning("PG load_known_pairs failed: %s", exc)
         return None
+
+
+# ── Scalper trades ────────────────────────────────────────────────────────────
+
+def save_scalper_trade(pair: str, entry_price: float, exit_price: float,
+                       qty: float, pnl_eur: float, pnl_pct: float,
+                       reason: str, held_min: float) -> bool:
+    """Insert a completed scalp trade. Returns True on success."""
+    conn = _get_conn()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO scalper_trades
+                    (pair, entry_price, exit_price, qty, pnl_eur, pnl_pct, reason, held_min)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (pair, entry_price, exit_price, qty, pnl_eur, pnl_pct, reason, held_min))
+        return True
+    except Exception as exc:
+        logger.warning("PG save_scalper_trade failed: %s", exc)
+        return False
