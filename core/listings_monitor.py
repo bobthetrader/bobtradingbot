@@ -431,3 +431,193 @@ def is_expired(entry: dict, hold_hours: int = 12) -> bool:
         detected = entry.get("detected_at", time.time())
         return (time.time() - detected) > hold_hours * 3600
     return (time.time() - buy_ts) > hold_hours * 3600
+
+
+# ── CoinGecko pre-watchlist ────────────────────────────────────────────────────
+# Monitors CoinGecko for newly listed coins, then polls Kraken AssetPairs for
+# 24 hours to catch the moment a coin gets listed for trading.
+
+_COINGECKO_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets"
+_COINGECKO_KNOWN_FILE  = os.path.join(os.path.dirname(__file__), "..", "data", "coingecko_known.json")
+_COINGECKO_PRE_FILE    = os.path.join(os.path.dirname(__file__), "..", "data", "coingecko_prewatchlist.json")
+_PREWATCHLIST_TTL_HOURS = 24   # monitor each coin for 24h before giving up
+
+_PAIR_VARIANTS_TMPL = lambda sym: [
+    sym + "EUR",
+    "X" + sym + "ZEUR",
+    "X" + sym + "EUR",
+    sym + "USD",
+    "X" + sym + "ZUSD",
+    "X" + sym + "USD",
+    sym + "USDT",
+]
+
+
+def fetch_coingecko_new_coins(per_page: int = 100) -> list:
+    """Poll CoinGecko for recently added coins (sorted by gecko_desc).
+
+    Compares against a saved baseline of known coin IDs.
+    Returns list of new {symbol, name, coingecko_id} dicts.
+    No API key required — uses public free tier.
+    """
+    try:
+        resp = requests.get(
+            _COINGECKO_MARKETS_URL,
+            params={
+                "vs_currency": "usd",
+                "order":       "gecko_desc",
+                "per_page":    per_page,
+                "page":        1,
+                "sparkline":   "false",
+            },
+            timeout=10,
+            headers={"User-Agent": "tradingbot/1.0"},
+        )
+        if resp.status_code != 200:
+            logger.debug("CoinGecko markets HTTP %d", resp.status_code)
+            return []
+
+        coins = resp.json()
+        if not isinstance(coins, list):
+            return []
+
+        # Load known IDs baseline
+        known_ids: set = set()
+        if os.path.exists(_COINGECKO_KNOWN_FILE):
+            try:
+                known_ids = set(json.load(open(_COINGECKO_KNOWN_FILE)))
+            except Exception:
+                pass
+
+        current_ids = {c["id"] for c in coins if c.get("id")}
+
+        # On first run — save baseline, return nothing
+        if not known_ids:
+            _save_coingecko_known(current_ids)
+            logger.info("CoinGecko: baseline saved (%d coins)", len(current_ids))
+            return []
+
+        new_coins = []
+        for coin in coins:
+            cid = coin.get("id", "")
+            if cid and cid not in known_ids:
+                symbol = (coin.get("symbol") or "").upper()
+                name   = coin.get("name", symbol)
+                if symbol and len(symbol) <= 12 and symbol not in _EXCLUDE_WORDS:
+                    new_coins.append({
+                        "coingecko_id": cid,
+                        "symbol":       symbol,
+                        "name":         name,
+                    })
+
+        # Update baseline with all current coins
+        _save_coingecko_known(known_ids | current_ids)
+
+        if new_coins:
+            logger.info("CoinGecko: %d new coin(s) detected: %s",
+                        len(new_coins), [c["symbol"] for c in new_coins])
+        return new_coins
+
+    except Exception as exc:
+        logger.debug("CoinGecko fetch failed: %s", exc)
+        return []
+
+
+def _save_coingecko_known(ids: set) -> None:
+    try:
+        os.makedirs(os.path.dirname(_COINGECKO_KNOWN_FILE), exist_ok=True)
+        with open(_COINGECKO_KNOWN_FILE, "w") as f:
+            json.dump(list(ids), f)
+    except Exception as exc:
+        logger.debug("CoinGecko known save failed: %s", exc)
+
+
+def load_prewatchlist() -> dict:
+    """Load CoinGecko pre-watchlist from disk."""
+    try:
+        if os.path.exists(_COINGECKO_PRE_FILE):
+            return json.load(open(_COINGECKO_PRE_FILE))
+    except Exception:
+        pass
+    return {}
+
+
+def save_prewatchlist(prewatchlist: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(_COINGECKO_PRE_FILE), exist_ok=True)
+        tmp = _COINGECKO_PRE_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(prewatchlist, f, indent=2)
+        os.replace(tmp, _COINGECKO_PRE_FILE)
+    except Exception as exc:
+        logger.debug("Prewatchlist save failed: %s", exc)
+
+
+def add_to_prewatchlist(prewatchlist: dict, coin: dict) -> bool:
+    """Add a CoinGecko coin to the pre-watchlist. Returns True if newly added."""
+    symbol = coin["symbol"]
+    if symbol in prewatchlist:
+        return False
+    prewatchlist[symbol] = {
+        "symbol":       symbol,
+        "name":         coin["name"],
+        "coingecko_id": coin["coingecko_id"],
+        "detected_at":  time.time(),
+        "expires_at":   time.time() + _PREWATCHLIST_TTL_HOURS * 3600,
+    }
+    save_prewatchlist(prewatchlist)
+    logger.info("CoinGecko pre-watchlist: added %s (%s) — monitoring Kraken for 24h",
+                symbol, coin["name"])
+    return True
+
+
+def check_prewatchlist_on_kraken(prewatchlist: dict, api_client) -> list:
+    """Check each pre-watched coin against Kraken AssetPairs.
+
+    Returns list of {symbol, name, kraken_pair, pair_variants} for any coins
+    that have appeared on Kraken since being added to the pre-watchlist.
+    Removes expired entries (>24h) automatically.
+    """
+    now = time.time()
+    found = []
+    to_remove = []
+
+    for symbol, entry in list(prewatchlist.items()):
+        # Expire after 24h
+        if now > entry.get("expires_at", now):
+            logger.info("CoinGecko pre-watchlist: %s expired without Kraken listing", symbol)
+            to_remove.append(symbol)
+            continue
+
+        # Try all pair variants against Kraken
+        for variant in _PAIR_VARIANTS_TMPL(symbol):
+            try:
+                md = api_client.get_market_data(variant)
+                if md:
+                    key = next(iter(md), None)
+                    if key:
+                        price = float(md[key]["c"][0])
+                        if price > 0:
+                            logger.info(
+                                "CoinGecko pre-watchlist: %s NOW LIVE on Kraken as %s @ %.6f",
+                                symbol, variant, price,
+                            )
+                            found.append({
+                                "symbol":       symbol,
+                                "name":         entry["name"],
+                                "kraken_pair":  variant,
+                                "listed_at":    now,
+                                "source":       "coingecko_prewatchlist",
+                                "pair_variants": _PAIR_VARIANTS_TMPL(symbol),
+                            })
+                            to_remove.append(symbol)
+                            break
+            except Exception:
+                continue
+
+    for sym in set(to_remove):
+        prewatchlist.pop(sym, None)
+    if to_remove:
+        save_prewatchlist(prewatchlist)
+
+    return found

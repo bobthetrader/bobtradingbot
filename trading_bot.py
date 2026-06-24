@@ -178,6 +178,11 @@ try:
         remove_from_watchlist as _remove_listing,
         is_trending_up as _listing_trending_up,
         is_expired as _listing_expired,
+        fetch_coingecko_new_coins as _fetch_coingecko_new,
+        load_prewatchlist as _load_prewatchlist,
+        save_prewatchlist as _save_prewatchlist,
+        add_to_prewatchlist as _add_to_prewatchlist,
+        check_prewatchlist_on_kraken as _check_prewatchlist,
     )
     _LISTINGS_AVAILABLE = True
 except ImportError:
@@ -353,6 +358,12 @@ class TradingBot:
         self._listing_hold_hours: int = 12
         self._listing_trend_pct: float = 2.0
         self._kraken_headlines: list = []
+        # CoinGecko pre-watchlist — monitors new CoinGecko coins against Kraken
+        self._coingecko_prewatchlist: dict = _load_prewatchlist() if _LISTINGS_AVAILABLE else {}
+        self._coingecko_last_check: float = 0.0
+        self._coingecko_check_interval: int = 1800   # poll CoinGecko every 30 min
+        self._prewatchlist_kraken_check: float = 0.0
+        self._prewatchlist_kraken_interval: int = 300  # check pre-watchlist vs Kraken every 5 min
 
         # Alpaca correlation trading state
         self._alpaca_positions: dict = {}   # symbol -> {bought_at, kraken_signal}
@@ -3556,6 +3567,63 @@ class TradingBot:
         for symbol in to_remove:
             _remove_listing(self._listing_watchlist, symbol)
 
+        # ── CoinGecko pre-watchlist ───────────────────────────────────────────
+        # Poll CoinGecko every 30 min for newly listed coins
+        if now - self._coingecko_last_check >= self._coingecko_check_interval:
+            self._coingecko_last_check = now
+            try:
+                new_cg_coins = _fetch_coingecko_new(per_page=100)
+                for coin in new_cg_coins:
+                    if _add_to_prewatchlist(self._coingecko_prewatchlist, coin):
+                        try:
+                            _notifier.send(
+                                f"[COINGECKO] New coin spotted: {coin['name']} ({coin['symbol']})\n"
+                                f"Monitoring Kraken for listing — will auto-buy if listed within 24h"
+                            )
+                        except Exception:
+                            pass
+            except Exception as exc:
+                self.logger.debug("CoinGecko pre-watchlist poll error: %s", exc)
+
+        # Check pre-watchlist coins against Kraken every 5 min
+        if self._coingecko_prewatchlist and \
+                now - self._prewatchlist_kraken_check >= self._prewatchlist_kraken_interval:
+            self._prewatchlist_kraken_check = now
+            try:
+                newly_listed = _check_prewatchlist(
+                    self._coingecko_prewatchlist, self.api_client
+                )
+                for listing in newly_listed:
+                    symbol = listing["symbol"]
+                    if symbol in self._listing_watchlist:
+                        continue
+                    # Resolve confirmed price
+                    md = self.api_client.get_market_data(listing["kraken_pair"])
+                    if not md:
+                        continue
+                    key = next(iter(md), None)
+                    if not key:
+                        continue
+                    initial_price = float(md[key]["c"][0])
+                    if initial_price <= 0:
+                        continue
+                    if _add_to_watchlist(self._listing_watchlist, listing, initial_price):
+                        self.logger.info(
+                            "COINGECKO→KRAKEN: %s now live as %s @ %.6f — entering 30min wait",
+                            symbol, listing["kraken_pair"], initial_price,
+                        )
+                        try:
+                            _notifier.send(
+                                f"[NEW LISTING] {listing.get('name', symbol)} ({symbol})\n"
+                                f"Pair: {listing['kraken_pair']} @ {initial_price:.6f}\n"
+                                f"Source: CoinGecko pre-watchlist\n"
+                                f"Buying in 30 min if +2% trend"
+                            )
+                        except Exception:
+                            pass
+            except Exception as exc:
+                self.logger.debug("Pre-watchlist Kraken check error: %s", exc)
+
     def analyze_all_pairs(self) -> tuple:
         """Orchestrate the three-phase pair analysis pipeline.
 
@@ -3820,6 +3888,14 @@ class TradingBot:
                             pass
                         _status["new_listings"]     = _listings_display
                         _status["kraken_headlines"] = getattr(self, '_kraken_headlines', [])
+                        _status["coingecko_prewatchlist"] = {
+                            sym: {
+                                "name": e.get("name", sym),
+                                "detected_at": e.get("detected_at", 0),
+                                "expires_in_min": round(max(0, e.get("expires_at", 0) - time.time()) / 60, 0),
+                            }
+                            for sym, e in getattr(self, '_coingecko_prewatchlist', {}).items()
+                        }
 
                         # Social sentiment — run every loop (data cached 5 min internally)
                         if _LUNAR_STATUS_AVAILABLE:
