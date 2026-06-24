@@ -33,10 +33,37 @@ _VWAP_CANDLES   = 30       # rolling window for VWAP calc
 _VWAP_THRESH    = 0.003    # 0.3% deviation from VWAP to signal
 _OB_IMBALANCE   = 0.20     # 20% bid/ask vol imbalance to signal
 _SCORE_THRESH   = 1.5      # minimum abs score to enter
-_TP_PCT         = 0.70     # take-profit %
-_SL_PCT         = 0.35     # stop-loss %
+_TP_PCT         = 0.58     # take-profit % (base — adjusted dynamically by fee tier)
+_SL_PCT         = 0.20     # stop-loss %
 _ALLOCATION_EUR = 10.0     # paper EUR per scalp trade
 _MAX_HOLD_MIN   = 60       # force-exit after 60 minutes regardless
+_MIN_PROFIT_BPS = 0.06     # minimum net profit above round-trip fee (6 basis points)
+
+# Kraken fee tiers: (30-day USD volume threshold, taker fee %)
+# TP is set dynamically to round_trip_fee + _MIN_PROFIT_BPS
+_FEE_TIERS = [
+    (0,          0.26),   # <$50k      → round trip 0.52%  → TP 0.58%
+    (50_000,     0.24),   # $50k+      → round trip 0.48%  → TP 0.54%
+    (100_000,    0.22),   # $100k+     → round trip 0.44%  → TP 0.50%
+    (250_000,    0.20),   # $250k+     → round trip 0.40%  → TP 0.46%
+    (500_000,    0.18),   # $500k+     → round trip 0.36%  → TP 0.42%
+    (1_000_000,  0.16),   # $1M+       → round trip 0.32%  → TP 0.38%
+    (2_500_000,  0.14),   # $2.5M+     → round trip 0.28%  → TP 0.34%
+    (5_000_000,  0.12),   # $5M+       → round trip 0.24%  → TP 0.30%
+    (10_000_000, 0.10),   # $10M+      → round trip 0.20%  → TP 0.26%
+]
+
+
+def _fee_tier(volume_usd: float) -> tuple:
+    """Return (taker_fee_pct, round_trip_pct, dynamic_tp_pct) for given 30-day volume."""
+    taker = 0.26
+    for threshold, fee in reversed(_FEE_TIERS):
+        if volume_usd >= threshold:
+            taker = fee
+            break
+    round_trip = taker * 2
+    dynamic_tp = round(round_trip + _MIN_PROFIT_BPS, 4)
+    return taker, round_trip, dynamic_tp
 
 
 def _calc_rsi(closes: list, period: int = _RSI_PERIOD) -> Optional[float]:
@@ -87,12 +114,14 @@ class ScalperEngine:
         # State
         self._positions: dict = {}     # pair → {qty, entry, ts, score}
         self._trade_log: list = []     # last 100 completed trades (in-memory)
+        self._volume_usd: float = 0.0  # cumulative 30-day equivalent volume (USD)
 
         # Persistent paths
         self._pos_path    = self._data_dir / "scalper_positions.json"
         self._trades_path = self._data_dir / "scalper_trades.jsonl"
 
         self._load_positions()
+        self._load_volume()
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -119,12 +148,17 @@ class ScalperEngine:
             recent      = list(self._trade_log[-20:])
         wins  = sum(1 for t in self._trade_log if t.get("pnl_eur", 0) > 0)
         total = len(self._trade_log)
+        taker, round_trip, dynamic_tp = _fee_tier(self._volume_usd)
         return {
             "positions":     positions,
             "recent_trades": recent,
             "total_trades":  total,
             "win_rate":      round(wins / total * 100, 1) if total else 0,
             "total_pnl_eur": round(sum(t.get("pnl_eur", 0) for t in self._trade_log), 4),
+            "volume_usd":    round(self._volume_usd, 2),
+            "taker_fee_pct": taker,
+            "round_trip_pct": round_trip,
+            "dynamic_tp_pct": dynamic_tp,
         }
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -156,8 +190,9 @@ class ScalperEngine:
             entry      = pos["entry"]
             pct_change = (price - entry) / entry * 100
             held_min   = (time.time() - pos["ts"]) / 60
+            _, _, tp   = _fee_tier(self._volume_usd)  # dynamic TP based on current fee tier
 
-            if pct_change >= _TP_PCT:
+            if pct_change >= tp:
                 self._close_position(pair, price, "TAKE_PROFIT", pct_change)
             elif pct_change <= -_SL_PCT:
                 self._close_position(pair, price, "STOP_LOSS", pct_change)
@@ -279,6 +314,12 @@ class ScalperEngine:
             "reason":   reason,
             "held_min": round(held_min, 1),
         }
+        # Accumulate trade volume (EUR → approximate USD via 1.08 conversion)
+        trade_value_usd = price * pos["qty"] * 1.08
+        self._volume_usd += trade_value_usd
+        self._save_volume()
+
+        _, _, current_tp = _fee_tier(self._volume_usd)
         with self._lock:
             self._trade_log.append(trade)
             if len(self._trade_log) > 100:
@@ -336,6 +377,23 @@ class ScalperEngine:
                 fh.write(json.dumps(trade) + "\n")
         except Exception as exc:
             logger.warning("[SCALP] Could not log trade: %s", exc)
+
+    def _load_volume(self):
+        try:
+            vol_path = self._data_dir / "scalper_volume.json"
+            if vol_path.exists():
+                self._volume_usd = float(json.loads(vol_path.read_text()).get("volume_usd", 0))
+                logger.info("[SCALP] Loaded cumulative volume: $%.2f", self._volume_usd)
+        except Exception as exc:
+            logger.warning("[SCALP] Could not load volume: %s", exc)
+
+    def _save_volume(self):
+        try:
+            self._data_dir.mkdir(parents=True, exist_ok=True)
+            vol_path = self._data_dir / "scalper_volume.json"
+            vol_path.write_text(json.dumps({"volume_usd": round(self._volume_usd, 2)}))
+        except Exception as exc:
+            logger.warning("[SCALP] Could not save volume: %s", exc)
 
     def _persist_trade(self, trade: dict):
         try:

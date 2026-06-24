@@ -781,14 +781,19 @@ def _build_page() -> str:
     # ── Scalper card ──────────────────────────────────────────────────────────
     scalper_data = status.get("scalper", {})
     if scalper_data:
-        _sc_total  = scalper_data.get("total_trades", 0)
-        _sc_wr     = scalper_data.get("win_rate", 0)
-        _sc_pnl    = scalper_data.get("total_pnl_eur", 0)
-        _sc_pnl_c  = "#00c851" if _sc_pnl >= 0 else "#ff4444"
+        _sc_total   = scalper_data.get("total_trades", 0)
+        _sc_wr      = scalper_data.get("win_rate", 0)
+        _sc_pnl     = scalper_data.get("total_pnl_eur", 0)
+        _sc_pnl_c   = "#00c851" if _sc_pnl >= 0 else "#ff4444"
+        _sc_vol     = scalper_data.get("volume_usd", 0)
+        _sc_fee     = scalper_data.get("taker_fee_pct", 0.26)
+        _sc_dtp     = scalper_data.get("dynamic_tp_pct", 0.58)
         scalper_stats = (
             f'<span class="badge" style="background:#21262d;color:#8b949e">{_sc_total} trades</span> &nbsp;'
             f'<span class="badge" style="background:#21262d;color:#8b949e">WR {_sc_wr:.0f}%</span> &nbsp;'
-            f'<span class="badge" style="background:{_sc_pnl_c}22;color:{_sc_pnl_c}">P&amp;L {_sc_pnl:+.4f} EUR</span>'
+            f'<span class="badge" style="background:{_sc_pnl_c}22;color:{_sc_pnl_c}">P&amp;L {_sc_pnl:+.4f} EUR</span> &nbsp;'
+            f'<span class="badge" style="background:#21262d;color:#8b949e">Vol ${_sc_vol:,.0f}</span> &nbsp;'
+            f'<span class="badge" style="background:#21262d;color:#58a6ff">Fee {_sc_fee:.2f}% &bull; TP {_sc_dtp:.2f}%</span>'
         )
         # Open positions
         _sc_pos = scalper_data.get("positions", {})
