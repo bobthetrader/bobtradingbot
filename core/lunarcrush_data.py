@@ -18,6 +18,7 @@ Signal logic:
   Strong 24h price change     → momentum confirmation ±0.5
 """
 
+import re
 import time
 import logging
 import requests
@@ -82,18 +83,24 @@ def get_trending_symbols() -> set:
     return symbols
 
 
-_REDDIT_SUBREDDITS = ["cryptocurrency", "bitcoin", "ethereum", "CryptoMarkets"]
+_REDDIT_SUBREDDITS = ["cryptocurrency", "CryptoMarkets"]   # neutral subreddits only
 _REDDIT_SYMBOL_ALIASES = {
-    "BTC": ["BTC", "Bitcoin", "BITCOIN"],
-    "ETH": ["ETH", "Ethereum", "ETHEREUM"],
-    "SOL": ["SOL", "Solana", "SOLANA"],
-    "XRP": ["XRP", "Ripple", "RIPPLE"],
-    "ADA": ["ADA", "Cardano", "CARDANO"],
-    "DOT": ["DOT", "Polkadot", "POLKADOT"],
-    "LINK": ["LINK", "Chainlink", "CHAINLINK"],
-    "AVAX": ["AVAX", "Avalanche", "AVALANCHE"],
-    "ATOM": ["ATOM", "Cosmos", "COSMOS"],
-    "UNI": ["UNI", "Uniswap", "UNISWAP"],
+    "BTC":  ["BTC", "BITCOIN"],
+    "ETH":  ["ETH", "ETHEREUM"],
+    "SOL":  ["SOL", "SOLANA"],
+    "XRP":  ["XRP", "RIPPLE"],
+    "ADA":  ["ADA", "CARDANO"],
+    "DOT":  ["DOT", "POLKADOT"],
+    "LINK": ["LINK", "CHAINLINK"],
+    "AVAX": ["AVAX", "AVALANCHE"],
+    "ATOM": ["ATOM", "COSMOS"],
+    "UNI":  ["UNI", "UNISWAP"],
+}
+# Pre-compile word-boundary patterns for each alias
+_REDDIT_PATTERNS: dict = {
+    sym: [re.compile(r'\b' + re.escape(alias) + r'\b', re.IGNORECASE)
+          for alias in aliases]
+    for sym, aliases in _REDDIT_SYMBOL_ALIASES.items()
 }
 
 
@@ -125,12 +132,12 @@ def get_reddit_mentions(symbols: list) -> dict:
 
             posts = resp.json().get("data", {}).get("children", [])
             for post in posts:
-                data = post.get("data", {})
-                text = (data.get("title", "") + " " + data.get("selftext", "")).upper()
+                pdata = post.get("data", {})
+                text  = pdata.get("title", "") + " " + pdata.get("selftext", "")
                 for sym in symbols:
-                    aliases = _REDDIT_SYMBOL_ALIASES.get(sym, [sym])
-                    for alias in aliases:
-                        mention_counts[sym] += text.count(alias.upper())
+                    patterns = _REDDIT_PATTERNS.get(sym, [])
+                    for pat in patterns:
+                        mention_counts[sym] += len(pat.findall(text))
         except Exception as exc:
             logger.debug("Reddit fetch failed for r/%s: %s", subreddit, exc)
 
