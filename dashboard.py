@@ -838,7 +838,44 @@ def _build_page() -> str:
         else:
             scalper_positions_html = '<div class="grey" style="padding:8px 0">No open scalp positions</div>'
 
-        scalper_html = ""
+        # Pair trend grid
+        _pair_scores = scalper_data.get("pair_scores", {})
+        _trend_cells = ""
+        for _tp in [
+            "XBTEUR","XETHZEUR","SOLEUR","XXRPZEUR","LINKEUR","AVAXEUR",
+            "ADAEUR","DOTEUR","ATOMEUR","UNIEUR",
+            "LTCEUR","BCHEUR","TRXEUR","XMREUR","AAVEEUR","NEAREUR",
+            "ALGOEUR","ETCEUR","SHIBEUR","ZECEUR",
+            "MKREUR","SNXEUR","OPEUR","ARBEUR","SANDEUR",
+            "MANAUER","INJEUR","FTMEUR","GALEUR","APEEUR",
+        ]:
+            _label = _tp.replace("XBTEUR","BTC").replace("XETHZEUR","ETH").replace("XXRPZEUR","XRP").replace("EUR","").replace("X","",1) if _tp.startswith("X") else _tp.replace("EUR","")
+            _sc = _pair_scores.get(_tp)
+            if _sc is None:
+                _arrow, _col = "·", "#8b949e"
+            elif _sc >= 1.5:
+                _arrow, _col = "▲", "#00c851"
+            elif _sc <= -1.5:
+                _arrow, _col = "▼", "#ff4444"
+            elif _sc > 0:
+                _arrow, _col = "↑", "#4caf50"
+            elif _sc < 0:
+                _arrow, _col = "↓", "#f44336"
+            else:
+                _arrow, _col = "–", "#8b949e"
+            _in_pos = "★ " if _tp in _sc_pos else ""
+            _trend_cells += (
+                f'<span style="display:inline-block;min-width:70px;margin:2px 4px;font-size:11px">'
+                f'<span style="color:{_col}">{_arrow}</span> '
+                f'<span style="color:#e6edf3">{_in_pos}{_label}</span>'
+                f'</span>'
+            )
+        _trend_grid = (
+            '<b style="color:#8b949e;font-size:11px">PAIR TRENDS</b><br>'
+            f'<div style="padding:6px 0 10px 0;line-height:2">{_trend_cells}</div>'
+        ) if _trend_cells else ""
+
+        scalper_html = _trend_grid
         if _pos_rows:
             scalper_html += (
                 '<b style="color:#8b949e;font-size:11px">OPEN POSITIONS</b>'

@@ -125,6 +125,7 @@ class ScalperEngine:
         self._positions: dict = {}     # pair → {qty, entry, ts, score}
         self._trade_log: list = []     # last 100 completed trades (in-memory)
         self._volume_usd: float = 0.0  # cumulative 30-day equivalent volume (USD)
+        self._pair_scores: dict = {}   # pair → latest score (+ bullish, - bearish)
 
         # Persistent paths
         self._pos_path    = self._data_dir / "scalper_positions.json"
@@ -156,6 +157,7 @@ class ScalperEngine:
         with self._lock:
             positions   = {p: dict(v) for p, v in self._positions.items()}
             recent      = list(self._trade_log[-20:])
+            pair_scores = dict(self._pair_scores)
         wins  = sum(1 for t in self._trade_log if t.get("pnl_eur", 0) > 0)
         total = len(self._trade_log)
         taker, round_trip, dynamic_tp = _fee_tier(self._volume_usd)
@@ -169,6 +171,7 @@ class ScalperEngine:
             "taker_fee_pct": taker,
             "round_trip_pct": round_trip,
             "dynamic_tp_pct": dynamic_tp,
+            "pair_scores":   pair_scores,
         }
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -221,6 +224,9 @@ class ScalperEngine:
             score = self._score_pair(pair)
             if score is None:
                 continue
+
+            with self._lock:
+                self._pair_scores[pair] = score
 
             price = self._get_price(pair)
             if price is None or price <= 0:
