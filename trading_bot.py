@@ -3889,6 +3889,16 @@ class TradingBot:
                                 _status["scalper"] = _sc.get_status()
                         except Exception:
                             pass
+                        # Ichimoku + Gaussian signals for dashboard
+                        if _ICHI_AVAILABLE:
+                            try:
+                                _ichi_status = {}
+                                for _ip in self.trade_pairs:
+                                    _isig = _ichi_get_signal(_ip, self.api_client)
+                                    _ichi_status[_ip] = _isig
+                                _status["ichi"] = _ichi_status
+                            except Exception:
+                                pass
                         with open(os.path.join(os.path.dirname(__file__), 'data', 'bot_status.json'), 'w') as _sf:
                             json.dump(_status, _sf)
                         self.logger.debug("Dashboard status written (loop %d)", iteration)

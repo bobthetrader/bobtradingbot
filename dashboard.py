@@ -145,6 +145,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </table>
     </div>
 
+    <!-- Ichimoku + Gaussian card -->
+    <div class="card">
+      <h2>Ichimoku + Gaussian &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">20/30/60 &bull; 1h candles</span></h2>
+      {ichi_html}
+    </div>
+
     <!-- Open positions card -->
     <div class="card">
       <h2>Open Positions</h2>
@@ -833,6 +839,49 @@ def _build_page() -> str:
     else:
         db_summary = "History DB: initialising…"
 
+    # ── Ichimoku + Gaussian card ──────────────────────────────────────────────
+    ichi_data = status.get("ichi", {})
+    if ichi_data:
+        _ichi_rows = ""
+        for _pair, _sig in ichi_data.items():
+            _vs  = _sig.get("price_vs_cloud", "unknown")
+            _trend = _sig.get("trend", "unknown")
+            _gauss = _sig.get("gaussian_buy", False)
+            _boost = _sig.get("score_boost", 0)
+            _cloud_top = _sig.get("cloud_top", 0)
+            _cloud_bot = _sig.get("cloud_bottom", 0)
+            if _vs == "above":
+                _vs_colour = "#00c851"
+                _vs_label  = "ABOVE"
+            elif _vs == "below":
+                _vs_colour = "#ff4444"
+                _vs_label  = "BELOW"
+            elif _vs == "inside":
+                _vs_colour = "#f0a500"
+                _vs_label  = "INSIDE"
+            else:
+                _vs_colour = "#8b949e"
+                _vs_label  = "—"
+            _gauss_html = ('<span style="color:#00c851">&#x25CF; BUY</span>'
+                           if _gauss else '<span style="color:#8b949e">—</span>')
+            _boost_html = (f'<span style="color:#58a6ff">+{_boost:.1f}</span>'
+                           if _boost > 0 else "")
+            _ichi_rows += (
+                f'<tr><td>{_pair}</td>'
+                f'<td><span style="color:{_vs_colour};font-weight:bold">{_vs_label}</span></td>'
+                f'<td style="color:#8b949e">{_trend}</td>'
+                f'<td style="color:#8b949e">{_cloud_bot:.2f} – {_cloud_top:.2f}</td>'
+                f'<td>{_gauss_html}</td>'
+                f'<td>{_boost_html}</td></tr>'
+            )
+        ichi_html = (
+            '<table><tr><th>Pair</th><th>Cloud</th><th>Trend</th>'
+            '<th>Cloud range</th><th>Gaussian</th><th>Boost</th></tr>'
+            + _ichi_rows + '</table>'
+        )
+    else:
+        ichi_html = '<div class="grey" style="padding:8px 0">Ichimoku data not yet available — appears after first 1h candle fetch</div>'
+
     # ── Circuit breaker banner ────────────────────────────────────────────────
     if status.get("circuit_breaker", False):
         _peak = status.get("peak_balance", 0)
@@ -893,6 +942,7 @@ def _build_page() -> str:
         circuit_breaker_banner  = circuit_breaker_banner,
         scalper_stats           = scalper_stats,
         scalper_html            = scalper_html,
+        ichi_html               = ichi_html,
     )
 
 
