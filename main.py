@@ -172,6 +172,23 @@ if __name__ == "__main__":
     # silently drift to live config.toml settings after the first reload.
     trading_bot = TradingBot(kraken, config, config_path=CONFIG_PATH)
 
+    # Start scalping engine (paper mode only for now, runs concurrently)
+    _scalper = None
+    if args.paper:
+        try:
+            from core.scalper import ScalperEngine
+            _ws_feed = getattr(trading_bot, 'ws_feed', None)
+            _data_dir = os.path.join(os.path.dirname(__file__), 'data')
+            _scalper = ScalperEngine(
+                kraken_api=kraken,
+                paper_mode=True,
+                data_dir=_data_dir,
+                ws_feed=_ws_feed,
+            )
+            _scalper.start()
+        except Exception as _se:
+            logger.warning("Scalper failed to start: %s", _se)
+
     if args.test:
         logger.info("Running test mode...")
         print("Testing Kraken API connection...")
