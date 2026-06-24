@@ -3472,7 +3472,7 @@ class TradingBot:
                     listing["kraken_pair"] = resolved_pair  # use confirmed pair name
                     if _add_to_watchlist(self._listing_watchlist, listing, initial_price):
                         self.logger.info(
-                            "NEW LISTING DETECTED: %s on Kraken @ %.6f EUR — buying in 60 min if trending up",
+                            "NEW LISTING DETECTED: %s on Kraken @ %.6f EUR — buying in 30 min if trending up",
                             symbol, initial_price
                         )
                         try:
@@ -3484,7 +3484,7 @@ class TradingBot:
                                 f"[NEW LISTING] {listing.get('name', symbol)[:60]}\n"
                                 f"Symbol: {symbol} | Source: {source_label}\n"
                                 f"Pair: {resolved_pair} @ {initial_price:.6f} EUR\n"
-                                f"Watching 60 min then buy if +2% trend"
+                                f"Watching 30 min then buy if +2% trend"
                             )
                         except Exception:
                             pass
@@ -3530,9 +3530,9 @@ class TradingBot:
                     to_remove.append(symbol)
                     continue
 
-                # Wait 60 min after detection before buying (let initial price settle)
+                # Wait 30 min after detection before buying (let initial price settle)
                 minutes_since_detection = (now - entry.get("detected_at", now)) / 60
-                if minutes_since_detection < 60:
+                if minutes_since_detection < 30:
                     continue
 
                 # Check trend — buy if up 2%+ from detection price
