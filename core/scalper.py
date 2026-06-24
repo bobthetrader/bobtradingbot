@@ -25,14 +25,14 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 _PAIRS          = ["XBTEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR", "LINKEUR", "AVAXEUR", "ADAEUR", "DOTEUR", "ATOMEUR", "UNIEUR"]
-_INTERVAL_SEC   = 30
+_INTERVAL_SEC   = 15
 _RSI_PERIOD     = 14
 _RSI_BUY        = 35.0
 _RSI_SELL       = 65.0
 _VWAP_CANDLES   = 30       # rolling window for VWAP calc
 _VWAP_THRESH    = 0.003    # 0.3% deviation from VWAP to signal
 _OB_IMBALANCE   = 0.20     # 20% bid/ask vol imbalance to signal
-_SCORE_THRESH   = 2        # minimum abs score to enter
+_SCORE_THRESH   = 1.5      # minimum abs score to enter
 _TP_PCT         = 0.70     # take-profit %
 _SL_PCT         = 0.35     # stop-loss %
 _ALLOCATION_EUR = 10.0     # paper EUR per scalp trade
