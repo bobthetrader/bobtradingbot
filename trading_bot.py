@@ -190,6 +190,12 @@ try:
 except ImportError:
     _OPTIMIZER_AVAILABLE = False
 
+try:
+    from core.ichimoku_gaussian import get_signal as _ichi_get_signal
+    _ICHI_AVAILABLE = True
+except ImportError:
+    _ICHI_AVAILABLE = False
+
 # NAS root â€” read from config [paths] nas_root, fallback to default mount point
 def _resolve_nas_root(config: dict) -> Path:
     return Path(config.get('paths', {}).get('nas_root', '/mnt/fritz_nas/Volume/kraken'))
@@ -3241,6 +3247,27 @@ class TradingBot:
             return
         if not self._is_mtf_macd_buy_aligned(pair):
             return
+        # Ichimoku + Gaussian gate
+        if _ICHI_AVAILABLE:
+            try:
+                _ichi = _ichi_get_signal(pair, self.api_client)
+                _vs_cloud = _ichi.get("price_vs_cloud", "unknown")
+                if _vs_cloud in ("inside", "below"):
+                    self.logger.info(
+                        "BUY skipped for %s: Ichimoku cloud (%s) — trend=%s cloud=%.4f-%.4f",
+                        pair, _vs_cloud, _ichi.get("trend"),
+                        _ichi.get("cloud_bottom", 0), _ichi.get("cloud_top", 0),
+                    )
+                    return
+                # Gaussian lower band touch within uptrend → boost score
+                if _ichi.get("score_boost", 0) > 0:
+                    score = score + _ichi["score_boost"]
+                    self.logger.info(
+                        "BUY boosted for %s: Gaussian lower band + Ichimoku bullish (+%.1f → score=%.2f)",
+                        pair, _ichi["score_boost"], score,
+                    )
+            except Exception as _ie:
+                self.logger.debug("Ichimoku gate error for %s: %s", pair, _ie)
         if not self._has_sufficient_volume(pair):
             return
         if any(g in (pair or '').upper() for g in self.reentry_guard_pairs):
