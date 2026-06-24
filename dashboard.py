@@ -189,7 +189,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
 
       <div class="card">
-        <h2>New Listings Monitor &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">30 min wait → buy if +2% → sell 12h</span></h2>
+        <h2>New Listings Monitor &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">30 min wait → buy if +1.2% → sell 12h</span></h2>
         {listings_html}
       </div>
 

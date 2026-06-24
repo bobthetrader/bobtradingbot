@@ -356,7 +356,7 @@ class TradingBot:
         self._assetpairs_last_check: float = 0.0
         self._assetpairs_check_interval: int = 7200  # AssetPairs: every 2 hours (1.1MB per call)
         self._listing_hold_hours: int = 12
-        self._listing_trend_pct: float = 2.0
+        self._listing_trend_pct: float = 1.2
         self._kraken_headlines: list = []
         # CoinGecko pre-watchlist — monitors new CoinGecko coins against Kraken
         self._coingecko_prewatchlist: dict = _load_prewatchlist() if _LISTINGS_AVAILABLE else {}
@@ -3495,7 +3495,7 @@ class TradingBot:
                                 f"[NEW LISTING] {listing.get('name', symbol)[:60]}\n"
                                 f"Symbol: {symbol} | Source: {source_label}\n"
                                 f"Pair: {resolved_pair} @ {initial_price:.6f} EUR\n"
-                                f"Watching 30 min then buy if +2% trend"
+                                f"Watching 30 min then buy if +1.2% trend"
                             )
                         except Exception:
                             pass
