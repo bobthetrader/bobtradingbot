@@ -56,6 +56,7 @@ _REST_TO_WS = {
     "LINKEUR":  "LINK/EUR",
     "MATICEUR": "MATIC/EUR",
     "POLEUR":   "POL/EUR",
+    "AVAXEUR":  "AVAX/EUR",
 }
 
 _WS_URL = "wss://ws.kraken.com/v2"

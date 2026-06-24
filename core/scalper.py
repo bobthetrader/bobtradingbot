@@ -1,6 +1,6 @@
 """Scalping strategy — daemon thread alongside the main bot.
 
-Fast loop (30 s). Trades BTC/EUR and ETH/EUR only.
+Fast loop (30 s). Trades BTC, ETH, SOL, XRP, LINK, AVAX EUR pairs.
 Paper-only: positions tracked in data/scalper_positions.json.
 
 Signals (scored, threshold ±2 to enter):
@@ -24,7 +24,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_PAIRS          = ["XBTEUR", "XETHZEUR"]
+_PAIRS          = ["XBTEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR", "LINKEUR", "AVAXEUR"]
 _INTERVAL_SEC   = 30
 _RSI_PERIOD     = 14
 _RSI_BUY        = 35.0
