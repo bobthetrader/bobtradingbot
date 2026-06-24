@@ -75,6 +75,7 @@ logger = logging.getLogger(__name__)
 
 _INTEL_LOG = os.path.join(os.path.dirname(__file__), "..", "data", "intelligence_log.jsonl")
 _INTEL_LOG_KEEP = 200   # max entries to retain
+_intel_call_count = 0   # incremented each panel run; expensive models skip odd calls
 
 
 def _load_recent_intel(n: int = 5) -> list:
@@ -106,7 +107,9 @@ def _append_intel_log(entry: dict) -> None:
         logger.debug("Intel log write failed: %s", exc)
 
 # ── Model registry ─────────────────────────────────────────────────────────────
-# (id, display_name, weight, role, system_prompt)
+# (id, display_name, weight, role, system_prompt, expensive)
+# expensive=True → only called every other panel run (every 20 min)
+# expensive=False → called every run (every 10 min)
 _OPENROUTER_MODELS = [
     (
         "nousresearch/hermes-3-llama-3.1-70b",
@@ -120,6 +123,7 @@ _OPENROUTER_MODELS = [
             "Reply with exactly: 'Score: X. Strategy: <one sentence>.' "
             "where X is an integer -5 (strongly reduce exposure) to +5 (strongly increase exposure)."
         ),
+        True,   # expensive — every 20 min
     ),
     (
         "perplexity/sonar",
@@ -133,6 +137,7 @@ _OPENROUTER_MODELS = [
             "Based on what you find, reply with exactly: 'Score: X. News: <one sentence summary>.' "
             "where X is an integer -5 (very negative news) to +5 (very positive news)."
         ),
+        True,   # expensive — every 20 min
     ),
     (
         "deepseek/deepseek-r1",
@@ -146,6 +151,7 @@ _OPENROUTER_MODELS = [
             "Reply with exactly: 'Score: X. Analysis: <one sentence>.' "
             "where X is an integer -5 (strongly bearish technically) to +5 (strongly bullish technically)."
         ),
+        True,   # expensive — every 20 min
     ),
     (
         "meta-llama/llama-3.1-8b-instruct",
@@ -158,6 +164,7 @@ _OPENROUTER_MODELS = [
             "Reply with exactly: 'Score: X. Sentiment: <three words>.' "
             "where X is an integer -5 (extreme fear/bearish) to +5 (extreme greed/bullish)."
         ),
+        False,  # cheap — every 10 min
     ),
     (
         "openai/gpt-4o-mini",
@@ -170,6 +177,7 @@ _OPENROUTER_MODELS = [
             "reply with exactly: 'Score: X. Reason: <one sentence>.' "
             "where X is an integer -5 (very bearish) to +5 (very bullish)."
         ),
+        False,  # cheap — every 10 min
     ),
 ]
 
@@ -482,9 +490,18 @@ def get_market_intelligence(pairs: list, bot_context: dict = None) -> dict:
             model_scores[name]  = score
         logger.debug("Model %s → score=%.1f text=%s", name, score, (text or "")[:80])
 
-    # Launch all OpenRouter models in parallel
+    # Launch models in parallel — expensive models only on even-numbered calls
+    global _intel_call_count
+    _intel_call_count += 1
+    run_expensive = (_intel_call_count % 2 == 1)  # True on calls 1, 3, 5 … (every 20 min)
+    logger.info("AI panel call #%d — expensive models: %s", _intel_call_count, run_expensive)
+
     threads = []
-    for model_id, name, _weight, _role, system in _OPENROUTER_MODELS:
+    for model_id, name, _weight, _role, system, expensive in _OPENROUTER_MODELS:
+        if expensive and not run_expensive:
+            model_outputs[name] = "skipped"
+            model_scores[name]  = 0.0
+            continue
         t = threading.Thread(target=_run, args=(model_id, name, system), daemon=True)
         threads.append(t)
         t.start()
@@ -494,7 +511,7 @@ def get_market_intelligence(pairs: list, bot_context: dict = None) -> dict:
         t.join(timeout=20)
 
     # Weighted average over models that responded
-    weight_map = {name: w for _, name, w, _, _ in _OPENROUTER_MODELS}
+    weight_map = {name: w for _, name, w, _, _, _ in _OPENROUTER_MODELS}
 
     total_weight = 0.0
     weighted_sum = 0.0
