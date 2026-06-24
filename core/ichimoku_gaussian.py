@@ -120,7 +120,9 @@ def _compute(candles: list) -> dict:
     else:
         recent_std    = _std(closes[-_GAUSS_PERIOD:])
         lower_band    = gma - _GAUSS_MULT * recent_std
-        gaussian_buy  = price <= lower_band * (1 + _GAUSS_NEAR)
+        upper_band    = gma + _GAUSS_MULT * recent_std
+        # True only when price is within GAUSS_NEAR% of the lower band (touching, not crashed below)
+        gaussian_buy  = (lower_band * (1 - _GAUSS_NEAR) <= price <= lower_band * (1 + _GAUSS_NEAR))
         score_boost   = 1.5 if (gaussian_buy and trend == "bullish") else 0.0
 
     return {
@@ -133,6 +135,8 @@ def _compute(candles: list) -> dict:
         "span_a":        round(span_a, 6),
         "span_b":        round(span_b_val, 6),
         "gma":           round(gma, 6) if gma else None,
+        "gauss_upper":   round(upper_band, 6) if gma else None,
+        "gauss_lower":   round(lower_band, 6) if gma else None,
         "gaussian_buy":  gaussian_buy,
         "score_boost":   score_boost,
         "price":         round(price, 6),
