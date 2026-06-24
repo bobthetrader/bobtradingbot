@@ -24,7 +24,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_PAIRS          = ["XBTEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR", "LINKEUR", "AVAXEUR", "ADAEUR", "DOTEUR", "ATOMEUR"]
+_PAIRS          = ["XBTEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR", "LINKEUR", "AVAXEUR", "ADAEUR", "DOTEUR", "ATOMEUR", "UNIEUR"]
 _INTERVAL_SEC   = 30
 _RSI_PERIOD     = 14
 _RSI_BUY        = 35.0

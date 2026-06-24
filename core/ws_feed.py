@@ -58,6 +58,7 @@ _REST_TO_WS = {
     "POLEUR":   "POL/EUR",
     "AVAXEUR":  "AVAX/EUR",
     "ATOMEUR":  "ATOM/EUR",
+    "UNIEUR":   "UNI/EUR",
 }
 
 _WS_URL = "wss://ws.kraken.com/v2"
