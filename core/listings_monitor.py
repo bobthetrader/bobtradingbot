@@ -115,7 +115,8 @@ def fetch_new_kraken_listings(hours_lookback: int = 48) -> list:
                     symbol + "EUR",
                     "X" + symbol + "ZEUR",
                     "X" + symbol + "EUR",
-                    symbol + "USDT",   # fallback if no EUR pair
+                    symbol + "USD",    # Kraken USD pairs (e.g. NESUSD)
+                    symbol + "USDT",
                 ],
             })
 
@@ -188,6 +189,7 @@ def fetch_kraken_blog_listings(hours_lookback: int = 48) -> list:
                         symbol + "EUR",
                         "X" + symbol + "ZEUR",
                         "X" + symbol + "EUR",
+                        symbol + "USD",    # Kraken USD pairs (e.g. NESUSD)
                         symbol + "USDT",
                     ],
                 })
