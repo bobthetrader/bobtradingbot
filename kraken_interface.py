@@ -261,6 +261,11 @@ class KrakenAPI:
         """
         if self.paper_mode:
             return {'ZEUR': str(self._paper_balance_eur)}
+
+    def adjust_paper_balance(self, delta_eur: float) -> None:
+        """Add or subtract EUR from the paper balance (used by scalper)."""
+        if self.paper_mode:
+            self._paper_balance_eur = max(0.0, self._paper_balance_eur + delta_eur)
         try:
             now = time.time()
             if self._balance_cache_val is not None and (now - self._balance_cache_ts) < self._balance_cache_ttl:

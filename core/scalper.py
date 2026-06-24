@@ -290,6 +290,11 @@ class ScalperEngine:
                 "score": score,
             }
         self._save_positions()
+        # Deduct allocation from paper balance
+        try:
+            self._api.adjust_paper_balance(-_ALLOCATION_EUR)
+        except Exception:
+            pass
         logger.info(
             "[SCALP] BUY  %s @ %.6f  qty=%.8f  score=%.1f  (paper)",
             pair, price, qty, score,
@@ -314,6 +319,12 @@ class ScalperEngine:
             "reason":   reason,
             "held_min": round(held_min, 1),
         }
+        # Return allocation + P&L to paper balance (allocation was deducted on buy)
+        try:
+            self._api.adjust_paper_balance(_ALLOCATION_EUR + pnl_eur)
+        except Exception:
+            pass
+
         # Accumulate trade volume (EUR → approximate USD, update _EUR_USD_APPROX if rate drifts)
         trade_value_usd = price * pos["qty"] * 1.10
         self._volume_usd += trade_value_usd
