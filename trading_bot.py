@@ -3868,6 +3868,16 @@ class TradingBot:
                             for _sym, _wl in getattr(self, '_listing_watchlist', {}).items():
                                 _lpair = _wl.get("kraken_pair", _sym + "EUR")
                                 _lcur  = float(self.pair_prices.get(_lpair, 0) or 0)
+                                # If pair not in main price feed, fetch directly
+                                if _lcur == 0:
+                                    try:
+                                        _lmd = self.api_client.get_market_data(_lpair)
+                                        if _lmd:
+                                            _lk = next(iter(_lmd), None)
+                                            if _lk:
+                                                _lcur = float(_lmd[_lk]["c"][0])
+                                    except Exception:
+                                        pass
                                 _linit = float(_wl.get("initial_price", 0) or 0)
                                 _lqty  = float(self.position_qty.get(_lpair, 0) or 0)
                                 _lbuy  = float(_wl.get("buy_price") or 0)
