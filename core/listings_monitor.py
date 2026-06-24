@@ -115,7 +115,9 @@ def fetch_new_kraken_listings(hours_lookback: int = 48) -> list:
                     symbol + "EUR",
                     "X" + symbol + "ZEUR",
                     "X" + symbol + "EUR",
-                    symbol + "USD",    # Kraken USD pairs (e.g. NESUSD)
+                    symbol + "USD",        # e.g. NESUSD
+                    "X" + symbol + "ZUSD", # e.g. XXBTZUSD (older Kraken format)
+                    "X" + symbol + "USD",  # e.g. XNESUSD
                     symbol + "USDT",
                 ],
             })
