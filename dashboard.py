@@ -157,6 +157,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {positions_html}
     </div>
 
+    <!-- Scalper open positions card -->
+    <div class="card">
+      <h2>Scalper Positions &nbsp; {scalper_stats}</h2>
+      {scalper_positions_html}
+    </div>
+
     <!-- Monthly return card -->
     <div class="card full">
       <h2>Monthly Return Target &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Goal: +3% to +8% per month</span></h2>
@@ -806,6 +812,15 @@ def _build_page() -> str:
                 f'<td style="color:{_tc}">{_t.get("pnl_pct",0):+.3f}%</td>'
                 f'<td>{_t.get("reason","")}</td><td>{_t.get("held_min",0):.1f}m</td></tr>'
             )
+        # Compact positions-only html for the top card
+        if _pos_rows:
+            scalper_positions_html = (
+                '<table><tr><th>Pair</th><th>Entry</th><th>Qty</th><th>Held</th><th>Score</th></tr>'
+                + _pos_rows + '</table>'
+            )
+        else:
+            scalper_positions_html = '<div class="grey" style="padding:8px 0">No open scalp positions</div>'
+
         scalper_html = ""
         if _pos_rows:
             scalper_html += (
@@ -821,10 +836,11 @@ def _build_page() -> str:
                 + _trade_rows + '</table>'
             )
         if not scalper_html:
-            scalper_html = '<div class="grey" style="padding:8px 0">No scalp trades yet — waiting for signal score &ge;2</div>'
+            scalper_html = '<div class="grey" style="padding:8px 0">No scalp trades yet — waiting for signal score &ge;1.5</div>'
     else:
-        scalper_stats = '<span class="badge" style="background:#21262d;color:#8b949e">not running</span>'
-        scalper_html  = '<div class="grey" style="padding:8px 0">Scalper engine not active (paper mode only)</div>'
+        scalper_stats          = '<span class="badge" style="background:#21262d;color:#8b949e">not running</span>'
+        scalper_positions_html = '<div class="grey" style="padding:8px 0">Scalper not active</div>'
+        scalper_html           = '<div class="grey" style="padding:8px 0">Scalper engine not active (paper mode only)</div>'
 
     # ── DB stats ──────────────────────────────────────────────────────────────
     db_stats = status.get("db_stats", {})
@@ -942,6 +958,7 @@ def _build_page() -> str:
         circuit_breaker_banner  = circuit_breaker_banner,
         scalper_stats           = scalper_stats,
         scalper_html            = scalper_html,
+        scalper_positions_html  = scalper_positions_html,
         ichi_html               = ichi_html,
     )
 
