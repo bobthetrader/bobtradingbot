@@ -32,7 +32,7 @@ mr_rsi_overbought_threshold = 70     # Only sell genuine overbought (RSI > 70)
 break_even_trigger_percent = 1.0     # Move SL to entry only after +1.0% gain
 max_consecutive_losses = 5
 pause_after_loss_streak_minutes = 0
-max_open_positions = 4
+max_open_positions = 8
 
 [intelligence]
 refresh_seconds = 600
