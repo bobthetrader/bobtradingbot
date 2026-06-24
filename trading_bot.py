@@ -3120,7 +3120,9 @@ class TradingBot:
         self._refresh_cashflows_from_ledger()
         adjusted_pnl = self._adjusted_pnl_eur(current_balance)
         try:
-            holdings_value  = sum(self.holdings.get(p, 0.0) * self.pair_prices.get(p, 0.0)
+            holdings_value  = sum(
+                                  (self.position_qty.get(p, 0.0) or self.holdings.get(p, 0.0))
+                                  * self.pair_prices.get(p, 0.0)
                                   for p in self.trade_pairs)
             reserve         = self._estimate_open_buy_reserve_eur()
             portfolio_value = current_balance + holdings_value + reserve
@@ -3143,7 +3145,7 @@ class TradingBot:
                     # Force-close all open positions
                     _cb_sold = False
                     for _cb_pair in list(self.trade_pairs):
-                        _cb_qty = self.holdings.get(_cb_pair, 0.0)
+                        _cb_qty = self.position_qty.get(_cb_pair, 0.0) or self.holdings.get(_cb_pair, 0.0)
                         _cb_price = self.pair_prices.get(_cb_pair, 0.0)
                         if _cb_qty >= self._get_min_volume(_cb_pair) and _cb_price > 0:
                             self.logger.warning("CIRCUIT BREAKER: closing %s @ %.4f", _cb_pair, _cb_price)

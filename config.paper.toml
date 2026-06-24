@@ -12,7 +12,7 @@ trade_pairs = [ "XXBTZEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR", "ADAEUR", "DOTEUR"
 allocation_per_trade_percent = 5.0
 
 [risk_management]
-max_drawdown_percent = 10.0
+max_drawdown_percent = 8.0
 stop_loss_percent = 1.5              # Wider SL — volatile market needs more room
 allocation_per_trade_percent = 5.0  # 5% = ~5 EUR per trade, 4 positions max
 min_trade_eur = 4.0
@@ -32,7 +32,7 @@ mr_rsi_overbought_threshold = 70     # Only sell genuine overbought (RSI > 70)
 break_even_trigger_percent = 1.0     # Move SL to entry only after +1.0% gain
 max_consecutive_losses = 5
 pause_after_loss_streak_minutes = 0
-max_open_positions = 8
+max_open_positions = 3
 
 [intelligence]
 refresh_seconds = 600
