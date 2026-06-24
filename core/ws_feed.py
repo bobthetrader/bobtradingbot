@@ -59,6 +59,32 @@ _REST_TO_WS = {
     "AVAXEUR":  "AVAX/EUR",
     "ATOMEUR":  "ATOM/EUR",
     "UNIEUR":   "UNI/EUR",
+    # Tier 2
+    "LTCEUR":   "LTC/EUR",
+    "XLTCZEUR": "LTC/EUR",
+    "BCHEUR":   "BCH/EUR",
+    "TRXEUR":   "TRX/EUR",
+    "XMREUR":   "XMR/EUR",
+    "XXMRZEUR": "XMR/EUR",
+    "AAVEEUR":  "AAVE/EUR",
+    "NEAREUR":  "NEAR/EUR",
+    "ALGOEUR":  "ALGO/EUR",
+    "ETCEUR":   "ETC/EUR",
+    "XETCZEUR": "ETC/EUR",
+    "SHIBEUR":  "SHIB/EUR",
+    "ZECEUR":   "ZEC/EUR",
+    "XZECZEUR": "ZEC/EUR",
+    # Tier 3
+    "MKREUR":   "MKR/EUR",
+    "SNXEUR":   "SNX/EUR",
+    "OPEUR":    "OP/EUR",
+    "ARBEUR":   "ARB/EUR",
+    "SANDEUR":  "SAND/EUR",
+    "MANAUER":  "MANA/EUR",
+    "INJEUR":   "INJ/EUR",
+    "FTMEUR":   "FTM/EUR",
+    "GALEUR":   "GALA/EUR",
+    "APEEUR":   "APE/EUR",
 }
 
 _WS_URL = "wss://ws.kraken.com/v2"

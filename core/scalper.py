@@ -24,7 +24,17 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_PAIRS          = ["XBTEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR", "LINKEUR", "AVAXEUR", "ADAEUR", "DOTEUR", "ATOMEUR", "UNIEUR"]
+_PAIRS          = [
+    # Tier 1 — highest liquidity
+    "XBTEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR", "LINKEUR", "AVAXEUR",
+    "ADAEUR", "DOTEUR", "ATOMEUR", "UNIEUR",
+    # Tier 2 — high volume
+    "LTCEUR", "BCHEUR", "TRXEUR", "XMREUR", "AAVEEUR", "NEAREUR",
+    "ALGOEUR", "ETCEUR", "SHIBEUR", "ZECEUR",
+    # Tier 3 — good volume
+    "MKREUR", "SNXEUR", "OPEUR", "ARBEUR", "SANDEUR",
+    "MANAUER", "INJEUR", "FTMEUR", "GALEUR", "APEEUR",
+]
 _INTERVAL_SEC   = 15
 _RSI_PERIOD     = 14
 _RSI_BUY        = 35.0
