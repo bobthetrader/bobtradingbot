@@ -503,7 +503,7 @@ def fetch_coingecko_new_coins(per_page: int = 100) -> list:
             if cid and cid not in known_ids:
                 symbol = (coin.get("symbol") or "").upper()
                 name   = coin.get("name", symbol)
-                if symbol and len(symbol) <= 12 and symbol not in _EXCLUDE_WORDS:
+                if symbol and 2 <= len(symbol) <= 6 and symbol not in _EXCLUDE_WORDS:
                     new_coins.append({
                         "coingecko_id": cid,
                         "symbol":       symbol,
