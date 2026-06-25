@@ -358,8 +358,9 @@ class TradingBot:
         self._listing_hold_hours: int = 12
         self._listing_trend_pct: float = 0.8
         self._listing_stop_loss_pct: float = 1.0    # dump if down this much from buy
-        self._listing_fee_pct: float = 0.52          # Kraken round-trip fee
-        self._listing_pullback_pct: float = 0.5     # sell if pulled back this much from peak while above fees
+        self._listing_fee_pct: float = 0.52          # minimum above buy to consider selling
+        self._listing_profit_target_pct: float = 8.0 # take profit at +8% for slow climbers
+        self._listing_pullback_pct: float = 0.5     # trailing stop: sell if pulled back this much from peak
         self._kraken_headlines: list = []
         # CoinGecko pre-watchlist — monitors new CoinGecko coins against Kraken
         self._coingecko_prewatchlist: dict = _load_prewatchlist() if _LISTINGS_AVAILABLE else {}
@@ -3575,20 +3576,38 @@ class TradingBot:
                         to_remove.append(symbol)
                         continue
 
-                    # Fee recovery — sell if above fee breakeven and pulling back from peak
-                    if change_from_buy >= self._listing_fee_pct:
-                        peak = self.peak_prices.get(pair, current_price)
-                        self.peak_prices[pair] = max(peak, current_price)
-                        pullback = (self.peak_prices[pair] - current_price) / self.peak_prices[pair] * 100
+                    # Update peak price tracker
+                    peak = self.peak_prices.get(pair, current_price)
+                    self.peak_prices[pair] = max(peak, current_price)
+                    peak = self.peak_prices[pair]
+                    pullback = (peak - current_price) / peak * 100 if peak > 0 else 0
+
+                    # Profit target — sell slow climbers at +8%
+                    if change_from_buy >= 8.0:
+                        # Big mover: use trailing stop (0.5% pullback from peak)
                         if pullback >= self._listing_pullback_pct:
                             self.logger.info(
-                                "NEW LISTING FEE RECOVERY: %s pulled back %.2f%% from peak "
-                                "(%.2f%% above buy) — selling to lock in gain",
+                                "NEW LISTING TRAILING STOP: %s pulled back %.2f%% from peak "
+                                "(%.2f%% above buy) — locking in gain",
                                 symbol, pullback, change_from_buy,
                             )
                             self.execute_sell_order(pair, current_price,
                                                     require_profit_target=False,
-                                                    reason="LISTING_FEE_RECOVERY")
+                                                    reason="LISTING_TRAILING_STOP")
+                            if pair in self.trade_pairs and pair not in self._core_trade_pairs:
+                                self.trade_pairs.remove(pair)
+                            to_remove.append(symbol)
+                            continue
+                    elif change_from_buy >= self._listing_fee_pct:
+                        # Slow climber: take profit at +8% target or trailing stop
+                        if pullback >= self._listing_pullback_pct:
+                            self.logger.info(
+                                "NEW LISTING PROFIT TAKE: %s +%.2f%% — selling on pullback",
+                                symbol, change_from_buy,
+                            )
+                            self.execute_sell_order(pair, current_price,
+                                                    require_profit_target=False,
+                                                    reason="LISTING_PROFIT_TAKE")
                             if pair in self.trade_pairs and pair not in self._core_trade_pairs:
                                 self.trade_pairs.remove(pair)
                             to_remove.append(symbol)
