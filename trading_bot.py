@@ -3130,26 +3130,27 @@ class TradingBot:
         # Portfolio valuation and drawdown circuit-breaker
         self._refresh_cashflows_from_ledger()
         adjusted_pnl = self._adjusted_pnl_eur(current_balance)
+        holdings_value = 0.0
         try:
-            holdings_value  = sum(
-                                  (self.position_qty.get(p, 0.0) or self.holdings.get(p, 0.0))
-                                  * self.pair_prices.get(p, 0.0)
-                                  for p in self.trade_pairs)
-            # Include open scalper positions so their deployed cash isn't
-            # misread as a portfolio loss by the circuit breaker
-            _sc = getattr(self, '_scalper', None)
-            if _sc is not None:
-                try:
-                    for _scp, _scv in _sc.get_status().get('positions', {}).items():
-                        _sc_qty   = float(_scv.get('qty', 0))
-                        _sc_price = self.pair_prices.get(_scp, float(_scv.get('entry', 0)))
-                        holdings_value += _sc_qty * _sc_price
-                except Exception:
-                    pass
-            reserve         = self._estimate_open_buy_reserve_eur()
-            portfolio_value = current_balance + holdings_value + reserve
+            holdings_value = float(sum(
+                (self.position_qty.get(p, 0.0) or self.holdings.get(p, 0.0))
+                * self.pair_prices.get(p, 0.0)
+                for p in self.trade_pairs
+            ))
         except Exception:
-            portfolio_value = current_balance
+            pass
+        # Include open scalper positions — their deployed cash is not a loss
+        _sc = getattr(self, '_scalper', None)
+        if _sc is not None:
+            try:
+                for _scp, _scv in _sc.get_status().get('positions', {}).items():
+                    _sc_qty   = float(_scv.get('qty', 0) or 0)
+                    _sc_price = float(self.pair_prices.get(_scp) or _scv.get('entry') or 0)
+                    holdings_value += _sc_qty * _sc_price
+            except Exception as _sce:
+                self.logger.debug("Scalper portfolio calc error: %s", _sce)
+        reserve = float(self._estimate_open_buy_reserve_eur() or 0)
+        portfolio_value = float(current_balance or 0) + holdings_value + reserve
 
         try:
             self.peak_balance = max(getattr(self, 'peak_balance', portfolio_value), portfolio_value)
@@ -3158,11 +3159,13 @@ class TradingBot:
                 max_dd_cfg = float(self.config.get('risk_management', {}).get('max_drawdown_percent', 10.0))
                 if current_dd_pct >= max_dd_cfg and not self._circuit_breaker_triggered:
                     self._circuit_breaker_triggered = True
-                    # Pause all buying indefinitely until manually reset
-                    self.trading_paused_until_ts = int(time.time()) + 86400  # 24h hard pause
+                    self.trading_paused_until_ts = int(time.time()) + 86400
                     self.logger.warning(
-                        "CIRCUIT BREAKER: drawdown %.2f%% >= %.2f%%. Closing all positions.",
+                        "CIRCUIT BREAKER: drawdown %.2f%% >= %.2f%%. "
+                        "cash=%.2f holdings=%.2f reserve=%.2f portfolio=%.2f peak=%.2f",
                         current_dd_pct, max_dd_cfg,
+                        float(current_balance or 0), holdings_value, reserve,
+                        portfolio_value, self.peak_balance,
                     )
                     # Force-close all open positions
                     _cb_sold = False
