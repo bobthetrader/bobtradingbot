@@ -452,7 +452,7 @@ def _build_page() -> str:
             f'</div>' + pos_table
         )
     else:
-        alpaca_html = '<div class="grey" style="padding:8px 0">Add ALPACA_API_KEY, ALPACA_API_SECRET and ALPACA_BASE_URL to Railway Variables to enable.</div>'
+        alpaca_html = '<div class="grey" style="padding:8px 0">Alpaca not configured — set ALPACA_API_KEY, ALPACA_API_SECRET, ALPACA_BASE_URL in .env to enable.</div>'
 
     # ── Kraken news ───────────────────────────────────────────────────────────
     headlines = status.get("kraken_headlines", [])
@@ -628,7 +628,7 @@ def _build_page() -> str:
             + sharpe_rows + '</table>' + ins_str
         )
     else:
-        sharpe_html = '<div class="grey" style="padding:8px 0">Add SHARPE_API_KEY to Railway Variables to enable institutional derivatives data.</div>'
+        sharpe_html = '<div class="grey" style="padding:8px 0">Sharpe.ai derivatives data loading — refreshes every 10 minutes.</div>'
 
     # ── AI model panel ────────────────────────────────────────────────────────
     model_scores  = status.get("model_scores", {})
