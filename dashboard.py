@@ -868,7 +868,16 @@ def _build_page() -> str:
             "MKREUR","SNXEUR","OPEUR","ARBEUR","SANDEUR",
             "MANAUER","INJEUR","FTMEUR","GALEUR","APEEUR",
         ]:
-            _label = _tp.replace("XBTEUR","BTC").replace("XETHZEUR","ETH").replace("XXRPZEUR","XRP").replace("EUR","").replace("X","",1) if _tp.startswith("X") else _tp.replace("EUR","")
+            _label = {
+                "XBTEUR":"BTC","XETHZEUR":"ETH","XXRPZEUR":"XRP","XMREUR":"XMR",
+                "SOLEUR":"SOL","LINKEUR":"LINK","AVAXEUR":"AVAX","ADAEUR":"ADA",
+                "DOTEUR":"DOT","ATOMEUR":"ATOM","UNIEUR":"UNI","LTCEUR":"LTC",
+                "BCHEUR":"BCH","TRXEUR":"TRX","AAVEEUR":"AAVE","NEAREUR":"NEAR",
+                "ALGOEUR":"ALGO","ETCEUR":"ETC","SHIBEUR":"SHIB","ZECEUR":"ZEC",
+                "MKREUR":"MKR","SNXEUR":"SNX","OPEUR":"OP","ARBEUR":"ARB",
+                "SANDEUR":"SAND","MANAUER":"MANA","INJEUR":"INJ","FTMEUR":"FTM",
+                "GALEUR":"GAL","APEEUR":"APE",
+            }.get(_tp, _tp)
             _sc = _pair_scores.get(_tp)
             if _sc is None:
                 _arrow, _col = "·", "#8b949e"
