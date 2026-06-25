@@ -37,12 +37,12 @@ _PAIRS          = [
 ]
 _INTERVAL_SEC   = 15
 _RSI_PERIOD     = 14
-_RSI_BUY        = 35.0
-_RSI_SELL       = 65.0
+_RSI_BUY        = 28.0     # tightened: only buy extremely oversold
+_RSI_SELL       = 72.0     # tightened: only sell extremely overbought
 _VWAP_CANDLES   = 30       # rolling window for VWAP calc
 _VWAP_THRESH    = 0.003    # 0.3% deviation from VWAP to signal
 _OB_IMBALANCE   = 0.20     # 20% bid/ask vol imbalance to signal
-_SCORE_THRESH   = 1.5      # minimum abs score to enter
+_SCORE_THRESH   = 2.5      # raised: require stronger combined signal
 _TP_PCT         = 0.58     # take-profit % (base — adjusted dynamically by fee tier)
 _SL_PCT         = 0.20     # stop-loss %
 _ALLOCATION_EUR = 10.0     # paper EUR per scalp trade
@@ -217,7 +217,30 @@ class ScalperEngine:
 
     # ── Entry logic ───────────────────────────────────────────────────────────
 
+    def _is_bear_market(self) -> bool:
+        """Returns True if BTC 1h trend is bearish — skip new longs in downtrend."""
+        try:
+            ohlc = self._api.get_ohlc_data("XBTEUR", interval=60)
+            if not ohlc:
+                return False
+            key = next((k for k in ohlc if k != "last"), None)
+            if not key:
+                return False
+            closes = [float(r[4]) for r in ohlc[key][-20:]]
+            if len(closes) < 10:
+                return False
+            # Bear if 10-period EMA is falling
+            ema = closes[0]
+            for c in closes[1:]:
+                ema = ema * 0.8 + c * 0.2
+            return closes[-1] < closes[-5]  # price lower than 5 candles ago
+        except Exception:
+            return False
+
     def _scan_entries(self):
+        if self._is_bear_market():
+            logger.debug("[SCALP] Bear market detected — skipping new long entries")
+            return
         for pair in _PAIRS:
             with self._lock:
                 has_position = pair in self._positions
