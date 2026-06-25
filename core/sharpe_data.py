@@ -14,6 +14,7 @@ Set SHARPE_API_KEY in .env on the server.
 """
 
 import os
+import json
 import time
 import logging
 import threading
@@ -25,6 +26,51 @@ logger = logging.getLogger(__name__)
 _BASE_URL = "https://www.sharpe.ai/api"
 _CACHE: dict = {}
 _CACHE_TTL = 540   # 9 minutes
+
+_MONTHLY_LIMIT = 10_000   # per key
+_QUOTA_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "sharpe_quota.json")
+_quota_lock = threading.Lock()
+
+
+def _api_keys() -> list:
+    """Return list of configured Sharpe.ai keys (supports up to 2 for quota rotation)."""
+    keys = []
+    for var in ("SHARPE_API_KEY", "SHARPE_API_KEY_2"):
+        k = os.getenv(var, "").strip()
+        if k:
+            keys.append(k)
+    return keys
+
+
+def _get_key_for_request() -> str:
+    """Pick whichever key has remaining quota this month, alternating between them."""
+    keys = _api_keys()
+    if not keys:
+        return ""
+    with _quota_lock:
+        try:
+            now = time.localtime()
+            month_key = f"{now.tm_year}-{now.tm_mon:02d}"
+            quota = {}
+            if os.path.exists(_QUOTA_FILE):
+                try:
+                    quota = json.loads(open(_QUOTA_FILE).read())
+                except Exception:
+                    quota = {}
+            if quota.get("month") != month_key:
+                quota = {"month": month_key, "key0": 0, "key1": 0}
+            # Pick key with fewest calls this month
+            counts = [quota.get(f"key{i}", 0) for i in range(len(keys))]
+            idx = counts.index(min(counts))
+            if counts[idx] >= _MONTHLY_LIMIT:
+                logger.warning("Sharpe.ai all keys exhausted (%s calls) — skipping", counts)
+                return ""
+            quota[f"key{idx}"] = counts[idx] + 1
+            os.makedirs(os.path.dirname(_QUOTA_FILE), exist_ok=True)
+            open(_QUOTA_FILE, "w").write(json.dumps(quota))
+            return keys[idx]
+        except Exception:
+            return keys[0]  # fail open
 
 _PAIR_TO_COIN = {
     "XBTEUR":   "BTC",
@@ -41,7 +87,7 @@ _PAIR_TO_COIN = {
 
 
 def _api_key() -> str:
-    return os.getenv("SHARPE_API_KEY", "")
+    return _get_key_for_request()
 
 
 def _get(path: str, params: dict = None, timeout: int = 10) -> Optional[dict]:
@@ -213,33 +259,158 @@ def get_news(limit: int = 6) -> list:
     return headlines[:limit]
 
 
+# ── Binance funding rates (no API key required) ────────────────────────────────
+
+_PAIR_TO_BINANCE = {
+    "XBTEUR": "BTCUSDT", "XXBTZEUR": "BTCUSDT",
+    "ETHEUR": "ETHUSDT", "XETHZEUR": "ETHUSDT",
+    "SOLEUR": "SOLUSDT", "XRPEUR": "XRPUSDT", "XXRPZEUR": "XRPUSDT",
+    "ADAEUR": "ADAUSDT", "DOTEUR": "DOTUSDT", "LINKEUR": "LINKUSDT",
+}
+_BINANCE_CACHE: dict = {}
+
+
+def fetch_binance_funding(pairs: list) -> dict:
+    """Fetch latest funding rates from Binance futures — no API key needed."""
+    coins_map = {_PAIR_TO_BINANCE[p]: _PAIR_TO_COIN[p]
+                 for p in pairs if p in _PAIR_TO_BINANCE and p in _PAIR_TO_COIN}
+    coin_scores: dict = {}
+    cache_key = "binance_funding"
+    now = time.time()
+    if cache_key in _BINANCE_CACHE and now - _BINANCE_CACHE[cache_key]["ts"] < _CACHE_TTL:
+        return _BINANCE_CACHE[cache_key]["data"]
+    try:
+        for symbol, coin in coins_map.items():
+            try:
+                r = requests.get(
+                    "https://fapi.binance.com/fapi/v1/fundingRate",
+                    params={"symbol": symbol, "limit": 1}, timeout=8
+                )
+                if r.status_code == 200:
+                    rows = r.json()
+                    if rows:
+                        rate = float(rows[0].get("fundingRate", 0))
+                        coin_scores[coin] = _funding_score(rate, 8.0)
+            except Exception:
+                pass
+        result = {"coin_scores": coin_scores,
+                  "combined_score": round(sum(coin_scores.values()) / len(coin_scores), 2) if coin_scores else 0.0}
+        _BINANCE_CACHE[cache_key] = {"data": result, "ts": now}
+        logger.debug("Binance funding: %s", coin_scores)
+        return result
+    except Exception as exc:
+        logger.debug("Binance funding fetch failed: %s", exc)
+        return {"coin_scores": {}, "combined_score": 0.0}
+
+
+# ── Bybit funding rates (no API key required) ──────────────────────────────────
+
+_BYBIT_CACHE: dict = {}
+
+
+def fetch_bybit_funding(pairs: list) -> dict:
+    """Fetch latest funding rates from Bybit — no API key needed."""
+    coins_map = {_PAIR_TO_BINANCE[p]: _PAIR_TO_COIN[p]
+                 for p in pairs if p in _PAIR_TO_BINANCE and p in _PAIR_TO_COIN}
+    coin_scores: dict = {}
+    cache_key = "bybit_funding"
+    now = time.time()
+    if cache_key in _BYBIT_CACHE and now - _BYBIT_CACHE[cache_key]["ts"] < _CACHE_TTL:
+        return _BYBIT_CACHE[cache_key]["data"]
+    try:
+        for symbol, coin in coins_map.items():
+            try:
+                r = requests.get(
+                    "https://api.bybit.com/v5/market/funding/history",
+                    params={"category": "linear", "symbol": symbol, "limit": 1}, timeout=8
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    rows = data.get("result", {}).get("list", [])
+                    if rows:
+                        rate = float(rows[0].get("fundingRate", 0))
+                        coin_scores[coin] = _funding_score(rate, 8.0)
+            except Exception:
+                pass
+        result = {"coin_scores": coin_scores,
+                  "combined_score": round(sum(coin_scores.values()) / len(coin_scores), 2) if coin_scores else 0.0}
+        _BYBIT_CACHE[cache_key] = {"data": result, "ts": now}
+        logger.debug("Bybit funding: %s", coin_scores)
+        return result
+    except Exception as exc:
+        logger.debug("Bybit funding fetch failed: %s", exc)
+        return {"coin_scores": {}, "combined_score": 0.0}
+
+
 # ── Combined fetch ─────────────────────────────────────────────────────────────
 
+_WEIGHTS = {"sharpe": 0.40, "binance": 0.35, "bybit": 0.25}
+
+
+def _merge_funding_scores(sharpe_scores: dict, binance_scores: dict, bybit_scores: dict) -> dict:
+    """Merge per-coin scores from all sources using weighted average."""
+    all_coins = set(sharpe_scores) | set(binance_scores) | set(bybit_scores)
+    merged = {}
+    for coin in all_coins:
+        sources = []
+        if coin in sharpe_scores:
+            sources.append((sharpe_scores[coin], _WEIGHTS["sharpe"]))
+        if coin in binance_scores:
+            sources.append((binance_scores[coin], _WEIGHTS["binance"]))
+        if coin in bybit_scores:
+            sources.append((bybit_scores[coin], _WEIGHTS["bybit"]))
+        if not sources:
+            continue
+        total_weight = sum(w for _, w in sources)
+        merged[coin] = round(sum(s * w for s, w in sources) / total_weight, 2)
+    return merged
+
+
 def fetch_all(pairs: list) -> dict:
+    # Binance + Bybit always run (free, no key)
+    binance = fetch_binance_funding(pairs)
+    bybit   = fetch_bybit_funding(pairs)
+
+    # Sharpe.ai only runs when key available and quota remains
+    sharpe_funding   = {"coin_scores": {}}
+    sharpe_derivs    = {}
+    sharpe_insider   = {"market_signal": 0, "top_flagged": [], "summary": ""}
+    sharpe_news      = []
     key = _api_key()
-    if not key:
-        return {"available": False}
+    if key:
+        try:
+            sharpe_funding  = get_funding_data(pairs)
+            sharpe_derivs   = get_derivatives_overview()
+            sharpe_insider  = get_insider_selling(pairs)
+            sharpe_news     = get_news()
+        except Exception as exc:
+            logger.debug("Sharpe.ai fetch failed: %s", exc)
 
-    try:
-        funding    = get_funding_data(pairs)
-        derivatives= get_derivatives_overview()
-        insider    = get_insider_selling(pairs)
-        news       = get_news()
+    # Merge funding scores from all available sources
+    merged_scores = _merge_funding_scores(
+        sharpe_funding.get("coin_scores", {}),
+        binance.get("coin_scores", {}),
+        bybit.get("coin_scores", {}),
+    )
+    combined_score = round(sum(merged_scores.values()) / len(merged_scores), 2) if merged_scores else 0.0
 
-        logger.info(
-            "Sharpe.ai: funding_scores=%s insider_signal=%s derivatives_oi=$%.0fB news=%d",
-            funding.get("coin_scores", {}),
-            insider.get("market_signal", 0),
-            (derivatives.get("total_oi_usd") or 0) / 1e9,
-            len(news),
-        )
-        return {
-            "funding":    funding,
-            "derivatives":derivatives,
-            "insider":    insider,
-            "news":       news,
-            "available":  True,
-        }
-    except Exception as exc:
-        logger.warning("Sharpe.ai fetch_all failed: %s", exc)
-        return {"available": False}
+    sources_active = ["Binance", "Bybit"] + (["Sharpe.ai"] if key else [])
+    logger.info(
+        "Funding data: sources=%s scores=%s insider_signal=%s",
+        "+".join(sources_active), merged_scores,
+        sharpe_insider.get("market_signal", 0),
+    )
+
+    merged_funding = {
+        "coin_scores":    merged_scores,
+        "combined_score": combined_score,
+        "summary":        f"Sources: {', '.join(sources_active)}",
+    }
+
+    return {
+        "funding":    merged_funding,
+        "derivatives":sharpe_derivs,
+        "insider":    sharpe_insider,
+        "news":       sharpe_news,
+        "available":  True,
+    }
