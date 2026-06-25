@@ -3933,9 +3933,23 @@ class TradingBot:
                                         "sl_pct":   round(_sl_pct, 2),
                                     }
                                 if float(self.short_qty.get(_p, 0)) > 0:
+                                    _s_qty   = float(self.short_qty.get(_p, 0))
+                                    _s_entry = float(self.short_entry_prices.get(_p, 0))
+                                    _s_cur   = float(self.pair_prices.get(_p, 0))
+                                    _s_tp_pct = self._required_take_profit_percent(_p)
+                                    _s_sl_pct = self._dynamic_stop_loss_percent()
+                                    _s_pnl_pct = round(((_s_entry - _s_cur) / _s_entry) * 100, 3) if _s_entry > 0 else 0.0
+                                    _s_pnl_eur = round((_s_entry - _s_cur) * _s_qty, 4) if _s_entry > 0 else 0.0
                                     _status["open_shorts"][_p] = {
-                                        "qty":   round(float(self.short_qty.get(_p, 0)), 8),
-                                        "entry": round(float(self.short_entry_prices.get(_p, 0)), 4),
+                                        "qty":      round(_s_qty, 8),
+                                        "entry":    round(_s_entry, 4),
+                                        "current":  round(_s_cur, 4),
+                                        "pnl_pct":  _s_pnl_pct,
+                                        "pnl_eur":  _s_pnl_eur,
+                                        "tp_price": round(_s_entry * (1 - _s_tp_pct / 100), 4) if _s_entry > 0 else 0,
+                                        "sl_price": round(_s_entry * (1 + _s_sl_pct / 100), 4) if _s_entry > 0 else 0,
+                                        "tp_pct":   round(_s_tp_pct, 2),
+                                        "sl_pct":   round(_s_sl_pct, 2),
                                     }
                             except Exception:
                                 pass

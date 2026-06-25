@@ -700,10 +700,25 @@ def _build_page() -> str:
             f'border-radius:4px;cursor:pointer;font-size:11px">Sell</button></td></tr>'
         )
     for pair, info in shorts.items():
+        _s_pnl_pct = info.get("pnl_pct", 0.0)
+        _s_pnl_eur = info.get("pnl_eur", 0.0)
+        _s_pnl_col = "#00c851" if _s_pnl_pct >= 0 else "#ff4444"
+        _s_cur     = info.get("current", 0)
+        _s_tp_price = info.get("tp_price", 0)
+        _s_sl_price = info.get("sl_price", 0)
+        _s_tp_pct   = info.get("tp_pct", 0)
+        _s_sl_pct   = info.get("sl_pct", 0)
+        _s_tp_str   = f'&euro;{_s_tp_price:,.4f} (+{_s_tp_pct:.2f}%)' if _s_tp_price else '&mdash;'
+        _s_sl_str   = f'&euro;{_s_sl_price:,.4f} (-{_s_sl_pct:.2f}%)' if _s_sl_price else '&mdash;'
         pos_rows += (
             f'<tr><td>{pair}</td><td class="red">SHORT</td>'
-            f'<td>{info["qty"]}</td><td>&euro;{info["entry"]}</td>'
-            f'<td colspan="4"></td></tr>'
+            f'<td>{info["qty"]}</td>'
+            f'<td>&euro;{info["entry"]}</td>'
+            f'<td>&euro;{_s_cur:,.4f}</td>'
+            f'<td style="color:{_s_pnl_col}">{_s_pnl_pct:+.2f}% ({_s_pnl_eur:+.4f})</td>'
+            f'<td style="color:#00c851;font-size:11px">{_s_tp_str}</td>'
+            f'<td style="color:#ff4444;font-size:11px">{_s_sl_str}</td>'
+            f'<td></td></tr>'
         )
     if pos_rows:
         positions_html = (
