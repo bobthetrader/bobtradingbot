@@ -3613,21 +3613,30 @@ class TradingBot:
                             to_remove.append(symbol)
                             continue
 
-                # 12-hour force exit
+                # 12-hour window — only force-sell if coin is no longer trending up
                 if _listing_expired(entry, self._listing_hold_hours):
-                    self.logger.info(
-                        "NEW LISTING EXIT: %s — 12h window expired, force-selling", symbol
-                    )
-                    if qty > 0:
-                        self.execute_sell_order(
-                            pair, current_price,
-                            require_profit_target=False,
-                            reason="NEW_LISTING_12HR_EXIT"
+                    peak = self.peak_prices.get(pair, current_price)
+                    still_trending = (peak > 0 and
+                                      (peak - current_price) / peak * 100 < self._listing_pullback_pct)
+                    if still_trending and qty > 0:
+                        # Still near peak — let trailing stop handle the exit
+                        self.logger.info(
+                            "NEW LISTING 12h: %s still trending (%.2f%% from peak) — holding, trailing stop active",
+                            symbol, (peak - current_price) / peak * 100,
                         )
-                    # Remove from trade_pairs — it's a temporary listing position
-                    if pair in self.trade_pairs and pair not in self._core_trade_pairs:
-                        self.trade_pairs.remove(pair)
-                    to_remove.append(symbol)
+                    else:
+                        self.logger.info(
+                            "NEW LISTING EXIT: %s — 12h expired, not trending — force-selling", symbol
+                        )
+                        if qty > 0:
+                            self.execute_sell_order(
+                                pair, current_price,
+                                require_profit_target=False,
+                                reason="NEW_LISTING_12HR_EXIT"
+                            )
+                        if pair in self.trade_pairs and pair not in self._core_trade_pairs:
+                            self.trade_pairs.remove(pair)
+                        to_remove.append(symbol)
             else:
                 # Check if expired without buying
                 if _listing_expired(entry, self._listing_hold_hours):
