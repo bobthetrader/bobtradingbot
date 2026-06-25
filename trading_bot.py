@@ -1421,6 +1421,17 @@ class TradingBot:
             except Exception:
                 pass
         self.get_crypto_holdings()
+        # In paper mode: if the positions file is missing, auto-clear any stale
+        # PostgreSQL paper positions so a deliberate reset is fully clean.
+        _is_paper = getattr(self.api_client, 'paper_mode', False)
+        if _is_paper and not os.path.exists(self.data_purchase_prices_path):
+            if _PG_AVAILABLE:
+                try:
+                    _pg.clear_positions(mode='paper')
+                    self.logger.info("Paper positions file absent — cleared stale PostgreSQL paper positions.")
+                except Exception as _pg_exc:
+                    self.logger.debug("Could not auto-clear PG paper positions: %s", _pg_exc)
+
         # Load persisted purchase prices first (higher priority than history)
         try:
             persisted = {}

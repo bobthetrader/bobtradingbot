@@ -190,6 +190,20 @@ def load_positions(mode: str = "paper") -> dict:
         return {}
 
 
+def clear_positions(mode: str = "paper") -> bool:
+    """Delete all positions for the given mode (used on clean paper reset)."""
+    conn = _get_conn()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM positions WHERE mode=%s", (mode,))
+        return True
+    except Exception as exc:
+        logger.warning("PG clear_positions failed: %s", exc)
+        return False
+
+
 # ── Optimizer state ───────────────────────────────────────────────────────────
 
 def save_optimizer_state(state: dict) -> bool:
