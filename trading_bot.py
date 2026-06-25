@@ -3091,12 +3091,11 @@ class TradingBot:
             pass
 
     def _manage_portfolio_risk(self, current_balance: float) -> tuple:
-        """Phase: daily/monthly resets, drawdown circuit-breaker, regime evaluation.
+        “””Phase: daily/monthly resets, drawdown circuit-breaker, regime evaluation.
 
         Returns:
-            (regime_state, pause_state, adjusted_pnl) â€” strings + float needed
-            by the status log and dashboard writer.
-        """
+            (regime_state, pause_state, adjusted_pnl, portfolio_value, holdings_value)
+        “””
         # Daily + monthly balance resets
         now = datetime.now()
         last_reset = datetime.fromtimestamp(self.last_daily_reset_ts)
@@ -3210,7 +3209,7 @@ class TradingBot:
 
         regime_state = "RISK_ON" if self._is_risk_on_regime() else "RISK_OFF"
         pause_state  = "PAUSED"  if self._is_temporarily_paused() else "ACTIVE"
-        return regime_state, pause_state, adjusted_pnl
+        return regime_state, pause_state, adjusted_pnl, portfolio_value, holdings_value
 
     def _handle_trade_execution(self, best_pair, best_signal, best_score) -> None:
         """Phase: apply BUY and SELL gates, then execute the winning trade.
@@ -3791,7 +3790,7 @@ class TradingBot:
                                 self.logger.warning("MANUAL_SELL error for %s: %s", _fp, exc)
 
                     # â”€â”€ Phase 3: Portfolio risk management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-                    regime_state, pause_state, adjusted_pnl = self._manage_portfolio_risk(current_balance)
+                    regime_state, pause_state, adjusted_pnl, portfolio_value, holdings_value = self._manage_portfolio_risk(current_balance)
 
                     # â”€â”€ Stop conditions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     if current_balance >= self.target_balance_eur:
