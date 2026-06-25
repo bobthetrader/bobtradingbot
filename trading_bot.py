@@ -3091,7 +3091,7 @@ class TradingBot:
             pass
 
     def _manage_portfolio_risk(self, current_balance: float) -> tuple:
-        “””Phase: daily/monthly resets, drawdown circuit-breaker, regime evaluation.
+        “””Phase: daily/monthly resets, drawdown CB, regime evaluation.
 
         Returns:
             (regime_state, pause_state, adjusted_pnl, portfolio_value, holdings_value)
