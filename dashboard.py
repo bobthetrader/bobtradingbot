@@ -266,7 +266,8 @@ def _build_page() -> str:
     trades = _read_jsonl_tail("trade_events.jsonl", n=15)
 
     # ── Balance ───────────────────────────────────────────────────────────────
-    balance   = status.get("balance_eur", 0.0)
+    # Use portfolio_value (cash + open positions) for accurate display
+    balance   = status.get("portfolio_value", status.get("balance_eur", 0.0))
     initial   = status.get("initial_balance", 100.0)
     pnl       = status.get("adjusted_pnl", 0.0)
     pnl_colour= "#00c851" if pnl >= 0 else "#ff4444"
@@ -959,7 +960,7 @@ def _build_page() -> str:
     # ── Circuit breaker banner ────────────────────────────────────────────────
     if status.get("circuit_breaker", False):
         _peak = status.get("peak_balance", 0)
-        _bal  = status.get("balance_eur", 0)
+        _bal  = status.get("portfolio_value", status.get("balance_eur", 0))
         _dd   = round((_peak - _bal) / _peak * 100, 1) if _peak > 0 else 0
         circuit_breaker_banner = (
             f'  <div style="background:#ff000022;border:1px solid #ff4444;border-radius:8px;'
