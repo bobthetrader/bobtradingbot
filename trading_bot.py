@@ -3135,6 +3135,17 @@ class TradingBot:
                                   (self.position_qty.get(p, 0.0) or self.holdings.get(p, 0.0))
                                   * self.pair_prices.get(p, 0.0)
                                   for p in self.trade_pairs)
+            # Include open scalper positions so their deployed cash isn't
+            # misread as a portfolio loss by the circuit breaker
+            _sc = getattr(self, '_scalper', None)
+            if _sc is not None:
+                try:
+                    for _scp, _scv in _sc.get_status().get('positions', {}).items():
+                        _sc_qty   = float(_scv.get('qty', 0))
+                        _sc_price = self.pair_prices.get(_scp, float(_scv.get('entry', 0)))
+                        holdings_value += _sc_qty * _sc_price
+                except Exception:
+                    pass
             reserve         = self._estimate_open_buy_reserve_eur()
             portfolio_value = current_balance + holdings_value + reserve
         except Exception:
