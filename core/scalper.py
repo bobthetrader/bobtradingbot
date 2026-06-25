@@ -238,9 +238,9 @@ class ScalperEngine:
             return False
 
     def _scan_entries(self):
-        if self._is_bear_market():
-            logger.debug("[SCALP] Bear market detected — skipping new long entries")
-            return
+        bear = self._is_bear_market()
+        if bear:
+            logger.debug("[SCALP] Bear market — scoring pairs for display but skipping entries")
         for pair in _PAIRS:
             with self._lock:
                 has_position = pair in self._positions
@@ -253,6 +253,9 @@ class ScalperEngine:
 
             with self._lock:
                 self._pair_scores[pair] = score
+
+            if bear:
+                continue  # scores tracked for dashboard, no new longs in downtrend
 
             price = self._get_price(pair)
             if price is None or price <= 0:
