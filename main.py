@@ -145,7 +145,7 @@ kraken = None
 trading_bot = None
 
 if __name__ == "__main__":
-    # Start web dashboard on Railway's PORT (defaults to 8080)
+    # Start web dashboard on PORT env var (defaults to 8080)
     try:
         from dashboard import start_dashboard
         _dash_port = int(os.environ.get("PORT", 8080))

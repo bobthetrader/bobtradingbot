@@ -17,7 +17,7 @@ Models
 Bot performance context is injected into every prompt so models reason
 about how *this bot* is actually doing, not just the market in abstract.
 
-Required env vars (set in Railway Variables):
+Required env vars (set in .env on the server):
   OPENROUTER_API_KEY   — covers hermes, sonar, deepseek, mistral
   OPENAI_API_KEY       — optional, covers gpt-4o-mini
 """

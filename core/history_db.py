@@ -1,8 +1,8 @@
 """
 Bot History Database
 =====================
-SQLite-backed persistent store for all bot data points. Survives Railway
-redeploys because the DB file lives on the mounted volume at /app/data/.
+SQLite-backed persistent store for all bot data points. Survives restarts
+because the DB file lives on the mounted volume at /app/data/.
 
 Tables
 ------

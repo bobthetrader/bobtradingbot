@@ -15,7 +15,7 @@ Design:
   - Zero downtime migration — flip to PG-primary once confirmed stable
 
 Connection:
-  Set DATABASE_URL in .env / Railway / Hetzner:
+  Set DATABASE_URL in .env:
   DATABASE_URL=postgresql://tradingbot:PASSWORD@localhost:5432/tradingbot
 """
 

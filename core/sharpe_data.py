@@ -10,7 +10,7 @@ Endpoints used:
   GET /v1/news/feed                                   — raw news feed
 
 Authentication: Authorization: Bearer sk_live_...
-Set SHARPE_API_KEY in environment / Railway Variables.
+Set SHARPE_API_KEY in .env on the server.
 """
 
 import os

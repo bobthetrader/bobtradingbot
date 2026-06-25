@@ -14,7 +14,7 @@ Authentication:
   ALPACA_BASE_URL    — https://paper-api.alpaca.markets (paper)
                        https://api.alpaca.markets (live)
 
-Set all three in Railway Variables.
+Set all three in .env on the server.
 """
 
 import os

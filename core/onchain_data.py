@@ -161,7 +161,7 @@ def get_eth_gas_stats() -> dict:
     }
 
 
-# ── Alchemy (free tier — set ALCHEMY_API_KEY in Railway Variables) ────────────
+# ── Alchemy (free tier — set ALCHEMY_API_KEY in .env) ────────────────────────
 
 def get_alchemy_eth_data() -> dict:
     """

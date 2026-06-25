@@ -5,10 +5,9 @@ A lightweight Flask app that reads the bot's data files and serves
 a live status page. Runs in a background thread inside the same
 container as the trading bot.
 
-Railway exposes the PORT environment variable — Flask binds to it
-so Railway can route HTTP traffic to the dashboard.
+Flask binds to the PORT environment variable (default 8080).
 
-Access at: your Railway service public URL (e.g. https://bobtradingbot-xxxx.railway.app)
+Access at: your server domain or IP (e.g. https://bobtradingbot.com)
 """
 
 import json
@@ -1083,7 +1082,7 @@ def start_dashboard(port: int = 8080):
                     "<html><body style='background:#0d1117;color:#ffbb33;font-family:monospace;padding:40px'>"
                     f"<h2>&#x1F9F9; State cleared</h2>"
                     f"<p>Cleared: {', '.join(cleared) if cleared else 'nothing to clear'}</p>"
-                    "<p>Restart the Railway service to reload with a clean slate.</p>"
+                    "<p>Restart the bot service to reload with a clean slate.</p>"
                     "<a href='/' style='color:#58a6ff'>← Back to dashboard</a>"
                     "</body></html>",
                     mimetype="text/html"
