@@ -3153,14 +3153,14 @@ class TradingBot:
             self.logger.info(f"Daily start balance reset to {self.daily_start_balance:.2f} EUR")
 
         if now.month != self._monthly_start_month or self._monthly_start_balance <= 0:
-            self._monthly_start_balance = current_balance
+            self._monthly_start_balance = portfolio_value
             self._monthly_start_month = now.month
             self._monthly_target_hit_notified = False
             self.logger.info(
-                f"Monthly tracker reset: start={current_balance:.2f} EUR (target +3-8%)"
+                f"Monthly tracker reset: start={portfolio_value:.2f} EUR portfolio (target +3-8%)"
             )
 
-        _monthly_pct = self._monthly_return_pct(current_balance)
+        _monthly_pct = self._monthly_return_pct(portfolio_value)
         if _monthly_pct >= 3.0 and not self._monthly_target_hit_notified:
             self._monthly_target_hit_notified = True
             self.logger.info(f"MONTHLY TARGET HIT: +{_monthly_pct:.2f}% this month")
@@ -3967,7 +3967,7 @@ class TradingBot:
                                 1 for p in self.trade_pairs
                                 if (self.position_qty.get(p, 0) or self.holdings.get(p, 0)) >= self._get_min_volume(p)
                             ),
-                            "monthly_return_pct":  round(self._monthly_return_pct(current_balance), 2),
+                            "monthly_return_pct":  round(self._monthly_return_pct(portfolio_value), 2),
                             "monthly_start_bal":   round(self._monthly_start_balance, 2),
                             "monthly_target_low":  3.0,
                             "monthly_target_high": 8.0,
