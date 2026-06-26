@@ -169,6 +169,7 @@ class ScalperEngine:
         self._load_positions()
         self._load_volume()
         self._load_ai_params()
+        self._trades_since_ai = self._count_completed_trades() % _AI_REVIEW_EVERY
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -685,6 +686,23 @@ class ScalperEngine:
             )
         except Exception as exc:
             logger.warning("[SCALP-AI] Could not load AI params: %s", exc)
+
+    def _count_completed_trades(self) -> int:
+        """Count completed trades in the JSONL log so the AI counter survives restarts."""
+        try:
+            if not self._trades_path.exists():
+                return 0
+            count = 0
+            with open(self._trades_path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    if line.strip():
+                        count += 1
+            logger.info("[SCALP-AI] %d completed trades found — counter starts at %d/%d",
+                        count, count % _AI_REVIEW_EVERY, _AI_REVIEW_EVERY)
+            return count
+        except Exception as exc:
+            logger.warning("[SCALP-AI] Could not count completed trades: %s", exc)
+            return 0
 
     def _run_ai_review(self):
         """Spawn a background thread to run AI analysis (non-blocking)."""
