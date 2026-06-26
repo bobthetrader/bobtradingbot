@@ -12,7 +12,7 @@ trade_pairs = [ "XXBTZEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR", "ADAEUR", "DOTEUR"
 allocation_per_trade_percent = 5.0
 
 [risk_management]
-max_drawdown_percent = 8.0
+max_drawdown_percent = 25.0
 stop_loss_percent = 1.5              # Wider SL — volatile market needs more room
 allocation_per_trade_percent = 5.0  # 5% = ~5 EUR per trade, 4 positions max
 min_trade_eur = 4.0
