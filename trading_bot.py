@@ -3367,11 +3367,20 @@ class TradingBot:
             try:
                 _ichi = _ichi_get_signal(pair, self.api_client)
                 _vs_cloud = _ichi.get("price_vs_cloud", "unknown")
-                if _vs_cloud in ("inside", "below"):
+                _trend    = _ichi.get("trend", "neutral")
+                # Only hard-block when price is confirmed below the cloud.
+                # Inside + neutral = consolidation, still tradeable on strong signals.
+                if _vs_cloud == "below":
                     self.logger.info(
                         "BUY skipped for %s: Ichimoku cloud (%s) — trend=%s cloud=%.4f-%.4f",
-                        pair, _vs_cloud, _ichi.get("trend"),
+                        pair, _vs_cloud, _trend,
                         _ichi.get("cloud_bottom", 0), _ichi.get("cloud_top", 0),
+                    )
+                    return
+                if _vs_cloud == "inside" and _trend == "bearish":
+                    self.logger.info(
+                        "BUY skipped for %s: Ichimoku cloud (inside+bearish) — cloud=%.4f-%.4f",
+                        pair, _ichi.get("cloud_bottom", 0), _ichi.get("cloud_top", 0),
                     )
                     return
                 # Gaussian lower band touch within uptrend → boost score
