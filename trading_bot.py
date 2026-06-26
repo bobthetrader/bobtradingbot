@@ -3020,10 +3020,23 @@ class TradingBot:
                 # With mean reversion disabled, SMA momentum signals always have
                 # scores that match direction. No contradictory filter needed.
 
-                # Filter non-actionable SELL on empty position
                 has_long  = (self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)) >= self._get_min_volume(pair)
                 has_short = self.short_qty.get(pair, 0.0) > 0
+
+                # Filter non-actionable SELL on empty position
                 if signal == "SELL" and not has_long and not has_short and not self.enable_live_shorts:
+                    time.sleep(0.25)
+                    continue
+
+                # Skip BUY if an open short exists — buy gate would block it anyway,
+                # so fall through to the next best pair instead of wasting the loop
+                if signal == "BUY" and has_short:
+                    self.logger.debug("Pair %s skipped in selection: open short exists", pair)
+                    time.sleep(0.25)
+                    continue
+
+                # Skip BUY if already holding a long on this pair
+                if signal == "BUY" and has_long:
                     time.sleep(0.25)
                     continue
 
