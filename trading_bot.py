@@ -2157,35 +2157,50 @@ class TradingBot:
         return Path(__file__).parent / "data" / "balance_state.json"
 
     def _save_balance_state(self, portfolio_value: float) -> None:
-        """Persist peak_balance and initial_balance_eur so restarts don't spike the display."""
+        """Persist peak_balance, initial_balance_eur, and paper EUR cash so restarts resume correctly."""
         try:
             path = self._balance_state_path()
             path.parent.mkdir(parents=True, exist_ok=True)
             state = {
-                "peak_balance":      round(float(getattr(self, "peak_balance", portfolio_value)), 4),
+                "peak_balance":        round(float(getattr(self, "peak_balance", portfolio_value)), 4),
                 "initial_balance_eur": round(float(getattr(self, "initial_balance_eur", portfolio_value)), 4),
             }
+            # Persist the live paper EUR cash so it survives restarts
+            _is_paper = getattr(self.api_client, 'paper_mode', False)
+            if _is_paper:
+                state["paper_balance_eur"] = round(float(getattr(self.api_client, '_paper_balance_eur', 0.0)), 4)
             path.write_text(json.dumps(state))
         except Exception as exc:
             self.logger.warning("Could not save balance state: %s", exc)
 
     def _load_balance_state(self, fallback_balance: float) -> None:
-        """Restore peak_balance and initial_balance_eur from disk.
+        """Restore peak_balance, initial_balance_eur, and paper EUR cash from disk.
 
         On the very first run the fallback_balance (EUR cash) is used and saved.
         On subsequent restarts the persisted values are restored so the dashboard
-        shows a smooth continuation rather than a jump.
+        shows a smooth continuation rather than a jump, and the paper balance does
+        not reset to the config default on every deploy.
         """
         path = self._balance_state_path()
         try:
             if path.exists():
                 state = json.loads(path.read_text())
-                self.peak_balance       = float(state.get("peak_balance",       fallback_balance))
-                self.initial_balance_eur= float(state.get("initial_balance_eur",fallback_balance))
-                self.logger.info(
-                    "Restored balance state: peak=%.2f initial=%.2f",
-                    self.peak_balance, self.initial_balance_eur,
-                )
+                self.peak_balance        = float(state.get("peak_balance",       fallback_balance))
+                self.initial_balance_eur = float(state.get("initial_balance_eur",fallback_balance))
+                # Restore paper EUR cash — prevents the ghost-money reset on every restart
+                _is_paper = getattr(self.api_client, 'paper_mode', False)
+                if _is_paper and "paper_balance_eur" in state:
+                    restored_paper = float(state["paper_balance_eur"])
+                    self.api_client._paper_balance_eur = restored_paper
+                    self.logger.info(
+                        "Restored balance state: peak=%.2f initial=%.2f paper_eur=%.2f",
+                        self.peak_balance, self.initial_balance_eur, restored_paper,
+                    )
+                else:
+                    self.logger.info(
+                        "Restored balance state: peak=%.2f initial=%.2f",
+                        self.peak_balance, self.initial_balance_eur,
+                    )
             else:
                 self.peak_balance        = fallback_balance
                 self.initial_balance_eur = fallback_balance
@@ -3389,7 +3404,13 @@ class TradingBot:
     def _execute_sell_gate(self, pair: str, price: float) -> None:
         """SELL signal handler: close long if profitable, else open/manage short."""
         min_vol = self._get_min_volume(pair)
-        has_long = (self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)) >= min_vol
+        # In paper mode self.holdings is always empty (get_crypto_holdings early-returns).
+        # Also guard with purchase_prices so a long persisted in the position file but not
+        # yet synced into position_qty (brief window at startup) can't trigger a short open.
+        has_long = (
+            (self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)) >= min_vol
+            or self.purchase_prices.get(pair, 0) > 0
+        )
 
         if has_long:
             if self._can_sell_profit_target(pair, price):

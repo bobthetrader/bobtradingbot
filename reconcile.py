@@ -47,10 +47,33 @@ scalper_pos     = load_json(DATA / "scalper_positions.json")
 initial_balance = float(pnl_state.get("start_eur", 0.0))
 created_at      = pnl_state.get("created_at", "unknown")[:10]
 
+# Detect bot restarts: each restart resets _paper_balance_eur to initial_balance.
+# Count approximate restarts by looking for large upward jumps in bal_after that
+# are close to initial_balance (not explainable by a single trade).
+_balance_resets = 0
+_reset_boost    = 0.0
+_prev_bal = None
+for t in main_trades:
+    bal = float(t.get("balance_eur", 0))
+    if bal <= 0:
+        continue
+    if _prev_bal is not None:
+        jump = bal - _prev_bal
+        # A jump UP to roughly initial_balance (+/- 30%) that can't be a single trade
+        if jump > 50 and abs(bal - initial_balance) < initial_balance * 0.5:
+            _balance_resets += 1
+            _reset_boost += jump
+    _prev_bal = bal
+
 print("=" * 65)
 print("BALANCE RECONCILIATION")
 print("=" * 65)
 print(f"  P&L baseline start : €{initial_balance:.4f}  (since {created_at})")
+if _balance_resets:
+    print(f"  *** {_balance_resets} paper-balance restart(s) detected ***")
+    print(f"      Each restart resets paper_eur to {initial_balance:.0f}.")
+    print(f"      Approximate total boost from resets: €{_reset_boost:.2f}")
+    print(f"      Deploy 'persist paper balance' fix to prevent this.")
 print()
 
 # ── Main bot closed trades ─────────────────────────────────────────────────
