@@ -49,6 +49,31 @@ def _read_jsonl_tail(filename: str, n: int = 20) -> list:
     return lines[-n:]
 
 
+_CLOSE_TYPES = {"SELL","CLOSE","STOP_LOSS","TAKE_PROFIT","SHORT_CLOSE","SELL_SHORT","CLOSE_SHORT"}
+
+def _calc_realized_pnl(paper_mode: bool) -> float:
+    """Sum pnl_eur across all closed main-bot and scalper trades."""
+    trade_file = "trade_events_paper.jsonl" if paper_mode else "trade_events.jsonl"
+    total = 0.0
+    for fname in (trade_file, "scalper_trades.jsonl"):
+        path = os.path.join(DATA_DIR, fname)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                        if fname.startswith("scalper") or row.get("type") in _CLOSE_TYPES:
+                            total += float(row.get("pnl_eur", 0))
+                    except Exception:
+                        pass
+        except FileNotFoundError:
+            pass
+    return total
+
+
 def _signal_colour(signal: str) -> str:
     return {"BUY": "#00c851", "SELL": "#ff4444", "HOLD": "#aaaaaa"}.get(signal, "#aaaaaa")
 
@@ -122,6 +147,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <h2>Balance</h2>
       <div class="big">&euro;{balance}</div>
       <div class="sub">Started: &euro;{initial} &nbsp; P&amp;L: <span style="color:{pnl_colour}">{pnl_sign}&euro;{pnl}</span></div>
+      {realized_html}
       <div class="sub" style="margin-top:6px">Trades: {trade_count} &nbsp;&#x2022;&nbsp; Regime: {regime}</div>
     </div>
 
@@ -272,11 +298,25 @@ def _build_page() -> str:
 
     # ── Balance ───────────────────────────────────────────────────────────────
     # Use portfolio_value (cash + open positions) for accurate display
-    balance   = status.get("portfolio_value", status.get("balance_eur", 0.0))
-    initial   = status.get("initial_balance", 100.0)
-    pnl       = status.get("adjusted_pnl", 0.0)
-    pnl_colour= "#00c851" if pnl >= 0 else "#ff4444"
-    pnl_sign  = "+" if pnl >= 0 else ""
+    balance      = status.get("portfolio_value", status.get("balance_eur", 0.0))
+    initial      = status.get("initial_balance", 100.0)
+    pnl          = status.get("adjusted_pnl", 0.0)
+    pnl_colour   = "#00c851" if pnl >= 0 else "#ff4444"
+    pnl_sign     = "+" if pnl >= 0 else ""
+    paper_mode   = status.get("paper_mode", True)
+    realized_pnl = _calc_realized_pnl(paper_mode)
+    unrealized   = pnl - realized_pnl
+    _rc          = "#00c851" if realized_pnl >= 0 else "#ff4444"
+    _uc          = "#00c851" if unrealized >= 0 else "#ff4444"
+    realized_html = (
+        f'<div class="sub" style="margin-top:4px;font-size:11px">'
+        f'Realized: <span style="color:{_rc}">{("+" if realized_pnl>=0 else "")}'
+        f'&euro;{abs(realized_pnl):.4f}</span>'
+        f'&nbsp;&nbsp;&#x2502;&nbsp;&nbsp;'
+        f'Unrealized: <span style="color:{_uc}">{("+" if unrealized>=0 else "")}'
+        f'&euro;{abs(unrealized):.4f}</span>'
+        f'</div>'
+    )
 
     # ── Sharpe ────────────────────────────────────────────────────────────────
     sharpe  = status.get("sharpe")
@@ -1157,6 +1197,7 @@ def _build_page() -> str:
         pnl           = f"{abs(pnl):,.4f}",
         pnl_sign      = pnl_sign,
         pnl_colour    = pnl_colour,
+        realized_html = realized_html,
         trade_count   = status.get("trade_count", 0),
         regime        = status.get("regime", "—"),
         sharpe        = sharpe_str,
