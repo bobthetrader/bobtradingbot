@@ -4078,7 +4078,10 @@ class TradingBot:
                                 _linit = float(_wl.get("initial_price", 0) or 0)
                                 _lqty  = float(self.position_qty.get(_lpair, 0) or 0)
                                 _lbuy  = float(_wl.get("buy_price") or 0)
-                                _ref_ts = _wl.get("buy_ts") or _wl.get("detected_at") or time.time()
+                                _listed_at = _wl.get("listed_at", 0)
+                                _detected  = _wl.get("detected_at") or time.time()
+                                _ref_ts    = (_wl.get("buy_ts") or
+                                              (min(_listed_at, _detected) if _listed_at > 0 else _detected))
                                 _hours_left = max(0, self._listing_hold_hours - (time.time() - _ref_ts) / 3600)
                                 _pnl_pct = round(((_lcur - _lbuy) / _lbuy) * 100, 2) if _lbuy > 0 and _lcur > 0 else 0.0
                                 _listings_display[_sym] = {

@@ -427,9 +427,13 @@ def is_expired(entry: dict, hold_hours: int = 12) -> bool:
     """Returns True if the 12-hour hold window has passed since the buy."""
     buy_ts = entry.get("buy_ts")
     if not buy_ts:
-        # Never bought — expire if we're past the detection window
-        detected = entry.get("detected_at", time.time())
-        return (time.time() - detected) > hold_hours * 3600
+        # Never bought — use whichever timestamp is earlier: listed_at or detected_at.
+        # This prevents a bot restart from resetting the clock via a fresh detected_at
+        # on a coin that was actually listed long ago.
+        listed_at = entry.get("listed_at", 0)
+        detected  = entry.get("detected_at", time.time())
+        ref_ts    = min(listed_at, detected) if listed_at > 0 else detected
+        return (time.time() - ref_ts) > hold_hours * 3600
     return (time.time() - buy_ts) > hold_hours * 3600
 
 
