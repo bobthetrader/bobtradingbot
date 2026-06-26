@@ -129,7 +129,12 @@ class KrakenAPI:
 
     def _handle_error(self, response, action):
         if response.get('error'):
-            self.logger.error(f"{action} - API Error: {response['error']}")
+            errors = response['error']
+            # Unknown asset pair is a normal probe result, not a real error
+            if any("unknown asset pair" in str(e).lower() for e in (errors if isinstance(errors, list) else [errors])):
+                self.logger.debug(f"{action} - pair not found: {errors}")
+            else:
+                self.logger.error(f"{action} - API Error: {errors}")
             return True
         return False
 
