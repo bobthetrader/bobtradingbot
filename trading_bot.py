@@ -3562,6 +3562,15 @@ class TradingBot:
                     symbol = listing["symbol"]
                     if symbol in self._listing_watchlist:
                         continue
+                    # Skip listings that are already older than the hold window —
+                    # they expired and were removed; re-adding them just resets the clock
+                    listing_age_h = (now - listing.get("listed_at", now)) / 3600
+                    if listing_age_h > self._listing_hold_hours:
+                        self.logger.debug(
+                            "NEW LISTING: %s listed %.1fh ago — older than hold window, skipping",
+                            symbol, listing_age_h,
+                        )
+                        continue
                     pair = listing["kraken_pair"]
                     # Get current price from Kraken
                     # Try pair name variants until Kraken returns a price
@@ -4069,7 +4078,8 @@ class TradingBot:
                                 _linit = float(_wl.get("initial_price", 0) or 0)
                                 _lqty  = float(self.position_qty.get(_lpair, 0) or 0)
                                 _lbuy  = float(_wl.get("buy_price") or 0)
-                                _hours_left = max(0, 12 - (time.time() - (_wl.get("buy_ts") or time.time())) / 3600)
+                                _ref_ts = _wl.get("buy_ts") or _wl.get("detected_at") or time.time()
+                                _hours_left = max(0, self._listing_hold_hours - (time.time() - _ref_ts) / 3600)
                                 _pnl_pct = round(((_lcur - _lbuy) / _lbuy) * 100, 2) if _lbuy > 0 and _lcur > 0 else 0.0
                                 _listings_display[_sym] = {
                                     "pair":        _lpair,
