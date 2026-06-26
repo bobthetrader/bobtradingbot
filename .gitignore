@@ -3,6 +3,9 @@
 .env.local
 .env.*.local
 
+# Local-only email credentials — never committed
+email.toml
+
 # Python
 __pycache__/
 *.py[cod]
