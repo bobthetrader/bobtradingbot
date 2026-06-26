@@ -1,4 +1,4 @@
-# Trading Bot Core Logic - Multi-Pair Analysis
+﻿# Trading Bot Core Logic - Multi-Pair Analysis
 """
 Kraken Trading Bot â€” Core Engine
 This module is the heart of the trading bot.  It contains the ``TradingBot``
@@ -631,8 +631,8 @@ class TradingBot:
         """Return True when the 4h trend has confirmed a downtrend for bear_confirm_candles.
 
         Logic: fetch 4h OHLC for bear_benchmark_pair, compute EMA(bear_ema_period).
-               If the last bear_confirm_candles closes are ALL below EMA â†’ bear mode.
-               If price crosses back above EMA â†’ bull mode restored.
+               If the last bear_confirm_candles closes are ALL below EMA â†' bear mode.
+               If price crosses back above EMA â†' bull mode restored.
         Fails safe: returns False (allow trading) if API call fails.
         """
         if not self.enable_bear_shield:
@@ -828,10 +828,10 @@ class TradingBot:
     def _monthly_size_multiplier(self, current_balance: float) -> float:
         """
         Adjust position sizing based on monthly return progress:
-          >= 8%  â†’ 0.3Ã— (protect gains â€” lock in the month)
-          >= 3%  â†’ 0.7Ã— (on track â€” slightly conservative)
-          >= 0%  â†’ 1.0Ã— (normal)
-          <  0%  â†’ 1.2Ã— (behind â€” slight aggression, within risk limits)
+          >= 8%  â†' 0.3Ã— (protect gains â€” lock in the month)
+          >= 3%  â†' 0.7Ã— (on track â€” slightly conservative)
+          >= 0%  â†' 1.0Ã— (normal)
+          <  0%  â†' 1.2Ã— (behind â€” slight aggression, within risk limits)
         """
         pct = self._monthly_return_pct(current_balance)
         if pct >= 8.0:
@@ -2609,8 +2609,8 @@ class TradingBot:
         """Refresh signals and all MTF indicators for every configured pair.
 
         Per pair (every ``signal_refresh_interval`` seconds, default 5 min):
-        - Fetches 1h OHLC  â†’ signal/score, EMA crossover, 1h MACD histogram
-        - Fetches 15m OHLC â†’ 15m MACD histogram (for MTF MACD filter)
+        - Fetches 1h OHLC  â†' signal/score, EMA crossover, 1h MACD histogram
+        - Fetches 15m OHLC â†' 15m MACD histogram (for MTF MACD filter)
 
         All results are cached in instance dicts and read by the buy guards.
         """
@@ -3180,12 +3180,12 @@ class TradingBot:
         except Exception:
             pass
         # Include open scalper positions — their deployed cash is not a loss
-        _sc = getattr(self, ‘_scalper’, None)
+        _sc = getattr(self, '_scalper', None)
         if _sc is not None:
             try:
-                for _scp, _scv in _sc.get_status().get(‘positions’, {}).items():
-                    _sc_qty   = float(_scv.get(‘qty’, 0) or 0)
-                    _sc_price = float(self.pair_prices.get(_scp) or _scv.get(‘entry’) or 0)
+                for _scp, _scv in _sc.get_status().get('positions', {}).items():
+                    _sc_qty   = float(_scv.get('qty', 0) or 0)
+                    _sc_price = float(self.pair_prices.get(_scp) or _scv.get('entry') or 0)
                     holdings_value += _sc_qty * _sc_price
             except Exception as _sce:
                 self.logger.debug("Scalper portfolio calc error: %s", _sce)
@@ -3208,7 +3208,7 @@ class TradingBot:
                 _notifier.send(
                     f"ðŸŽ¯ <b>Monthly target reached!</b>\n"
                     f"Return this month: <b>+{_monthly_pct:.2f}%</b>\n"
-                    f"Start: â‚¬{self._monthly_start_balance:.2f} â†’ Now: â‚¬{current_balance:.2f}\n"
+                    f"Start: â‚¬{self._monthly_start_balance:.2f} â†' Now: â‚¬{current_balance:.2f}\n"
                     f"Position sizing reduced to protect gains."
                 )
             except Exception:
@@ -4771,8 +4771,8 @@ class TradingBot:
                 return
 
             # Two-tier short sizing (TR-GC inspired):
-            # BEAR short (BTC in downtrend) â†’ 5% of balance, bigger conviction
-            # HEDGE short (neutral/up trend) â†’ 3% of balance, defensive
+            # BEAR short (BTC in downtrend) â†' 5% of balance, bigger conviction
+            # HEDGE short (neutral/up trend) â†' 3% of balance, defensive
             _balance = self._available_eur_for_buy() + sum(
                 self.short_qty.get(p, 0) * self.pair_prices.get(p, 0)
                 for p in self.trade_pairs
