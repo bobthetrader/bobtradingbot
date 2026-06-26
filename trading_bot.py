@@ -507,34 +507,9 @@ class TradingBot:
         self._last_cashflow_refresh_ts = 0
         self.cashflow_refresh_interval_sec = int(self.config.get('reporting', {}).get('cashflow_refresh_seconds', 600))
 
-        # Daily email report — loaded from email.toml (gitignored, local machine only)
-        self._report_email_enabled  = False
-        self._report_smtp_user      = ''
-        self._report_smtp_password  = ''
-        self._report_to             = ''
-        self._report_time_utc       = '08:00'
+        # Daily CSV report
+        self._report_time_utc       = str(self.config.get('reporting', {}).get('report_time_utc', '09:35'))
         self._report_last_sent_date: str = ''
-        _email_cfg_path = os.path.join(os.path.dirname(__file__), 'email.toml')
-        if os.path.exists(_email_cfg_path):
-            try:
-                import tomllib as _tl
-            except ImportError:
-                try:
-                    import tomli as _tl
-                except ImportError:
-                    _tl = None
-            if _tl:
-                try:
-                    with open(_email_cfg_path, 'rb') as _ef:
-                        _ecfg = _tl.load(_ef)
-                    self._report_email_enabled = bool(_ecfg.get('email_enabled', False))
-                    self._report_smtp_user     = str(_ecfg.get('smtp_user', ''))
-                    self._report_smtp_password = str(_ecfg.get('smtp_app_password', ''))
-                    self._report_to            = str(_ecfg.get('report_email', ''))
-                    self._report_time_utc      = str(_ecfg.get('report_time_utc', '08:00'))
-                    self.logger.info("Daily report email loaded from email.toml (to: %s)", self._report_to)
-                except Exception as _ee:
-                    self.logger.warning("Could not load email.toml: %s", _ee)
 
         if self.cashflow_refresh_interval_sec > 300:
             self.logger.warning(
@@ -2063,9 +2038,7 @@ class TradingBot:
         return False
 
     def _maybe_send_daily_report(self):
-        """Send the daily trade report email if enabled and it's the right time."""
-        if not self._report_email_enabled or not self._report_smtp_password:
-            return
+        """Save the daily CSV report to data/reports/ once per day at the configured time."""
         from datetime import datetime as _dt, timezone as _tz
         now_utc = _dt.now(tz=_tz.utc)
         today   = now_utc.strftime("%Y-%m-%d")
@@ -2074,28 +2047,25 @@ class TradingBot:
         try:
             target_h, target_m = (int(x) for x in self._report_time_utc.split(":"))
         except Exception:
-            target_h, target_m = 8, 0
+            target_h, target_m = 9, 35
         if now_utc.hour != target_h or now_utc.minute > target_m + 5:
             return
         import threading as _thr
         def _worker():
             try:
-                from core.daily_report import send_daily_report
+                from core.daily_report import save_daily_report
             except ImportError:
-                from daily_report import send_daily_report
+                from daily_report import save_daily_report
             try:
                 paper = getattr(self.api_client, 'paper_mode', False)
-                send_daily_report(
-                    data_dir      = os.path.join(os.path.dirname(__file__), 'data'),
-                    paper_mode    = paper,
-                    smtp_user     = self._report_smtp_user,
-                    smtp_app_password = self._report_smtp_password,
-                    report_email  = self._report_to,
+                path = save_daily_report(
+                    data_dir  = os.path.join(os.path.dirname(__file__), 'data'),
+                    paper_mode = paper,
                 )
-                self.logger.info("Daily report emailed to %s", self._report_to)
+                self.logger.info("Daily report saved: %s", path)
                 self._report_last_sent_date = today
             except Exception as exc:
-                self.logger.error("Daily report failed: %s", exc)
+                self.logger.error("Daily report save failed: %s", exc)
         _thr.Thread(target=_worker, daemon=True, name="DailyReport").start()
 
     def _refresh_cashflows_from_ledger(self, force=False):
