@@ -233,6 +233,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {scalper_html}
     </div>
 
+    <!-- Scalper AI Tuner card -->
+    <div class="card full">
+      <h2>Scalper AI Tuner &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">free OpenRouter models &bull; tunes every 25 trades</span> &nbsp; {scalper_ai_badge}</h2>
+      {scalper_ai_html}
+    </div>
+
     <!-- Recent trades card -->
     <div class="card full">
       <h2>Recent Trades</h2>
@@ -924,6 +930,149 @@ def _build_page() -> str:
         scalper_positions_html = '<div class="grey" style="padding:8px 0">Scalper not active</div>'
         scalper_html           = '<div class="grey" style="padding:8px 0">Scalper engine not active (paper mode only)</div>'
 
+    # ── Scalper AI Tuner ──────────────────────────────────────────────────────
+    ai_adjustments = _read_jsonl_tail("scalper_ai_adjustments.jsonl", n=10)
+    ai_params_raw  = _read_json("scalper_ai_params.json")
+    _PARAM_LABELS  = {
+        "rsi_buy":      "RSI Buy",
+        "rsi_sell":     "RSI Sell",
+        "vwap_thresh":  "VWAP Thresh",
+        "score_thresh": "Score Thresh",
+        "sl_pct":       "Stop Loss %",
+    }
+    _PARAM_DEFAULTS = {
+        "rsi_buy": 35.0, "rsi_sell": 65.0, "vwap_thresh": 0.003,
+        "score_thresh": 1.5, "sl_pct": 0.20,
+    }
+
+    if ai_adjustments:
+        latest = ai_adjustments[-1]
+        wr     = latest.get("win_rate", 0)
+        wr_col = "#00c851" if wr >= 50 else ("#ffbb33" if wr >= 40 else "#ff4444")
+        scalper_ai_badge = (
+            f'<span class="badge" style="background:{wr_col}22;color:{wr_col}">'
+            f'last WR {wr:.0f}%</span>'
+        )
+
+        # Current params vs defaults diff
+        param_cells = ""
+        for key, label in _PARAM_LABELS.items():
+            default = _PARAM_DEFAULTS[key]
+            current = float(ai_params_raw.get(key, default)) if ai_params_raw else default
+            changed = abs(current - default) > 1e-4
+            col     = "#58a6ff" if changed else "#8b949e"
+            arrow   = f'<span style="color:#8b949e;font-size:10px"> (def {default})</span>'
+            param_cells += (
+                f'<td style="color:{col};font-weight:{"bold" if changed else "normal"}'
+                f';font-size:12px">{label}<br>'
+                f'<span style="font-size:14px">{current}</span>{arrow}</td>'
+            )
+        blacklist = ai_params_raw.get("pairs_blacklist", []) if ai_params_raw else []
+        bl_html = ""
+        if blacklist:
+            bl_items = "".join(
+                f'<span style="background:#ff444422;color:#ff4444;border-radius:4px;'
+                f'padding:1px 6px;margin:2px;font-size:11px">{p}</span>'
+                for p in blacklist
+            )
+            bl_html = (
+                f'<div style="margin-top:8px;margin-bottom:4px">'
+                f'<span style="color:#8b949e;font-size:11px">BLACKLISTED: </span>{bl_items}</div>'
+            )
+
+        updated_at = ai_params_raw.get("updated_at", "") if ai_params_raw else ""
+        age_str    = _age(updated_at) if updated_at else "never"
+        params_bar = (
+            f'<div style="margin-bottom:12px">'
+            f'<div style="color:#8b949e;font-size:11px;margin-bottom:6px">'
+            f'LIVE PARAMS (last updated {age_str})</div>'
+            f'<table style="width:100%"><tr>{param_cells}</tr></table>'
+            f'{bl_html}</div>'
+        )
+
+        # Adjustment history log
+        adj_rows = ""
+        for adj in reversed(ai_adjustments):
+            adj_ts      = adj.get("ts", "")[:16].replace("T", " ")
+            adj_wr      = adj.get("win_rate", 0)
+            adj_wr_col  = "#00c851" if adj_wr >= 50 else ("#ffbb33" if adj_wr >= 40 else "#ff4444")
+            adj_n       = adj.get("trades_analyzed", 0)
+            changes     = adj.get("changes", [])
+            reasoning   = adj.get("reasoning", "")
+            pair_stats  = adj.get("pair_stats", {})
+
+            if not changes:
+                change_html = '<span style="color:#8b949e;font-size:11px">no changes</span>'
+            else:
+                parts = []
+                for c in changes:
+                    param = c.get("param", "")
+                    old   = c.get("old")
+                    new   = c.get("new")
+                    if param == "pairs_blacklist":
+                        for pair in (new or []):
+                            ps  = pair_stats.get(pair, {})
+                            tot = ps.get("w", 0) + ps.get("l", 0)
+                            wr2 = round(ps["w"] / tot * 100) if tot else 0
+                            parts.append(
+                                f'<span style="color:#ff4444">{pair} {wr2}% WR → blacklisted</span>'
+                            )
+                    else:
+                        label = _PARAM_LABELS.get(param, param)
+                        col   = "#58a6ff"
+                        parts.append(
+                            f'<span style="color:{col}">{label} '
+                            f'<span style="color:#8b949e">{old}</span> → '
+                            f'<b>{new}</b></span>'
+                        )
+                change_html = ' &nbsp;|&nbsp; '.join(parts)
+
+            # Worst pairs this round
+            worst = sorted(
+                [(p, s) for p, s in pair_stats.items()
+                 if s.get("w", 0) + s.get("l", 0) >= 3],
+                key=lambda x: x[1]["w"] / (x[1]["w"] + x[1]["l"])
+            )[:3]
+            worst_html = ""
+            if worst:
+                worst_parts = []
+                for p, s in worst:
+                    tot = s["w"] + s["l"]
+                    wr2 = round(s["w"] / tot * 100) if tot else 0
+                    wc  = "#ff4444" if wr2 < 40 else "#ffbb33"
+                    worst_parts.append(f'<span style="color:{wc}">{p} {wr2}%</span>')
+                worst_html = (
+                    f'<div style="font-size:10px;color:#8b949e;margin-top:2px">'
+                    f'worst pairs: {" · ".join(worst_parts)}</div>'
+                )
+
+            adj_rows += (
+                f'<tr style="border-bottom:1px solid #21262d">'
+                f'<td style="color:#8b949e;font-size:11px;white-space:nowrap;vertical-align:top">'
+                f'{adj_ts}<br>{adj_n} trades</td>'
+                f'<td style="color:{adj_wr_col};font-weight:bold;vertical-align:top">{adj_wr:.0f}%</td>'
+                f'<td style="vertical-align:top">{change_html}{worst_html}</td>'
+                f'<td style="color:#8b949e;font-size:11px;vertical-align:top">{reasoning[:120]}</td>'
+                f'</tr>'
+            )
+
+        scalper_ai_html = (
+            params_bar
+            + '<b style="color:#8b949e;font-size:11px">ADJUSTMENT HISTORY</b>'
+            + '<table style="width:100%;margin-top:6px">'
+            + '<tr><th>Time</th><th>WR</th><th>Changes</th><th>AI Reasoning</th></tr>'
+            + adj_rows + '</table>'
+        )
+    else:
+        scalper_ai_badge = '<span class="badge" style="background:#21262d;color:#8b949e">waiting for 25 trades</span>'
+        scalper_ai_html  = (
+            '<div class="grey" style="padding:8px 0">'
+            'AI tuner will activate after 25 scalp trades — it will analyze RSI, VWAP deviation and '
+            'order book imbalance at entry to find which signal combinations win vs lose, '
+            'then adjust thresholds within safe bounds automatically.'
+            '</div>'
+        )
+
     # ── DB stats ──────────────────────────────────────────────────────────────
     db_stats = status.get("db_stats", {})
     if db_stats:
@@ -1042,6 +1191,8 @@ def _build_page() -> str:
         scalper_html            = scalper_html,
         scalper_positions_html  = scalper_positions_html,
         ichi_html               = ichi_html,
+        scalper_ai_badge        = scalper_ai_badge,
+        scalper_ai_html         = scalper_ai_html,
     )
 
 

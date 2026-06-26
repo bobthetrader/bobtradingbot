@@ -392,10 +392,12 @@ class TechnicalAnalysis:
                 mr_score = rsi_s + sma_s
                 if rsi_full <= self.mr_rsi_buy and sma_ratio > -0.01:
                     signal = "BUY"
-                    score = mr_score
+                    # Score must be positive for BUY — use RSI component if combined goes negative
+                    score = mr_score if mr_score > 0 else max(rsi_s, 1.0)
                 elif rsi_full >= self.mr_rsi_sell and sma_ratio < 0.01:
                     signal = "SELL"
-                    score = mr_score
+                    # Score must be negative for SELL — use RSI component if combined goes positive
+                    score = mr_score if mr_score < 0 else min(rsi_s, -1.0)
                 # Price-action confirmation (optional): boost score when simple 2/3-bar patterns align
                 try:
                     if getattr(self, 'enable_price_action', False):

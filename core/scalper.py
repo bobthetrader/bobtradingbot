@@ -48,6 +48,16 @@ _SL_PCT         = 0.20     # stop-loss %
 _ALLOCATION_EUR = 10.0     # paper EUR per scalp trade
 _MAX_HOLD_MIN   = 60       # force-exit after 60 minutes regardless
 _MIN_PROFIT_BPS = 0.06     # minimum net profit above round-trip fee (6 basis points)
+_AI_REVIEW_EVERY = 25      # trigger AI param review after this many closed trades
+
+# Hard bounds — AI suggestions are clamped to these before applying
+_AI_BOUNDS = {
+    "rsi_buy":      (25.0, 40.0),
+    "rsi_sell":     (60.0, 75.0),
+    "vwap_thresh":  (0.001, 0.006),
+    "score_thresh": (1.5, 3.0),
+    "sl_pct":       (0.15, 0.35),
+}
 
 # Kraken fee tiers: (30-day USD volume threshold, taker fee %)
 # TP is set dynamically to round_trip_fee + _MIN_PROFIT_BPS
@@ -122,17 +132,28 @@ class ScalperEngine:
         self._thread   = None
 
         # State
-        self._positions: dict = {}     # pair → {qty, entry, ts, score}
+        self._positions: dict = {}     # pair → {qty, entry, ts, score, rsi, vwap_dev, ob_imbalance}
         self._trade_log: list = []     # last 100 completed trades (in-memory)
         self._volume_usd: float = 0.0  # cumulative 30-day equivalent volume (USD)
         self._pair_scores: dict = {}   # pair → latest score (+ bullish, - bearish)
+        self._trades_since_ai: int = 0  # counter — triggers AI review every N trades
+
+        # Live AI-tuned params (start at defaults, overwritten by scalper_ai_params.json)
+        self._ai_rsi_buy     = _RSI_BUY
+        self._ai_rsi_sell    = _RSI_SELL
+        self._ai_vwap_thresh = _VWAP_THRESH
+        self._ai_score_thresh= _SCORE_THRESH
+        self._ai_sl_pct      = _SL_PCT
+        self._ai_blacklist: set = set()
 
         # Persistent paths
-        self._pos_path    = self._data_dir / "scalper_positions.json"
-        self._trades_path = self._data_dir / "scalper_trades.jsonl"
+        self._pos_path      = self._data_dir / "scalper_positions.json"
+        self._trades_path   = self._data_dir / "scalper_trades.jsonl"
+        self._ai_params_path= self._data_dir / "scalper_ai_params.json"
 
         self._load_positions()
         self._load_volume()
+        self._load_ai_params()
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -163,18 +184,26 @@ class ScalperEngine:
         total = len(self._trade_log)
         taker, round_trip, dynamic_tp = _fee_tier(self._volume_usd)
         return {
-            "positions":     positions,
-            "recent_trades": recent,
-            "total_trades":  total,
-            "wins":          wins,
-            "losses":        losses,
-            "win_rate":      round(wins / total * 100, 1) if total else 0,
-            "total_pnl_eur": round(sum(t.get("pnl_eur", 0) for t in self._trade_log), 4),
-            "volume_usd":    round(self._volume_usd, 2),
-            "taker_fee_pct": taker,
+            "positions":      positions,
+            "recent_trades":  recent,
+            "total_trades":   total,
+            "wins":           wins,
+            "losses":         losses,
+            "win_rate":       round(wins / total * 100, 1) if total else 0,
+            "total_pnl_eur":  round(sum(t.get("pnl_eur", 0) for t in self._trade_log), 4),
+            "volume_usd":     round(self._volume_usd, 2),
+            "taker_fee_pct":  taker,
             "round_trip_pct": round_trip,
             "dynamic_tp_pct": dynamic_tp,
-            "pair_scores":   pair_scores,
+            "pair_scores":    pair_scores,
+            "ai_params": {
+                "rsi_buy":      self._ai_rsi_buy,
+                "rsi_sell":     self._ai_rsi_sell,
+                "vwap_thresh":  self._ai_vwap_thresh,
+                "score_thresh": self._ai_score_thresh,
+                "sl_pct":       self._ai_sl_pct,
+                "blacklist":    list(self._ai_blacklist),
+            },
         }
 
     # ── Main loop ─────────────────────────────────────────────────────────────
@@ -206,11 +235,13 @@ class ScalperEngine:
             entry      = pos["entry"]
             pct_change = (price - entry) / entry * 100
             held_min   = (time.time() - pos["ts"]) / 60
-            _, _, tp   = _fee_tier(self._volume_usd)  # dynamic TP based on current fee tier
+            _, _, tp   = _fee_tier(self._volume_usd)
+            with self._lock:
+                sl = self._ai_sl_pct
 
             if pct_change >= tp:
                 self._close_position(pair, price, "TAKE_PROFIT", pct_change)
-            elif pct_change <= -_SL_PCT:
+            elif pct_change <= -sl:
                 self._close_position(pair, price, "STOP_LOSS", pct_change)
             elif held_min >= _MAX_HOLD_MIN:
                 self._close_position(pair, price, "TIMEOUT", pct_change)
@@ -244,12 +275,14 @@ class ScalperEngine:
         for pair in _PAIRS:
             with self._lock:
                 has_position = pair in self._positions
-            if has_position:
+                blacklisted  = pair in self._ai_blacklist
+            if has_position or blacklisted:
                 continue
 
-            score = self._score_pair(pair)
-            if score is None:
+            result = self._score_pair(pair)
+            if result is None:
                 continue
+            score, signals = result
 
             with self._lock:
                 self._pair_scores[pair] = score
@@ -261,12 +294,15 @@ class ScalperEngine:
             if price is None or price <= 0:
                 continue
 
-            if score >= _SCORE_THRESH:
-                self._open_position(pair, price, score)
-            elif score <= -_SCORE_THRESH:
+            with self._lock:
+                thresh = self._ai_score_thresh
+            if score >= thresh:
+                self._open_position(pair, price, score, signals)
+            elif score <= -thresh:
                 logger.debug("[SCALP] %s SELL signal (score=%.1f) — shorts disabled", pair, score)
 
-    def _score_pair(self, pair: str) -> Optional[float]:
+    def _score_pair(self, pair: str) -> Optional[tuple]:
+        """Return (score, signals_dict) or None. Uses live AI-tuned thresholds."""
         try:
             ohlc = self._api.get_ohlc_data(pair, interval=1)
             if not ohlc:
@@ -284,17 +320,25 @@ class ScalperEngine:
             price  = closes[-1]
             score  = 0.0
 
+            with self._lock:
+                rsi_buy      = self._ai_rsi_buy
+                rsi_sell     = self._ai_rsi_sell
+                vwap_thresh  = self._ai_vwap_thresh
+
+            vwap_dev     = 0.0
+            ob_imbalance = 0.0
+
             if rsi is not None:
-                if rsi < _RSI_BUY:
+                if rsi < rsi_buy:
                     score += 2
-                elif rsi > _RSI_SELL:
+                elif rsi > rsi_sell:
                     score -= 2
 
             if vwap and vwap > 0:
-                dev = (price - vwap) / vwap
-                if dev < -_VWAP_THRESH:
+                vwap_dev = (price - vwap) / vwap
+                if vwap_dev < -vwap_thresh:
                     score += 1
-                elif dev > _VWAP_THRESH:
+                elif vwap_dev > vwap_thresh:
                     score -= 1
 
             ob = self._api.get_order_book(pair, count=10)
@@ -306,17 +350,22 @@ class ScalperEngine:
                 ask_vol = sum(float(a[1]) for a in asks if len(a) >= 2)
                 total   = bid_vol + ask_vol
                 if total > 0:
-                    imbalance = (bid_vol - ask_vol) / total
-                    if imbalance > _OB_IMBALANCE:
+                    ob_imbalance = (bid_vol - ask_vol) / total
+                    if ob_imbalance > _OB_IMBALANCE:
                         score += 1
-                    elif imbalance < -_OB_IMBALANCE:
+                    elif ob_imbalance < -_OB_IMBALANCE:
                         score -= 1
 
+            signals = {
+                "rsi":          round(rsi, 2) if rsi is not None else None,
+                "vwap_dev":     round(vwap_dev * 100, 4),   # as percentage
+                "ob_imbalance": round(ob_imbalance, 4),
+            }
             logger.debug(
-                "[SCALP] %s | score=%.1f | rsi=%.1f | vwap=%.4f | price=%.4f",
-                pair, score, rsi or 0.0, vwap or 0.0, price,
+                "[SCALP] %s | score=%.1f | rsi=%.1f | vwap_dev=%.3f%% | ob=%.3f",
+                pair, score, rsi or 0.0, vwap_dev * 100, ob_imbalance,
             )
-            return score
+            return score, signals
 
         except Exception as exc:
             logger.warning("[SCALP] Score error for %s: %s", pair, exc)
@@ -324,25 +373,28 @@ class ScalperEngine:
 
     # ── Order execution ───────────────────────────────────────────────────────
 
-    def _open_position(self, pair: str, price: float, score: float):
+    def _open_position(self, pair: str, price: float, score: float, signals: dict):
         qty = round(_ALLOCATION_EUR / price, 8)
         ts  = time.time()
         with self._lock:
             self._positions[pair] = {
-                "qty":   qty,
-                "entry": price,
-                "ts":    ts,
-                "score": score,
+                "qty":          qty,
+                "entry":        price,
+                "ts":           ts,
+                "score":        score,
+                "rsi":          signals.get("rsi"),
+                "vwap_dev":     signals.get("vwap_dev"),
+                "ob_imbalance": signals.get("ob_imbalance"),
             }
         self._save_positions()
-        # Deduct allocation from paper balance
         try:
             self._api.adjust_paper_balance(-_ALLOCATION_EUR)
         except Exception:
             pass
         logger.info(
-            "[SCALP] BUY  %s @ %.6f  qty=%.8f  score=%.1f  (paper)",
+            "[SCALP] BUY  %s @ %.6f  qty=%.8f  score=%.1f  rsi=%.1f  vwap_dev=%.3f%%  (paper)",
             pair, price, qty, score,
+            signals.get("rsi") or 0.0, signals.get("vwap_dev") or 0.0,
         )
 
     def _close_position(self, pair: str, price: float, reason: str, pct: float):
@@ -354,15 +406,19 @@ class ScalperEngine:
         pnl_eur  = (price - pos["entry"]) * pos["qty"]
         held_min = (time.time() - pos["ts"]) / 60
         trade = {
-            "ts":       datetime.now(timezone.utc).isoformat(),
-            "pair":     pair,
-            "entry":    round(pos["entry"], 6),
-            "exit":     round(price, 6),
-            "qty":      pos["qty"],
-            "pnl_eur":  round(pnl_eur, 4),
-            "pnl_pct":  round(pct, 3),
-            "reason":   reason,
-            "held_min": round(held_min, 1),
+            "ts":           datetime.now(timezone.utc).isoformat(),
+            "pair":         pair,
+            "entry":        round(pos["entry"], 6),
+            "exit":         round(price, 6),
+            "qty":          pos["qty"],
+            "pnl_eur":      round(pnl_eur, 4),
+            "pnl_pct":      round(pct, 3),
+            "reason":       reason,
+            "held_min":     round(held_min, 1),
+            "entry_score":  round(pos.get("score", 0), 2),
+            "entry_rsi":    pos.get("rsi"),
+            "entry_vwap_dev":     pos.get("vwap_dev"),
+            "entry_ob_imbalance": pos.get("ob_imbalance"),
         }
         # Return allocation + P&L to paper balance (allocation was deducted on buy)
         try:
@@ -380,10 +436,17 @@ class ScalperEngine:
             self._trade_log.append(trade)
             if len(self._trade_log) > 100:
                 self._trade_log = self._trade_log[-100:]
+            self._trades_since_ai += 1
+            trigger_ai = (self._trades_since_ai >= _AI_REVIEW_EVERY)
+            if trigger_ai:
+                self._trades_since_ai = 0
 
         self._save_positions()
         self._log_trade(trade)
         self._persist_trade(trade)
+
+        if trigger_ai:
+            self._run_ai_review()
         logger.info(
             "[SCALP] SELL %s @ %.6f  pnl=%.4f EUR (%.3f%%)  reason=%s  held=%.1fm  (paper)",
             pair, price, pnl_eur, pct, reason, held_min,
@@ -472,3 +535,48 @@ class ScalperEngine:
             )
         except Exception as exc:
             logger.warning("[SCALP] Could not persist trade to PostgreSQL: %s", exc)
+
+    def _load_ai_params(self):
+        """Read AI-suggested params from disk and apply within hard bounds."""
+        try:
+            if not self._ai_params_path.exists():
+                return
+            p = json.loads(self._ai_params_path.read_text())
+            lo, hi = _AI_BOUNDS["rsi_buy"]
+            self._ai_rsi_buy     = max(lo, min(hi, float(p.get("rsi_buy",     _RSI_BUY))))
+            lo, hi = _AI_BOUNDS["rsi_sell"]
+            self._ai_rsi_sell    = max(lo, min(hi, float(p.get("rsi_sell",    _RSI_SELL))))
+            lo, hi = _AI_BOUNDS["vwap_thresh"]
+            self._ai_vwap_thresh = max(lo, min(hi, float(p.get("vwap_thresh", _VWAP_THRESH))))
+            lo, hi = _AI_BOUNDS["score_thresh"]
+            self._ai_score_thresh= max(lo, min(hi, float(p.get("score_thresh",_SCORE_THRESH))))
+            lo, hi = _AI_BOUNDS["sl_pct"]
+            self._ai_sl_pct      = max(lo, min(hi, float(p.get("sl_pct",      _SL_PCT))))
+            bl = p.get("pairs_blacklist", [])
+            self._ai_blacklist   = set(bl) if isinstance(bl, list) else set()
+            logger.info(
+                "[SCALP-AI] Params loaded — RSI_BUY=%.0f RSI_SELL=%.0f "
+                "VWAP=%.3f SCORE=%.1f SL=%.2f%% blacklist=%s",
+                self._ai_rsi_buy, self._ai_rsi_sell, self._ai_vwap_thresh,
+                self._ai_score_thresh, self._ai_sl_pct, list(self._ai_blacklist),
+            )
+        except Exception as exc:
+            logger.warning("[SCALP-AI] Could not load AI params: %s", exc)
+
+    def _run_ai_review(self):
+        """Spawn a background thread to run AI analysis (non-blocking)."""
+        def _worker():
+            try:
+                try:
+                    from core.scalper_ai import ScalperAI
+                except ImportError:
+                    from scalper_ai import ScalperAI
+                ai = ScalperAI(data_dir=str(self._data_dir))
+                new_params = ai.analyze()
+                if new_params:
+                    self._load_ai_params()
+            except Exception as exc:
+                logger.warning("[SCALP-AI] Review thread error: %s", exc)
+
+        threading.Thread(target=_worker, daemon=True, name="ScalperAI").start()
+        logger.info("[SCALP-AI] AI review triggered after %d trades", _AI_REVIEW_EVERY)
