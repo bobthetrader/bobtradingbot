@@ -255,7 +255,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     <!-- Scalper card -->
     <div class="card full">
-      <h2>Scalper &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">BTC/ETH &bull; 30s loop &bull; TP 0.7% / SL 0.35%</span> &nbsp; {scalper_stats}</h2>
+      <h2>Scalper &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">dynamic &bull; {scalper_pair_count} pairs &bull; TP {scalper_tp_pct:.2f}%</span> &nbsp; {scalper_stats}</h2>
       {scalper_html}
     </div>
 
@@ -864,6 +864,8 @@ def _build_page() -> str:
         _sc_fee     = scalper_data.get("taker_fee_pct", 0.26)
         _sc_dtp     = scalper_data.get("dynamic_tp_pct", 0.58)
         _sc_wl_c    = "#00c851" if _sc_wins >= _sc_losses else "#ff4444"
+        scalper_pair_count = scalper_data.get("active_pairs_count", 0)
+        scalper_tp_pct     = _sc_dtp
         scalper_stats = (
             f'<span class="badge" style="background:#21262d;color:#8b949e">{_sc_total} trades</span> &nbsp;'
             f'<span class="badge" style="background:{_sc_wl_c}22;color:{_sc_wl_c}">'
@@ -882,17 +884,18 @@ def _build_page() -> str:
                 f'<td>{_sv.get("qty", 0):.8f}</td><td>{_held}m</td>'
                 f'<td><span style="color:#58a6ff">score {_sv.get("score", 0):.1f}</span></td></tr>'
             )
-        # Recent scalp trades
-        _sc_trades = scalper_data.get("recent_trades", [])[-10:]
+        # Most recent scalp trade only
+        _sc_all_trades = scalper_data.get("recent_trades", [])
+        _sc_last = _sc_all_trades[-1] if _sc_all_trades else None
         _trade_rows = ""
-        for _t in reversed(_sc_trades):
-            _tc = "#00c851" if _t.get("pnl_eur", 0) >= 0 else "#ff4444"
-            _trade_rows += (
-                f'<tr><td>{_t.get("ts","")[:19]}</td><td>{_t.get("pair","")}</td>'
-                f'<td>{_t.get("entry",0):.6f}</td><td>{_t.get("exit",0):.6f}</td>'
-                f'<td style="color:{_tc}">{_t.get("pnl_eur",0):+.4f}</td>'
-                f'<td style="color:{_tc}">{_t.get("pnl_pct",0):+.3f}%</td>'
-                f'<td>{_t.get("reason","")}</td><td>{_t.get("held_min",0):.1f}m</td></tr>'
+        if _sc_last:
+            _tc = "#00c851" if _sc_last.get("pnl_eur", 0) >= 0 else "#ff4444"
+            _trade_rows = (
+                f'<tr><td>{_sc_last.get("ts","")[:19]}</td><td>{_sc_last.get("pair","")}</td>'
+                f'<td>{_sc_last.get("entry",0):.6f}</td><td>{_sc_last.get("exit",0):.6f}</td>'
+                f'<td style="color:{_tc}">{_sc_last.get("pnl_eur",0):+.4f}</td>'
+                f'<td style="color:{_tc}">{_sc_last.get("pnl_pct",0):+.3f}%</td>'
+                f'<td>{_sc_last.get("reason","")}</td><td>{_sc_last.get("held_min",0):.1f}m</td></tr>'
             )
         # Compact positions-only html for the top card
         if _pos_rows:
@@ -903,27 +906,28 @@ def _build_page() -> str:
         else:
             scalper_positions_html = '<div class="grey" style="padding:8px 0">No open scalp positions</div>'
 
-        # Pair trend grid
+        # Dynamic pair trend grid — driven by whatever pairs the screener returned
         _pair_scores = scalper_data.get("pair_scores", {})
+        _active_pairs = scalper_data.get("active_pairs", []) or list(_pair_scores.keys())
+
+        def _pair_label(pair: str) -> str:
+            _KNOWN = {
+                "XBTEUR": "BTC", "XXBTZEUR": "BTC",
+                "XETHZEUR": "ETH", "XXRPZEUR": "XRP",
+                "XMREUR": "XMR", "XLTCZEUR": "LTC", "XZECZEUR": "ZEC",
+            }
+            if pair in _KNOWN:
+                return _KNOWN[pair]
+            for suffix in ("ZEUR", "EUR"):
+                if pair.endswith(suffix):
+                    base = pair[: -len(suffix)]
+                    if base.startswith("X") and len(base) > 2:
+                        base = base[1:]
+                    return base
+            return pair
+
         _trend_cells = ""
-        for _tp in [
-            "XBTEUR","XETHZEUR","SOLEUR","XXRPZEUR","LINKEUR","AVAXEUR",
-            "ADAEUR","DOTEUR","ATOMEUR","UNIEUR",
-            "LTCEUR","BCHEUR","TRXEUR","XMREUR","AAVEEUR","NEAREUR",
-            "ALGOEUR","ETCEUR","SHIBEUR","ZECEUR",
-            "MKREUR","SNXEUR","OPEUR","ARBEUR","SANDEUR",
-            "MANAUER","INJEUR","FTMEUR","GALEUR","APEEUR",
-        ]:
-            _label = {
-                "XBTEUR":"BTC","XETHZEUR":"ETH","XXRPZEUR":"XRP","XMREUR":"XMR",
-                "SOLEUR":"SOL","LINKEUR":"LINK","AVAXEUR":"AVAX","ADAEUR":"ADA",
-                "DOTEUR":"DOT","ATOMEUR":"ATOM","UNIEUR":"UNI","LTCEUR":"LTC",
-                "BCHEUR":"BCH","TRXEUR":"TRX","AAVEEUR":"AAVE","NEAREUR":"NEAR",
-                "ALGOEUR":"ALGO","ETCEUR":"ETC","SHIBEUR":"SHIB","ZECEUR":"ZEC",
-                "MKREUR":"MKR","SNXEUR":"SNX","OPEUR":"OP","ARBEUR":"ARB",
-                "SANDEUR":"SAND","MANAUER":"MANA","INJEUR":"INJ","FTMEUR":"FTM",
-                "GALEUR":"GAL","APEEUR":"APE",
-            }.get(_tp, _tp)
+        for _tp in _active_pairs:
             _sc = _pair_scores.get(_tp)
             if _sc is None:
                 _arrow, _col = "·", "#8b949e"
@@ -941,7 +945,7 @@ def _build_page() -> str:
             _trend_cells += (
                 f'<span style="display:inline-block;min-width:70px;margin:2px 4px;font-size:11px">'
                 f'<span style="color:{_col}">{_arrow}</span> '
-                f'<span style="color:#e6edf3">{_in_pos}{_label}</span>'
+                f'<span style="color:#e6edf3">{_in_pos}{_pair_label(_tp)}</span>'
                 f'</span>'
             )
         _trend_grid = (
@@ -969,6 +973,8 @@ def _build_page() -> str:
         scalper_stats          = '<span class="badge" style="background:#21262d;color:#8b949e">not running</span>'
         scalper_positions_html = '<div class="grey" style="padding:8px 0">Scalper not active</div>'
         scalper_html           = '<div class="grey" style="padding:8px 0">Scalper engine not active (paper mode only)</div>'
+        scalper_pair_count     = 0
+        scalper_tp_pct         = 0.58
 
     # ── Scalper AI Tuner ──────────────────────────────────────────────────────
     ai_adjustments = _read_jsonl_tail("scalper_ai_adjustments.jsonl", n=10)
@@ -1229,6 +1235,8 @@ def _build_page() -> str:
         db_summary              = db_summary,
         circuit_breaker_banner  = circuit_breaker_banner,
         scalper_stats           = scalper_stats,
+        scalper_pair_count      = scalper_pair_count,
+        scalper_tp_pct          = scalper_tp_pct,
         scalper_html            = scalper_html,
         scalper_positions_html  = scalper_positions_html,
         ichi_html               = ichi_html,

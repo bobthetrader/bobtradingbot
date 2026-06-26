@@ -295,6 +295,26 @@ class KrakenAPI:
             self.logger.exception(f"Error fetching market data for {pair}: {e}")
             return None
 
+    def get_ticker_batch(self, pairs: list) -> dict:
+        """Fetch ticker data for multiple pairs in a single API call.
+
+        Returns Kraken Ticker result dict keyed by official pair name, or {}.
+        Pairs may be altnames (e.g. XBTEUR) or official names.
+        """
+        if not pairs:
+            return {}
+        try:
+            pair_str = ",".join(pairs)
+            response = self._query_public_with_backoff('Ticker', {'pair': pair_str})
+            if response is None:
+                return {}
+            if self._handle_error(response, "Ticker batch"):
+                return {}
+            return response.get('result', {})
+        except Exception as e:
+            self.logger.exception(f"Error fetching ticker batch: {e}")
+            return {}
+
     def get_order_book(self, pair, count: int = 5):
         """Fetch order book depth (best bids/asks). Returns Kraken Depth result or None."""
         try:

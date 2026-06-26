@@ -1,17 +1,19 @@
 """Scalping strategy — daemon thread alongside the main bot.
 
-Fast loop (30 s). Trades BTC, ETH, SOL, XRP, LINK, AVAX, ADA, DOT, ATOM EUR pairs.
-Paper-only: positions tracked in data/scalper_positions.json.
+Dynamic mode: discovers all EUR pairs on Kraken every 5 minutes, filters to
+the top 40 by 24h volume (≥€50k), then scores them every 15 seconds using
+RSI/VWAP/order-book signals.  The highest-scoring pair above the threshold is
+traded rather than the first one found.
 
-Signals (scored, threshold ±2 to enter):
-  1-min RSI < 35 → +2  (oversold, buy)
-  1-min RSI > 65 → -2  (overbought, sell)
+Signals (scored, threshold ±2.5 to enter):
+  1-min RSI < 28 → +2  (oversold, buy)
+  1-min RSI > 72 → -2  (overbought, sell)
   Price < VWAP by >0.3% → +1  (below fair value, buy)
   Price > VWAP by >0.3% → -1  (above fair value, sell)
   Order book bid vol > ask vol by >20% → +1  (buying pressure)
   Order book ask vol > bid vol by >20% → -1  (selling pressure)
 
-TP: 0.7% / SL: 0.35%  (clears 0.52% round-trip Kraken taker fee)
+TP: 0.58% dynamic / SL: 0.20%  (clears 0.52% round-trip Kraken taker fee)
 """
 
 import json
@@ -24,17 +26,26 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_PAIRS          = [
-    # Tier 1 — highest liquidity
+# Fallback list used only until the first screener run completes
+_PAIRS_FALLBACK = [
     "XBTEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR", "LINKEUR", "AVAXEUR",
     "ADAEUR", "DOTEUR", "ATOMEUR", "UNIEUR",
-    # Tier 2 — high volume
     "LTCEUR", "BCHEUR", "TRXEUR", "XMREUR", "AAVEEUR", "NEAREUR",
     "ALGOEUR", "ETCEUR", "SHIBEUR", "ZECEUR",
-    # Tier 3 — good volume
     "MKREUR", "SNXEUR", "OPEUR", "ARBEUR", "SANDEUR",
     "MANAUER", "INJEUR", "FTMEUR", "GALEUR", "APEEUR",
 ]
+
+# Screener settings
+_SCREENER_INTERVAL_SEC = 300   # re-discover pairs every 5 minutes
+_MAX_ACTIVE_PAIRS      = 40    # keep top-N by 24h EUR volume
+_MIN_VOL_EUR_24H       = 50_000  # discard pairs below this daily EUR turnover
+_SCREENER_CHUNK        = 50    # pairs per Ticker batch call
+
+# Keywords in altname that flag a stablecoin or non-spot instrument to exclude
+_EXCLUDE_KEYWORDS = ("USD", "USDT", "USDC", "DAI", "BUSD", "TUSD", "FRAX",
+                     "LUSD", "GUSD", "PYUSD", "EURT", "STEUR", "EURR", "PAX")
+
 _INTERVAL_SEC   = 15
 _RSI_PERIOD     = 14
 _RSI_BUY        = 28.0     # tightened: only buy extremely oversold
@@ -138,6 +149,10 @@ class ScalperEngine:
         self._pair_scores: dict = {}   # pair → latest score (+ bullish, - bearish)
         self._trades_since_ai: int = 0  # counter — triggers AI review every N trades
 
+        # Dynamic pair discovery
+        self._active_pairs: list = []  # updated by screener every 5 min
+        self._screener_ts: float = 0.0  # epoch of last screener run
+
         # Live AI-tuned params (start at defaults, overwritten by scalper_ai_params.json)
         self._ai_rsi_buy     = _RSI_BUY
         self._ai_rsi_sell    = _RSI_SELL
@@ -166,8 +181,10 @@ class ScalperEngine:
         )
         self._thread.start()
         logger.info(
-            "[SCALP] Engine started | pairs=%s | TP=%.1f%% | SL=%.1f%% | alloc=€%.0f",
-            ", ".join(_PAIRS), _TP_PCT, _SL_PCT, _ALLOCATION_EUR,
+            "[SCALP] Engine started (dynamic) | screener=%ds | top=%d pairs | "
+            "min_vol=€%.0f/day | TP=%.1f%% | SL=%.1f%% | alloc=€%.0f",
+            _SCREENER_INTERVAL_SEC, _MAX_ACTIVE_PAIRS, _MIN_VOL_EUR_24H,
+            _TP_PCT, _SL_PCT, _ALLOCATION_EUR,
         )
 
     def stop(self):
@@ -184,18 +201,21 @@ class ScalperEngine:
         total = len(self._trade_log)
         taker, round_trip, dynamic_tp = _fee_tier(self._volume_usd)
         return {
-            "positions":      positions,
-            "recent_trades":  recent,
-            "total_trades":   total,
-            "wins":           wins,
-            "losses":         losses,
-            "win_rate":       round(wins / total * 100, 1) if total else 0,
-            "total_pnl_eur":  round(sum(t.get("pnl_eur", 0) for t in self._trade_log), 4),
-            "volume_usd":     round(self._volume_usd, 2),
-            "taker_fee_pct":  taker,
-            "round_trip_pct": round_trip,
-            "dynamic_tp_pct": dynamic_tp,
-            "pair_scores":    pair_scores,
+            "positions":        positions,
+            "recent_trades":    recent,
+            "total_trades":     total,
+            "wins":             wins,
+            "losses":           losses,
+            "win_rate":         round(wins / total * 100, 1) if total else 0,
+            "total_pnl_eur":    round(sum(t.get("pnl_eur", 0) for t in self._trade_log), 4),
+            "volume_usd":       round(self._volume_usd, 2),
+            "taker_fee_pct":    taker,
+            "round_trip_pct":   round_trip,
+            "dynamic_tp_pct":   dynamic_tp,
+            "pair_scores":      pair_scores,
+            "active_pairs":     list(self._active_pairs),
+            "active_pairs_count": len(self._active_pairs) if self._active_pairs else len(_PAIRS_FALLBACK),
+            "screener_last_ts": round(self._screener_ts),
             "ai_params": {
                 "rsi_buy":      self._ai_rsi_buy,
                 "rsi_sell":     self._ai_rsi_sell,
@@ -211,11 +231,96 @@ class ScalperEngine:
     def _loop(self):
         while self._running:
             try:
+                self._refresh_active_pairs()
                 self._check_exits()
                 self._scan_entries()
             except Exception as exc:
                 logger.error("[SCALP] Loop error: %s", exc, exc_info=True)
             time.sleep(_INTERVAL_SEC)
+
+    # ── Dynamic pair discovery ────────────────────────────────────────────────
+
+    def _refresh_active_pairs(self):
+        """Run the screener if the interval has elapsed; no-op otherwise."""
+        if time.time() - self._screener_ts < _SCREENER_INTERVAL_SEC:
+            return
+        self._screener_ts = time.time()
+        discovered = self._discover_pairs()
+        if discovered:
+            self._active_pairs = discovered
+
+    def _discover_pairs(self) -> list:
+        """Fetch all Kraken EUR pairs, filter by volume, return top N altnames."""
+        try:
+            all_pairs = self._api.get_asset_pairs()
+            if not all_pairs:
+                logger.warning("[SCALP] Screener: AssetPairs empty — keeping existing list")
+                return self._active_pairs or list(_PAIRS_FALLBACK)
+
+            # Build altname → official_key for online EUR pairs only
+            eur_map: dict = {}
+            for official_key, info in all_pairs.items():
+                if official_key.endswith(".d"):
+                    continue
+                if info.get("status") != "online":
+                    continue
+                if info.get("quote") not in ("ZEUR", "EUR"):
+                    continue
+                altname = info.get("altname", official_key)
+                if any(kw in altname.upper() for kw in _EXCLUDE_KEYWORDS):
+                    continue
+                eur_map[altname] = official_key
+
+            if not eur_map:
+                return self._active_pairs or list(_PAIRS_FALLBACK)
+
+            # Batch-fetch Ticker to rank by 24h volume
+            # Response keys are official names; build reverse lookup
+            rev = {v: k for k, v in eur_map.items()}
+            altnames = list(eur_map.keys())
+            volumes: dict = {}  # altname → EUR 24h volume
+
+            for i in range(0, len(altnames), _SCREENER_CHUNK):
+                chunk = altnames[i : i + _SCREENER_CHUNK]
+                ticker = self._api.get_ticker_batch(chunk)
+                if not ticker:
+                    continue
+                for resp_key, tick in ticker.items():
+                    altname = rev.get(resp_key) or resp_key
+                    try:
+                        vol_base = float(tick["v"][1])   # 24h rolling volume
+                        price    = float(tick["c"][0])   # last trade price
+                        volumes[altname] = vol_base * price
+                    except (KeyError, IndexError, ValueError):
+                        pass
+
+            qualified = [(a, v) for a, v in volumes.items() if v >= _MIN_VOL_EUR_24H]
+            qualified.sort(key=lambda x: x[1], reverse=True)
+            top_pairs = [a for a, _ in qualified[:_MAX_ACTIVE_PAIRS]]
+
+            if not top_pairs:
+                logger.warning("[SCALP] Screener: no pairs met €%.0f vol filter — using fallback", _MIN_VOL_EUR_24H)
+                return list(_PAIRS_FALLBACK)
+
+            logger.info(
+                "[SCALP] Screener: %d EUR pairs → %d qualify (≥€%.0f/day) → top %d selected",
+                len(eur_map), len(qualified), _MIN_VOL_EUR_24H, len(top_pairs),
+            )
+            try:
+                path = self._data_dir / "scalper_active_pairs.json"
+                path.write_text(json.dumps({
+                    "pairs": top_pairs,
+                    "ts": time.time(),
+                    "total_eur_pairs": len(eur_map),
+                    "qualifying": len(qualified),
+                }, separators=(",", ":")))
+            except Exception:
+                pass
+            return top_pairs
+
+        except Exception as exc:
+            logger.warning("[SCALP] Screener error: %s", exc)
+            return self._active_pairs or list(_PAIRS_FALLBACK)
 
     # ── Exit logic ────────────────────────────────────────────────────────────
 
@@ -272,7 +377,18 @@ class ScalperEngine:
         bear = self._is_bear_market()
         if bear:
             logger.debug("[SCALP] Bear market — scoring pairs for display but skipping entries")
-        for pair in _PAIRS:
+
+        active_pairs = self._active_pairs or list(_PAIRS_FALLBACK)
+
+        with self._lock:
+            thresh = self._ai_score_thresh
+
+        best_pair    = None
+        best_score   = 0.0
+        best_price   = 0.0
+        best_signals: dict = {}
+
+        for pair in active_pairs:
             with self._lock:
                 has_position = pair in self._positions
                 blacklisted  = pair in self._ai_blacklist
@@ -287,19 +403,26 @@ class ScalperEngine:
             with self._lock:
                 self._pair_scores[pair] = score
 
-            if bear:
-                continue  # scores tracked for dashboard, no new longs in downtrend
-
-            price = self._get_price(pair)
-            if price is None or price <= 0:
+            if bear or score < thresh:
                 continue
 
-            with self._lock:
-                thresh = self._ai_score_thresh
-            if score >= thresh:
-                self._open_position(pair, price, score, signals)
-            elif score <= -thresh:
-                logger.debug("[SCALP] %s SELL signal (score=%.1f) — shorts disabled", pair, score)
+            if score > best_score:
+                price = self._get_price(pair)
+                if price and price > 0:
+                    best_pair    = pair
+                    best_score   = score
+                    best_price   = price
+                    best_signals = signals
+
+        if best_pair:
+            self._open_position(best_pair, best_price, best_score, best_signals)
+
+        # Prune scores for pairs that are no longer in the active set
+        active_set = set(active_pairs)
+        with self._lock:
+            stale = [p for p in list(self._pair_scores) if p not in active_set]
+            for p in stale:
+                del self._pair_scores[p]
 
     def _score_pair(self, pair: str) -> Optional[tuple]:
         """Return (score, signals_dict) or None. Uses live AI-tuned thresholds."""
