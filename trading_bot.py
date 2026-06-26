@@ -3167,6 +3167,31 @@ class TradingBot:
             self.last_daily_reset_ts = int(time.time())
             self.logger.info(f"Daily start balance reset to {self.daily_start_balance:.2f} EUR")
 
+        # Portfolio valuation — must be calculated before monthly tracking uses it
+        self._refresh_cashflows_from_ledger()
+        adjusted_pnl = self._adjusted_pnl_eur(current_balance)
+        holdings_value = 0.0
+        try:
+            holdings_value = float(sum(
+                (self.position_qty.get(p, 0.0) or self.holdings.get(p, 0.0))
+                * self.pair_prices.get(p, 0.0)
+                for p in self.trade_pairs
+            ))
+        except Exception:
+            pass
+        # Include open scalper positions — their deployed cash is not a loss
+        _sc = getattr(self, ‘_scalper’, None)
+        if _sc is not None:
+            try:
+                for _scp, _scv in _sc.get_status().get(‘positions’, {}).items():
+                    _sc_qty   = float(_scv.get(‘qty’, 0) or 0)
+                    _sc_price = float(self.pair_prices.get(_scp) or _scv.get(‘entry’) or 0)
+                    holdings_value += _sc_qty * _sc_price
+            except Exception as _sce:
+                self.logger.debug("Scalper portfolio calc error: %s", _sce)
+        reserve = float(self._estimate_open_buy_reserve_eur() or 0)
+        portfolio_value = float(current_balance or 0) + holdings_value + reserve
+
         if now.month != self._monthly_start_month or self._monthly_start_balance <= 0:
             self._monthly_start_balance = portfolio_value
             self._monthly_start_month = now.month
@@ -3189,30 +3214,7 @@ class TradingBot:
             except Exception:
                 pass
 
-        # Portfolio valuation and drawdown circuit-breaker
-        self._refresh_cashflows_from_ledger()
-        adjusted_pnl = self._adjusted_pnl_eur(current_balance)
-        holdings_value = 0.0
-        try:
-            holdings_value = float(sum(
-                (self.position_qty.get(p, 0.0) or self.holdings.get(p, 0.0))
-                * self.pair_prices.get(p, 0.0)
-                for p in self.trade_pairs
-            ))
-        except Exception:
-            pass
-        # Include open scalper positions — their deployed cash is not a loss
-        _sc = getattr(self, '_scalper', None)
-        if _sc is not None:
-            try:
-                for _scp, _scv in _sc.get_status().get('positions', {}).items():
-                    _sc_qty   = float(_scv.get('qty', 0) or 0)
-                    _sc_price = float(self.pair_prices.get(_scp) or _scv.get('entry') or 0)
-                    holdings_value += _sc_qty * _sc_price
-            except Exception as _sce:
-                self.logger.debug("Scalper portfolio calc error: %s", _sce)
-        reserve = float(self._estimate_open_buy_reserve_eur() or 0)
-        portfolio_value = float(current_balance or 0) + holdings_value + reserve
+        # Drawdown circuit-breaker
 
         try:
             self.peak_balance = max(getattr(self, 'peak_balance', portfolio_value), portfolio_value)
