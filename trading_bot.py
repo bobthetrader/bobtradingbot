@@ -2149,6 +2149,53 @@ class TradingBot:
         """Return total P&L since the bot was first ever started."""
         return current_balance - getattr(self, "cumulative_start_eur", current_balance)
 
+    # ------------------------------------------------------------------
+    # Persistent balance state — peak_balance + initial_balance survive restarts
+    # ------------------------------------------------------------------
+
+    def _balance_state_path(self) -> Path:
+        return Path(__file__).parent / "data" / "balance_state.json"
+
+    def _save_balance_state(self, portfolio_value: float) -> None:
+        """Persist peak_balance and initial_balance_eur so restarts don't spike the display."""
+        try:
+            path = self._balance_state_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            state = {
+                "peak_balance":      round(float(getattr(self, "peak_balance", portfolio_value)), 4),
+                "initial_balance_eur": round(float(getattr(self, "initial_balance_eur", portfolio_value)), 4),
+            }
+            path.write_text(json.dumps(state))
+        except Exception as exc:
+            self.logger.warning("Could not save balance state: %s", exc)
+
+    def _load_balance_state(self, fallback_balance: float) -> None:
+        """Restore peak_balance and initial_balance_eur from disk.
+
+        On the very first run the fallback_balance (EUR cash) is used and saved.
+        On subsequent restarts the persisted values are restored so the dashboard
+        shows a smooth continuation rather than a jump.
+        """
+        path = self._balance_state_path()
+        try:
+            if path.exists():
+                state = json.loads(path.read_text())
+                self.peak_balance       = float(state.get("peak_balance",       fallback_balance))
+                self.initial_balance_eur= float(state.get("initial_balance_eur",fallback_balance))
+                self.logger.info(
+                    "Restored balance state: peak=%.2f initial=%.2f",
+                    self.peak_balance, self.initial_balance_eur,
+                )
+            else:
+                self.peak_balance        = fallback_balance
+                self.initial_balance_eur = fallback_balance
+                self._save_balance_state(fallback_balance)
+                self.logger.info("Created balance state: initial=%.2f", fallback_balance)
+        except Exception as exc:
+            self.logger.warning("Could not load balance state: %s", exc)
+            self.peak_balance        = fallback_balance
+            self.initial_balance_eur = fallback_balance
+
     def _count_open_positions(self) -> int:
         """Return the number of pairs where holdings exceed the minimum tradeable volume.
         Uses position_qty as primary source â€” holdings is zeroed by _sync_account_state
@@ -2999,8 +3046,7 @@ class TradingBot:
         print("=" * 60)
 
         initial_balance = self.get_eur_balance()
-        self.initial_balance_eur = initial_balance
-        self.peak_balance = initial_balance
+        self._load_balance_state(initial_balance)   # restores peak + initial from disk
         self.daily_start_balance = initial_balance
         self._load_cumulative_pnl_state(initial_balance)
         self._sync_account_state(force_history=True)
@@ -4117,6 +4163,7 @@ class TradingBot:
                                 pass
                         with open(os.path.join(os.path.dirname(__file__), 'data', 'bot_status.json'), 'w') as _sf:
                             json.dump(_status, _sf)
+                        self._save_balance_state(_status.get("portfolio_value", 0.0))
                         self.logger.debug("Dashboard status written (loop %d)", iteration)
                     except Exception as exc:
                         self.logger.warning("bot_status.json write failed: %s", exc)
