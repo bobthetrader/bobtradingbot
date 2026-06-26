@@ -3584,12 +3584,13 @@ class TradingBot:
                     symbol = listing["symbol"]
                     if symbol in self._listing_watchlist:
                         continue
-                    # Skip listings that are already older than the hold window —
-                    # they expired and were removed; re-adding them just resets the clock
+                    # Skip listings older than 2× the hold window — truly stale coins.
+                    # Using 2× (24h) rather than 1× because blog RSS listed_at is the
+                    # announcement time, which can be hours before the coin goes live.
                     listing_age_h = (now - listing.get("listed_at", now)) / 3600
-                    if listing_age_h > self._listing_hold_hours:
+                    if listing_age_h > self._listing_hold_hours * 2:
                         self.logger.debug(
-                            "NEW LISTING: %s listed %.1fh ago — older than hold window, skipping",
+                            "NEW LISTING: %s listed %.1fh ago — older than 2× hold window, skipping",
                             symbol, listing_age_h,
                         )
                         continue
