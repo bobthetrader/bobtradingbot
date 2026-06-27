@@ -42,6 +42,7 @@ _MIN_TRADES        = 20    # minimum trades in window before AI will run
 _NEUTRAL_TOLERANCE = 5.0   # pp — within 5 percentage points of baseline = neutral (keep)
 _MAX_FAILED        = 10    # sliding window of remembered failed changes
 _FAILED_EXPIRY_H   = 48    # hours before a failed change can be retried
+_MAX_BLACKLIST     = 5     # never blacklist more than this many pairs at once
 
 
 class ScalperAI:
@@ -172,6 +173,16 @@ class ScalperAI:
         lo, hi    = _BOUNDS[param]
         new_value = round(max(lo, min(hi, float(suggestion["new_value"]))), 4)
         old_value = float(state["current_params"].get(param, _DEFAULTS[param]))
+
+        # Cap blacklist — if overall WR is low it's a market condition, not pair-specific
+        if len(blacklist) > _MAX_BLACKLIST:
+            pair_wrs = self._pair_stats(window)
+            ranked   = sorted(pair_wrs.items(),
+                              key=lambda x: x[1]["w"] / (x[1]["w"] + x[1]["l"])
+                              if (x[1]["w"] + x[1]["l"]) >= 3 else 1.0)
+            blacklist = [p for p, _ in ranked[:_MAX_BLACKLIST]]
+            logger.info("[SCALP-AI] Blacklist capped at %d pairs (was %d suggested)",
+                        _MAX_BLACKLIST, len(suggestion.get("pairs_blacklist", [])))
 
         # Always update blacklist (independent of param experiment)
         state["pairs_blacklist"] = blacklist
@@ -395,7 +406,9 @@ TASK:
 3. Consider the current time ({now_utc.strftime('%H:%M UTC')}) — if certain hours perform better/worse,
    factor that into which direction to move a parameter right now.
 4. Do NOT suggest any direction listed in BLOCKED DIRECTIONS.
-5. Also suggest pairs_blacklist: pairs with ≤33% win rate that should be temporarily excluded.
+5. Also suggest pairs_blacklist: pairs with ≤33% win rate AND at least 3 trades in this window.
+   IMPORTANT: only blacklist pairs that are clearly worse than the rest — maximum 3-5 pairs.
+   If overall win rate is below 40%, the problem is market conditions not specific pairs, so blacklist nothing.
 
 Respond ONLY with valid JSON (no markdown, no extra text):
 {{
