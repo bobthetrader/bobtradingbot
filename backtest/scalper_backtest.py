@@ -815,19 +815,33 @@ def compute_recommendations(df: pd.DataFrame) -> dict:
     }
 
 
-def push_recommendations_to_docker(recs: dict):
-    """Write backtest_recommendations.json into the Docker data volume."""
-    content = json.dumps(recs, indent=2)
-    result  = subprocess.run(
-        ["docker", "run", "--rm", "-i",
-         "-v", f"{DOCKER_VOLUME}:/data",
-         "alpine", "sh", "-c", f"cat > /data/{RECS_FILENAME}"],
-        input=content, text=True, capture_output=True,
-    )
-    if result.returncode == 0:
-        print(f"  Pushed recommendations to Docker volume: /data/{RECS_FILENAME}")
-    else:
-        print(f"  Warning: could not push to Docker: {result.stderr[:120]}")
+def git_push_recommendations(recs: dict):
+    """
+    Save backtest_recommendations.json to the repo root and push to git.
+    The server's 9:45am cron does git pull and copies it into the Docker volume
+    so the live bot picks it up on its next AI trigger.
+    """
+    repo_root  = HERE.parent
+    recs_file  = repo_root / RECS_FILENAME
+    recs_file.write_text(json.dumps(recs, indent=2), encoding="utf-8")
+
+    try:
+        subprocess.run(["git", "-C", str(repo_root), "add", RECS_FILENAME],
+                       check=True, capture_output=True)
+        msg = (f"Update backtest recommendations "
+               f"({recs['trade_count']} trades, "
+               f"best RSI<={recs['best']['rsi_buy_max']} score>={recs['best']['score_min']})")
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "commit", "-m", msg],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0 and "nothing to commit" in result.stdout + result.stderr:
+            print("  Recommendations unchanged since last run — no commit needed")
+            return
+        subprocess.run(["git", "-C", str(repo_root), "push"], check=True, capture_output=True)
+        print(f"  Committed and pushed {RECS_FILENAME} to git")
+    except subprocess.CalledProcessError as exc:
+        print(f"  Warning: git push failed: {exc}")
 
 
 # ── Report assembly ───────────────────────────────────────────────────────────
@@ -860,18 +874,17 @@ def generate_report(df: pd.DataFrame, out_path: Path):
     print(f"\nReport saved: {out_path}")
     print(f"Open in browser: file:///{out_path.as_posix()}")
 
-    # Write AI feedback file locally and push to Docker volume
+    # Write AI feedback file and push via git for server pickup
     recs = compute_recommendations(df)
     if recs:
-        recs_path = DATA_DIR / RECS_FILENAME
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        recs_path.write_text(json.dumps(recs, indent=2), encoding="utf-8")
+        (DATA_DIR / RECS_FILENAME).write_text(json.dumps(recs, indent=2), encoding="utf-8")
         best = recs["best"]
         sig = "BH-sig" if best['bh_significant'] else "not-BH-sig"
         print(f"\nBest validated combo: RSI<={best['rsi_buy_max']}, Score>={best['score_min']} "
               f"-> {best['win_rate']}% WR [{best['wilson_lo']}%-{best['wilson_hi']}%], "
               f"P(>50%)={best['prob_above_50']}%, n={best['n_trades']}, {sig}")
-        push_recommendations_to_docker(recs)
+        git_push_recommendations(recs)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
