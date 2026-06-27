@@ -59,33 +59,38 @@ class ScalperAI:
         if not self._api_key:
             logger.warning("[SCALP-AI] OPENROUTER_API_KEY not set — skipping AI review")
             self._log_adjustment(trades, current, current, [],
-                                 "OPENROUTER_API_KEY not set — add it to .env to enable AI tuning")
+                                 "OPENROUTER_API_KEY not set — add it to .env to enable AI tuning",
+                                 success=False)
             return {}
 
         if len(trades) < _MIN_TRADES:
             logger.info("[SCALP-AI] Only %d trades — need %d to analyze", len(trades), _MIN_TRADES)
             self._log_adjustment(trades, current, current, [],
-                                 f"Insufficient data: {len(trades)} trades (need {_MIN_TRADES})")
+                                 f"Insufficient data: {len(trades)} trades (need {_MIN_TRADES})",
+                                 success=False)
             return {}
 
         prompt = self._build_prompt(trades, current)
         raw    = self._call_openrouter(prompt)
         if not raw:
             self._log_adjustment(trades, current, current, [],
-                                 "All OpenRouter models failed to respond — will retry next trigger")
+                                 "All OpenRouter models failed to respond — will retry next trigger",
+                                 success=False)
             return {}
 
         suggested = self._parse_response(raw)
         if not suggested:
             self._log_adjustment(trades, current, current, [],
-                                 "Could not parse AI response — will retry next trigger")
+                                 "Could not parse AI response — will retry next trigger",
+                                 success=False)
             return {}
 
         validated = self._validate(suggested, current)
         changes   = self._diff(current, validated, suggested.get("pairs_blacklist", []))
 
         self._write_params(validated, suggested.get("pairs_blacklist", []))
-        self._log_adjustment(trades, current, validated, changes, suggested.get("reasoning", ""))
+        self._log_adjustment(trades, current, validated, changes, suggested.get("reasoning", ""),
+                             success=True)
 
         if changes:
             logger.info("[SCALP-AI] Params updated: %s", changes)
@@ -265,7 +270,7 @@ Respond ONLY with valid JSON — no markdown, no explanation outside the JSON:
             logger.warning("[SCALP-AI] Could not write params: %s", exc)
 
     def _log_adjustment(self, trades: list, old: dict, new: dict,
-                        changes: list, reasoning: str):
+                        changes: list, reasoning: str, success: bool = True):
         try:
             self._data_dir.mkdir(parents=True, exist_ok=True)
             wins     = sum(1 for t in trades if t.get("pnl_eur", 0) > 0)
@@ -291,6 +296,7 @@ Respond ONLY with valid JSON — no markdown, no explanation outside the JSON:
                 "params_after":    new,
                 "pair_stats":      pair_stats,
                 "reasoning":       reasoning,
+                "success":         success,
             }
             with open(self._adjustments_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")

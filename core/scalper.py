@@ -171,11 +171,18 @@ class ScalperEngine:
         self._load_ai_params()
         _completed = self._count_completed_trades()
         self._trades_since_ai = _completed % _AI_REVIEW_EVERY
-        # If trades exist but AI has never logged a result, trigger on the next trade
+        # If trades exist but AI has never run successfully, trigger on the next trade
         _adj_path = self._data_dir / "scalper_ai_adjustments.jsonl"
-        if _completed >= _AI_REVIEW_EVERY and not _adj_path.exists():
+        _last_succeeded = False
+        if _adj_path.exists():
+            try:
+                last_line = _adj_path.read_text(encoding="utf-8").strip().split("\n")[-1]
+                _last_succeeded = json.loads(last_line).get("success", True)
+            except Exception:
+                pass
+        if _completed >= _AI_REVIEW_EVERY and not _last_succeeded:
             self._trades_since_ai = _AI_REVIEW_EVERY - 1
-            logger.info("[SCALP-AI] Adjustments file missing — AI review will fire on next trade close")
+            logger.info("[SCALP-AI] Last AI review failed — will retry on next trade close")
 
     # ── Public API ────────────────────────────────────────────────────────────
 
