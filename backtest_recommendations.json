@@ -1,0 +1,72 @@
+{
+  "generated_at": "2026-06-27T16:18:47.319093+00:00",
+  "trade_count": 977,
+  "best": {
+    "rsi_buy_max": 32,
+    "score_min": 3.5,
+    "win_rate": 50.9,
+    "wilson_lo": 37.9,
+    "wilson_hi": 63.9,
+    "prob_above_50": 55.4,
+    "n_trades": 53,
+    "p_value": 0.5,
+    "bh_significant": false
+  },
+  "top_combinations": [
+    {
+      "rsi_buy_max": 32,
+      "score_min": 3.5,
+      "win_rate": 50.9,
+      "wilson_lo": 37.9,
+      "wilson_hi": 63.9,
+      "prob_above_50": 55.4,
+      "n_trades": 53,
+      "p_value": 0.5,
+      "bh_significant": false
+    },
+    {
+      "rsi_buy_max": 32,
+      "score_min": 4.0,
+      "win_rate": 50.9,
+      "wilson_lo": 37.9,
+      "wilson_hi": 63.9,
+      "prob_above_50": 55.4,
+      "n_trades": 53,
+      "p_value": 0.5,
+      "bh_significant": false
+    },
+    {
+      "rsi_buy_max": 33,
+      "score_min": 3.5,
+      "win_rate": 50.9,
+      "wilson_lo": 37.9,
+      "wilson_hi": 63.9,
+      "prob_above_50": 55.4,
+      "n_trades": 53,
+      "p_value": 0.5,
+      "bh_significant": false
+    },
+    {
+      "rsi_buy_max": 33,
+      "score_min": 4.0,
+      "win_rate": 50.9,
+      "wilson_lo": 37.9,
+      "wilson_hi": 63.9,
+      "prob_above_50": 55.4,
+      "n_trades": 53,
+      "p_value": 0.5,
+      "bh_significant": false
+    },
+    {
+      "rsi_buy_max": 35,
+      "score_min": 3.5,
+      "win_rate": 50.9,
+      "wilson_lo": 37.9,
+      "wilson_hi": 63.9,
+      "prob_above_50": 55.4,
+      "n_trades": 53,
+      "p_value": 0.5,
+      "bh_significant": false
+    }
+  ]
+}
