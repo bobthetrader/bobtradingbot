@@ -1047,6 +1047,13 @@ def _build_page() -> str:
             changes     = adj.get("changes", [])
             reasoning   = adj.get("reasoning", "")
             pair_stats  = adj.get("pair_stats", {})
+            adj_type    = adj.get("type", "propose")
+            type_label  = {
+                "propose":         ('<span style="color:#58a6ff;font-size:10px">▶ TEST</span>', "#58a6ff"),
+                "evaluate_kept":   ('<span style="color:#00c851;font-size:10px">✓ KEPT</span>', "#00c851"),
+                "evaluate_reverted": ('<span style="color:#ff4444;font-size:10px">✗ REVERT</span>', "#ff4444"),
+            }.get(adj_type, ('<span style="color:#8b949e;font-size:10px">—</span>', "#8b949e"))
+            type_badge, _ = type_label
 
             if not changes:
                 change_html = '<span style="color:#8b949e;font-size:11px">no changes</span>'
@@ -1096,7 +1103,7 @@ def _build_page() -> str:
             adj_rows += (
                 f'<tr style="border-bottom:1px solid #21262d">'
                 f'<td style="color:#8b949e;font-size:11px;white-space:nowrap;vertical-align:top">'
-                f'{adj_ts}<br>{adj_n} trades</td>'
+                f'{adj_ts}<br>{adj_n} trades<br>{type_badge}</td>'
                 f'<td style="color:{adj_wr_col};font-weight:bold;vertical-align:top">{adj_wr:.0f}%</td>'
                 f'<td style="vertical-align:top">{change_html}{worst_html}</td>'
                 f'<td style="color:#8b949e;font-size:11px;vertical-align:top">{reasoning[:120]}</td>'

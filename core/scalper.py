@@ -726,9 +726,8 @@ class ScalperEngine:
                 except ImportError:
                     from scalper_ai import ScalperAI
                 ai = ScalperAI(data_dir=str(self._data_dir))
-                new_params = ai.analyze()
-                if new_params:
-                    self._load_ai_params()
+                ai.analyze()
+                self._load_ai_params()  # always reload — covers both proposals and reverts
             except Exception as exc:
                 logger.warning("[SCALP-AI] Review thread error: %s", exc)
 
