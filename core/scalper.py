@@ -359,11 +359,14 @@ class ScalperEngine:
                 sl = self._ai_sl_pct
 
             if pct_change >= tp:
-                self._close_position(pair, price, "TAKE_PROFIT", pct_change)
+                self._close_position(pair, price, "TAKE_PROFIT", pct_change,
+                                     self._get_exit_signals(pair))
             elif pct_change <= -sl:
-                self._close_position(pair, price, "STOP_LOSS", pct_change)
+                self._close_position(pair, price, "STOP_LOSS", pct_change,
+                                     self._get_exit_signals(pair))
             elif held_min >= _MAX_HOLD_MIN:
-                self._close_position(pair, price, "TIMEOUT", pct_change)
+                self._close_position(pair, price, "TIMEOUT", pct_change,
+                                     self._get_exit_signals(pair))
 
     # ── Entry logic ───────────────────────────────────────────────────────────
 
@@ -534,7 +537,32 @@ class ScalperEngine:
             signals.get("rsi") or 0.0, signals.get("vwap_dev") or 0.0,
         )
 
-    def _close_position(self, pair: str, price: float, reason: str, pct: float):
+    def _get_exit_signals(self, pair: str) -> dict:
+        """Fetch RSI and VWAP deviation at the moment of exit (no order book needed)."""
+        try:
+            ohlc = self._api.get_ohlc_data(pair, interval=1)
+            if not ohlc:
+                return {}
+            key = next((k for k in ohlc if k != "last"), None)
+            if not key:
+                return {}
+            candles = ohlc[key]
+            if len(candles) < _RSI_PERIOD + 2:
+                return {}
+            closes = [float(r[4]) for r in candles]
+            rsi    = _calc_rsi(closes, _RSI_PERIOD)
+            vwap   = _calc_vwap(candles[-_VWAP_CANDLES:])
+            price  = closes[-1]
+            vwap_dev = round((price - vwap) / vwap * 100, 4) if vwap and vwap > 0 else None
+            return {
+                "exit_rsi":      round(rsi, 2) if rsi is not None else None,
+                "exit_vwap_dev": vwap_dev,
+            }
+        except Exception:
+            return {}
+
+    def _close_position(self, pair: str, price: float, reason: str, pct: float,
+                        exit_signals: Optional[dict] = None):
         with self._lock:
             pos = self._positions.pop(pair, None)
         if not pos:
@@ -542,6 +570,7 @@ class ScalperEngine:
 
         pnl_eur  = (price - pos["entry"]) * pos["qty"]
         held_min = (time.time() - pos["ts"]) / 60
+        sig      = exit_signals or {}
         trade = {
             "ts":           datetime.now(timezone.utc).isoformat(),
             "pair":         pair,
@@ -553,9 +582,11 @@ class ScalperEngine:
             "reason":       reason,
             "held_min":     round(held_min, 1),
             "entry_score":  round(pos.get("score", 0), 2),
-            "entry_rsi":    pos.get("rsi"),
+            "entry_rsi":          pos.get("rsi"),
             "entry_vwap_dev":     pos.get("vwap_dev"),
             "entry_ob_imbalance": pos.get("ob_imbalance"),
+            "exit_rsi":           sig.get("exit_rsi"),
+            "exit_vwap_dev":      sig.get("exit_vwap_dev"),
         }
         # Return allocation + P&L to paper balance (allocation was deducted on buy)
         try:
