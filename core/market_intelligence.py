@@ -76,6 +76,7 @@ logger = logging.getLogger(__name__)
 _INTEL_LOG = os.path.join(os.path.dirname(__file__), "..", "data", "intelligence_log.jsonl")
 _INTEL_LOG_KEEP = 200   # max entries to retain
 _intel_call_count = 0   # incremented each panel run; expensive models skip odd calls
+_sonar_call_count = 0   # sonar has its own counter — runs every 6th call (≈hourly)
 
 
 def _load_recent_intel(n: int = 5) -> list:
@@ -137,7 +138,7 @@ _OPENROUTER_MODELS = [
             "Based on what you find, reply with exactly: 'Score: X. News: <one sentence summary>.' "
             "where X is an integer -5 (very negative news) to +5 (very positive news)."
         ),
-        True,   # expensive — every 20 min
+        "hourly",   # sonar-only cadence — every 6th call (≈hourly)
     ),
     (
         "deepseek/deepseek-r1",
@@ -513,15 +514,22 @@ def get_market_intelligence(pairs: list, bot_context: dict = None) -> dict:
             model_scores[name]  = score
         logger.debug("Model %s → score=%.1f text=%s", name, score, (text or "")[:80])
 
-    # Launch models in parallel — expensive models only on even-numbered calls
-    global _intel_call_count
+    # Launch models in parallel — tiered cadence to control cost
+    global _intel_call_count, _sonar_call_count
     _intel_call_count += 1
-    run_expensive = (_intel_call_count % 2 == 1)  # True on calls 1, 3, 5 … (every 20 min)
-    logger.info("AI panel call #%d — expensive models: %s", _intel_call_count, run_expensive)
+    run_expensive = (_intel_call_count % 2 == 1)   # every 20 min
+    _sonar_call_count += 1
+    run_sonar     = (_sonar_call_count % 6 == 1)   # every 60 min
+    logger.info("AI panel call #%d — expensive: %s  sonar: %s",
+                _intel_call_count, run_expensive, run_sonar)
 
     threads = []
     for model_id, name, _weight, _role, system, expensive in _OPENROUTER_MODELS:
-        if expensive and not run_expensive:
+        if expensive == "hourly" and not run_sonar:
+            model_outputs[name] = "skipped"
+            model_scores[name]  = 0.0
+            continue
+        if expensive is True and not run_expensive:
             model_outputs[name] = "skipped"
             model_scores[name]  = 0.0
             continue
