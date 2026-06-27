@@ -47,7 +47,8 @@ DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 RSI_BUY_GRID    = [25, 27, 28, 29, 30, 31, 32, 33, 35]
 SCORE_GRID      = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
-MIN_TRADES_GRID = 5   # minimum trades in a grid cell to show a result
+MIN_TRADES_GRID = 5    # minimum trades in a grid cell to show a result
+N_BOOTSTRAP     = 1000 # resamples per bootstrap CI calculation
 
 
 # ── Docker sync ───────────────────────────────────────────────────────────────
@@ -142,6 +143,49 @@ def col_wr(v: float) -> str:
 def col_pnl(v: float) -> str:
     return "#00c851" if v >= 0 else "#ff4444"
 
+def bootstrap_ci(wins: pd.Series, n_boot: int = N_BOOTSTRAP) -> tuple[float, float, float]:
+    """Vectorised bootstrap: returns (mean_wr%, ci_low%, ci_high%) at 95% confidence.
+
+    Uses numpy to resample all n_boot iterations in one array operation — fast
+    even for 1000 resamples on large datasets.
+    """
+    n = len(wins)
+    if n < 2:
+        return (0.0, 0.0, 0.0)
+    arr = wins.to_numpy(dtype=float)
+    # Shape (n_boot, n) — each row is one resample
+    idx      = np.random.randint(0, n, size=(n_boot, n))
+    boot_wrs = arr[idx].mean(axis=1) * 100
+    return (
+        round(float(boot_wrs.mean()),                      1),
+        round(float(np.percentile(boot_wrs,  2.5)),        1),
+        round(float(np.percentile(boot_wrs, 97.5)),        1),
+    )
+
+def ci_html(mean_wr: float, lo: float, hi: float, n: int) -> tuple[str, str]:
+    """Return (html_string, td_style) for a bootstrap CI cell.
+
+    Colour logic:
+      green  — CI lower bound ≥ 50% (reliably profitable)
+      yellow — point estimate ≥ 50% but CI crosses 50% (possibly profitable)
+      red    — point estimate < 50% (losing)
+      grey   — CI is very wide (unreliable — too few trades)
+    """
+    width = hi - lo
+    if n < MIN_TRADES_GRID:
+        return ("—", "color:#3d444d;text-align:center")
+    if lo >= 50:
+        c = "#00c851"   # reliably above 50%
+    elif mean_wr >= 50:
+        c = "#ffbb33"   # looks good but CI crosses 50%
+    else:
+        c = "#ff4444"
+    ci_col = "#3d444d" if width > 30 else "#8b949e"
+    html = (f'<b style="color:{c}">{mean_wr:.1f}%</b> '
+            f'<span style="color:{ci_col};font-size:10px">[{lo:.0f}–{hi:.0f}]</span>'
+            f'<span style="color:#3d444d;font-size:10px"> n={n}</span>')
+    return (html, "")
+
 
 # ── HTML helpers ──────────────────────────────────────────────────────────────
 
@@ -187,7 +231,7 @@ def tbl(headers: list, rows: list) -> str:
 
 # ── Report sections ───────────────────────────────────────────────────────────
 
-def s_overview(df: pd.DataFrame) -> str:
+def s_overview(df: pd.DataFrame, n_boot: int = N_BOOTSTRAP) -> str:
     n         = len(df)
     wins      = int(df["win"].sum())
     wr_all    = wr(df["win"])
@@ -200,9 +244,12 @@ def s_overview(df: pd.DataFrame) -> str:
         last  = df["open_ts"].max().strftime("%Y-%m-%d")
         date_range = f"{first} → {last}"
 
+    mean_wr, lo, hi = bootstrap_ci(df["win"], n_boot)
+    wr_label = f"{mean_wr:.1f}% [{lo:.0f}–{hi:.0f}]"
+
     cards = (
         card("Trades", str(n))
-        + card("Win rate", f"{wr_all}%", col_wr(wr_all))
+        + card("Win rate [95% CI]", wr_label, col_wr(mean_wr))
         + card("W / L", f"{wins} / {n - wins}")
         + card("Total P&L", f"€{total_pnl:+.2f}", col_pnl(total_pnl))
         + card("Avg hold", f"{avg_held:.1f}m")
@@ -228,7 +275,7 @@ def s_overview(df: pd.DataFrame) -> str:
     )
 
 
-def s_time(df: pd.DataFrame) -> str:
+def s_time(df: pd.DataFrame, n_boot: int = N_BOOTSTRAP) -> str:
     if "entry_hour_utc" not in df.columns or df["entry_hour_utc"].isna().all():
         return "<h2>Time of Day</h2><p class='note'>No data yet.</p>"
 
@@ -237,16 +284,17 @@ def s_time(df: pd.DataFrame) -> str:
         g = df[df["entry_hour_utc"] == h]
         if len(g) < 2:
             continue
-        wr2 = wr(g["win"])
         avg_pnl = g["pnl_pct"].mean()
-        bar_width = min(int(wr2 * 0.8), 80)
+        mean_wr, lo, hi = bootstrap_ci(g["win"], n_boot)
+        bar_width = min(int(mean_wr * 0.8), 80)
         bar = (f'<div style="display:inline-block;width:{bar_width}px;height:8px;'
-               f'background:{col_wr(wr2)};border-radius:2px;vertical-align:middle;'
+               f'background:{col_wr(mean_wr)};border-radius:2px;vertical-align:middle;'
                f'margin-right:6px"></div>')
+        html, style = ci_html(mean_wr, lo, hi, len(g))
         hour_rows.append([
             f"{h:02d}:00 UTC",
             len(g),
-            (f"{bar}{wr2}%", f"color:{col_wr(wr2)};font-weight:bold"),
+            (f"{bar}{html}", style),
             (f"{avg_pnl:+.3f}%", f"color:{col_pnl(avg_pnl)}"),
             f"{g['held_min'].mean():.1f}m",
         ])
@@ -443,7 +491,7 @@ def s_exit_signals(df: pd.DataFrame) -> str:
     return out
 
 
-def s_grid(df: pd.DataFrame) -> str:
+def s_grid(df: pd.DataFrame, n_boot: int = N_BOOTSTRAP) -> str:
     if ("entry_rsi" not in df.columns or df["entry_rsi"].isna().all() or
             "entry_score" not in df.columns or df["entry_score"].isna().all()):
         return ("<h2>Parameter Grid Search</h2>"
@@ -455,8 +503,11 @@ def s_grid(df: pd.DataFrame) -> str:
             f"Cells with &lt;{MIN_TRADES_GRID} trades show —. "
             "Stricter filters find the best-performing subset of existing trades.</p>")
 
+    print("  Running bootstrap grid search...")
     headers = ["RSI ≤ ↓  /  Score ≥ →"] + [str(s) for s in SCORE_GRID]
     rows = []
+    # Track best by CI lower bound (not just point estimate) for reliability
+    best_lo, best_mean, best_n, best_rsi, best_score = 0.0, 0.0, 0, 0, 0
     for rsi in RSI_BUY_GRID:
         row = [str(rsi)]
         for score in SCORE_GRID:
@@ -465,43 +516,39 @@ def s_grid(df: pd.DataFrame) -> str:
             if n < MIN_TRADES_GRID:
                 row.append(("—", "color:#3d444d;text-align:center"))
             else:
-                wr2 = wr(g["win"])
-                c   = col_wr(wr2)
-                row.append(
-                    (f'<b style="color:{c}">{wr2}%</b>'
-                     f'<span style="color:#8b949e;font-size:10px"> n={n}</span>', "")
-                )
+                mean_wr, lo, hi = bootstrap_ci(g["win"], n_boot)
+                row.append(ci_html(mean_wr, lo, hi, n))
+                if lo > best_lo and n >= 10:
+                    best_lo, best_mean, best_n = lo, mean_wr, n
+                    best_rsi, best_score       = rsi, score
         rows.append(row)
 
     out += tbl(headers, rows)
-
-    # Highlight best cell (min 10 trades)
-    best_wr, best_n, best_rsi, best_score = 0.0, 0, 0, 0
-    for rsi in RSI_BUY_GRID:
-        for score in SCORE_GRID:
-            g = df[(df["entry_rsi"] <= rsi) & (df["entry_score"] >= score)]
-            if len(g) >= 10:
-                wr2 = wr(g["win"])
-                if wr2 > best_wr:
-                    best_wr, best_n, best_rsi, best_score = wr2, len(g), rsi, score
+    out += ("<p class='note'><b>Reading:</b> "
+            "60.2% [52–68] n=45 → point estimate 60.2%, 95% CI is 52%–68%, based on 45 trades. "
+            "<span style='color:#00c851'>Green</span> = CI lower bound above 50% (reliably profitable). "
+            "<span style='color:#ffbb33'>Amber</span> = looks profitable but CI crosses 50% (may be noise). "
+            "Wide brackets = too few trades to be confident.</p>")
 
     if best_rsi:
-        out += (f'<p style="color:#00c851;font-weight:bold">Best combination (≥10 trades): '
+        out += (f'<p style="color:#00c851;font-weight:bold">'
+                f'Most reliable combination (highest CI lower bound, ≥10 trades): '
                 f'RSI ≤ {best_rsi} + Score ≥ {best_score} → '
-                f'{best_wr}% win rate over {best_n} trades</p>')
+                f'{best_mean:.1f}% win rate, CI lower bound {best_lo:.1f}%, n={best_n}'
+                f'</p>')
 
     return out
 
 
-def s_pairs(df: pd.DataFrame) -> str:
+def s_pairs(df: pd.DataFrame, n_boot: int = N_BOOTSTRAP) -> str:
     rows = []
     for pair, g in df.groupby("pair"):
-        wr2      = wr(g["win"])
-        tot_pnl  = g["pnl_eur"].sum()
-        avg_pnl  = g["pnl_pct"].mean()
-        rows.append((wr2, [
+        tot_pnl = g["pnl_eur"].sum()
+        avg_pnl = g["pnl_pct"].mean()
+        mean_wr, lo, hi = bootstrap_ci(g["win"], n_boot)
+        rows.append((lo, [                        # sort by CI lower bound
             pair, len(g),
-            (f"{wr2}%", f"color:{col_wr(wr2)};font-weight:bold"),
+            ci_html(mean_wr, lo, hi, len(g)),
             (f"€{tot_pnl:+.4f}", f"color:{col_pnl(tot_pnl)}"),
             (f"{avg_pnl:+.3f}%", f"color:{col_pnl(avg_pnl)}"),
             f"{g['held_min'].mean():.1f}m",
@@ -510,7 +557,8 @@ def s_pairs(df: pd.DataFrame) -> str:
     rows.sort(key=lambda x: x[0], reverse=True)
 
     return ("<h2>Pair Performance</h2>"
-            + tbl(["Pair", "Trades", "Win Rate", "Total P&L", "Avg P&L %", "Avg Hold", "Sharpe"],
+            "<p class='note'>Sorted by bootstrap CI lower bound — pairs at the top are most reliably profitable, not just lucky.</p>"
+            + tbl(["Pair", "Trades", "Win Rate [95% CI]", "Total P&L", "Avg P&L %", "Avg Hold", "Sharpe"],
                   [r for _, r in rows]))
 
 
@@ -577,11 +625,11 @@ def s_concurrent(df: pd.DataFrame) -> str:
 
 # ── Report assembly ───────────────────────────────────────────────────────────
 
-def generate_report(df: pd.DataFrame, out_path: Path):
+def generate_report(df: pd.DataFrame, out_path: Path, n_boot: int = N_BOOTSTRAP):
     now   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    body  = (s_overview(df) + s_time(df) + s_entry_signals(df)
-             + s_exit_signals(df) + s_grid(df)
-             + s_pairs(df) + s_param_regimes(df) + s_concurrent(df))
+    body  = (s_overview(df, n_boot) + s_time(df, n_boot) + s_entry_signals(df)
+             + s_exit_signals(df) + s_grid(df, n_boot)
+             + s_pairs(df, n_boot) + s_param_regimes(df) + s_concurrent(df))
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -610,13 +658,16 @@ def generate_report(df: pd.DataFrame, out_path: Path):
 
 def main():
     parser = argparse.ArgumentParser(description="Scalper trade outcome analyser")
-    parser.add_argument("--data",     default=None,
+    parser.add_argument("--data",    default=None,
                         help="Path to scalper_trades.jsonl (default: backtest/data/)")
-    parser.add_argument("--no-sync",  action="store_true",
+    parser.add_argument("--no-sync", action="store_true",
                         help="Skip Docker sync, use cached data")
-    parser.add_argument("--out",      default=None,
+    parser.add_argument("--out",     default=None,
                         help="Output directory (default: backtest/reports/)")
+    parser.add_argument("--boots",   type=int, default=N_BOOTSTRAP,
+                        help=f"Bootstrap resamples per cell (default: {N_BOOTSTRAP})")
     args = parser.parse_args()
+    n_boot = args.boots
 
     if args.data:
         data_path = Path(args.data)
@@ -634,9 +685,9 @@ def main():
 
     print(f"Loading: {data_path}")
     df = load_trades(data_path)
-    print(f"Loaded {len(df)} trades")
+    print(f"Loaded {len(df)} trades  |  bootstrap resamples: {n_boot}")
 
-    generate_report(df, out_path)
+    generate_report(df, out_path, n_boot=n_boot)
 
 
 if __name__ == "__main__":
