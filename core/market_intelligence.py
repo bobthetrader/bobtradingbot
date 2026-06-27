@@ -10,7 +10,7 @@ Models
 ------
   hermes    nousresearch/hermes-3-llama-3.1-70b     Strategy & positioning
   sonar     perplexity/llama-3.1-sonar-small-128k-online  Live web search (real news)
-  deepseek  deepseek/deepseek-r1-distill-llama-70b  Technical pattern reasoning
+  deepseek  deepseek/deepseek-chat                  Technical pattern reasoning
   mistral   mistralai/mistral-7b-instruct            Fast sentiment cross-check
   gpt       gpt-4o-mini (OpenAI)                     General sentiment
 
@@ -141,7 +141,7 @@ _OPENROUTER_MODELS = [
         "hourly",   # sonar-only cadence — every 6th call (≈hourly)
     ),
     (
-        "deepseek/deepseek-r1",
+        "deepseek/deepseek-chat",
         "deepseek",
         1.0,
         "technical analyst",
