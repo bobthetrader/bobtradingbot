@@ -14,11 +14,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Free models tried in order — first success wins
+# Models tried in order — first success wins (same pool as main AI panel)
 _FREE_MODELS = [
-    "qwen/qwen3-235b-a22b:free",
-    "deepseek/deepseek-r1:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
+    "meta-llama/llama-3.1-8b-instruct",
+    "deepseek/deepseek-r1",
+    "nousresearch/hermes-3-llama-3.1-70b",
 ]
 
 # Hard bounds — identical to scalper.py _AI_BOUNDS (duplication intentional for safety)
