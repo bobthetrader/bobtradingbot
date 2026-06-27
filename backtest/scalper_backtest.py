@@ -50,6 +50,7 @@ RSI_BUY_GRID    = [25, 27, 28, 29, 30, 31, 32, 33, 35]
 SCORE_GRID      = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
 MIN_TRADES_GRID = 5     # minimum trades in a grid cell to show a result
 BH_ALPHA        = 0.05  # false discovery rate for Benjamini-Hochberg
+RECS_FILENAME   = "backtest_recommendations.json"
 
 
 # ── Docker sync ───────────────────────────────────────────────────────────────
@@ -766,6 +767,69 @@ def s_concurrent(df: pd.DataFrame) -> str:
             + tbl(["Other open positions", "Trades", "Win Rate [95% CI] / P(>50%)", "Avg P&L %"], rows))
 
 
+# ── AI feedback ──────────────────────────────────────────────────────────────
+
+def compute_recommendations(df: pd.DataFrame) -> dict:
+    """Extract top validated parameter combinations for AI feedback loop."""
+    if ("entry_rsi" not in df.columns or df["entry_rsi"].isna().all() or
+            "entry_score" not in df.columns or df["entry_score"].isna().all()):
+        return {}
+
+    combos = []
+    for rsi in RSI_BUY_GRID:
+        for score in SCORE_GRID:
+            g = df[(df["entry_rsi"] <= rsi) & (df["entry_score"] >= score)]
+            n = len(g)
+            if n < MIN_TRADES_GRID:
+                continue
+            pt, lo, hi       = wilson_ci(g["win"])
+            _, _, _, p_above = bayesian_ci(g["win"])
+            p_val            = _binomial_pval(g["win"])
+            combos.append({
+                "rsi_buy_max":   rsi,
+                "score_min":     score,
+                "win_rate":      pt,
+                "wilson_lo":     lo,
+                "wilson_hi":     hi,
+                "prob_above_50": p_above,
+                "n_trades":      n,
+                "p_value":       round(p_val, 6),
+            })
+
+    if not combos:
+        return {}
+
+    p_vals   = [c["p_value"] for c in combos]
+    bh_flags = bh_correct(p_vals)
+    for c, sig in zip(combos, bh_flags):
+        c["bh_significant"] = sig
+
+    # BH-significant first, then by Wilson lower bound
+    combos.sort(key=lambda c: (c["bh_significant"], c["wilson_lo"]), reverse=True)
+
+    return {
+        "generated_at":     datetime.now(timezone.utc).isoformat(),
+        "trade_count":      len(df),
+        "best":             combos[0],
+        "top_combinations": combos[:5],
+    }
+
+
+def push_recommendations_to_docker(recs: dict):
+    """Write backtest_recommendations.json into the Docker data volume."""
+    content = json.dumps(recs, indent=2)
+    result  = subprocess.run(
+        ["docker", "run", "--rm", "-i",
+         "-v", f"{DOCKER_VOLUME}:/data",
+         "alpine", "sh", "-c", f"cat > /data/{RECS_FILENAME}"],
+        input=content, text=True, capture_output=True,
+    )
+    if result.returncode == 0:
+        print(f"  Pushed recommendations to Docker volume: /data/{RECS_FILENAME}")
+    else:
+        print(f"  Warning: could not push to Docker: {result.stderr[:120]}")
+
+
 # ── Report assembly ───────────────────────────────────────────────────────────
 
 def generate_report(df: pd.DataFrame, out_path: Path):
@@ -795,6 +859,19 @@ def generate_report(df: pd.DataFrame, out_path: Path):
     out_path.write_text(html, encoding="utf-8")
     print(f"\nReport saved: {out_path}")
     print(f"Open in browser: file:///{out_path.as_posix()}")
+
+    # Write AI feedback file locally and push to Docker volume
+    recs = compute_recommendations(df)
+    if recs:
+        recs_path = DATA_DIR / RECS_FILENAME
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        recs_path.write_text(json.dumps(recs, indent=2), encoding="utf-8")
+        best = recs["best"]
+        sig = "BH-sig" if best['bh_significant'] else "not-BH-sig"
+        print(f"\nBest validated combo: RSI<={best['rsi_buy_max']}, Score>={best['score_min']} "
+              f"-> {best['win_rate']}% WR [{best['wilson_lo']}%-{best['wilson_hi']}%], "
+              f"P(>50%)={best['prob_above_50']}%, n={best['n_trades']}, {sig}")
+        push_recommendations_to_docker(recs)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

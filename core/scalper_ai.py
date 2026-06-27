@@ -231,6 +231,20 @@ class ScalperAI:
 
     # ── Prompt building ───────────────────────────────────────────────────────
 
+    def _load_backtest_recs(self) -> dict:
+        """Load backtest recommendations if they exist and are under 7 days old."""
+        recs_path = self._data_dir / "backtest_recommendations.json"
+        try:
+            if not recs_path.exists():
+                return {}
+            recs     = json.loads(recs_path.read_text(encoding="utf-8"))
+            age_secs = datetime.now(timezone.utc).timestamp() - self._parse_ts(recs.get("generated_at", ""))
+            if age_secs > 7 * 24 * 3600:
+                return {}
+            return recs
+        except Exception:
+            return {}
+
     def _build_prompt(self, trades: list, state: dict) -> str:
         wins     = [t for t in trades if t.get("pnl_eur", 0) > 0]
         losses   = [t for t in trades if t.get("pnl_eur", 0) < 0]
@@ -306,9 +320,33 @@ class ScalperAI:
                 f"pnl={t.get('pnl_pct', 0):>+6.3f}%"
             )
 
-        failed_block  = "\n".join(failed_lines) if failed_lines else "  None"
-        hour_block    = "\n".join(hour_lines)   if hour_lines   else "  No data"
-        pair_block    = "\n".join(pair_lines)   if pair_lines   else "  No data"
+        failed_block = "\n".join(failed_lines) if failed_lines else "  None"
+        hour_block   = "\n".join(hour_lines)   if hour_lines   else "  No data"
+        pair_block   = "\n".join(pair_lines)   if pair_lines   else "  No data"
+
+        # Backtest recommendations block
+        recs = self._load_backtest_recs()
+        if recs and recs.get("top_combinations"):
+            best     = recs["best"]
+            age_h    = (datetime.now(timezone.utc).timestamp()
+                        - self._parse_ts(recs.get("generated_at", ""))) / 3600
+            rec_lines = [
+                f"  Based on {recs['trade_count']} real trades, generated {age_h:.0f}h ago.",
+                f"  Best validated combination: RSI ≤ {best['rsi_buy_max']}, Score ≥ {best['score_min']}",
+                f"    Win rate: {best['win_rate']}%  Wilson CI: [{best['wilson_lo']}%–{best['wilson_hi']}%]",
+                f"    P(true WR > 50%): {best['prob_above_50']}%  |  n={best['n_trades']}  |  BH-significant: {'YES ★' if best['bh_significant'] else 'NO'}",
+                f"  Top 3 combinations (BH-significant first, then by reliability):",
+            ]
+            for i, c in enumerate(recs["top_combinations"][:3], 1):
+                sig = "★" if c["bh_significant"] else " "
+                rec_lines.append(
+                    f"    {i}.{sig} RSI ≤ {c['rsi_buy_max']}, Score ≥ {c['score_min']} → "
+                    f"{c['win_rate']}% WR [{c['wilson_lo']}%–{c['wilson_hi']}%], "
+                    f"P(>50%)={c['prob_above_50']}%, n={c['n_trades']}"
+                )
+            backtest_block = "\n".join(rec_lines)
+        else:
+            backtest_block = "  Not available yet — run the local backtest tool first."
 
         return f"""You are a crypto scalper parameter optimizer running a controlled A/B experiment system.
 
@@ -334,6 +372,11 @@ PENDING EXPERIMENT: {pending_str}
 RECENTLY FAILED CHANGES (do NOT suggest these — they hurt performance):
 {failed_block}
 BLOCKED DIRECTIONS: {blocked_str}
+
+BACKTEST INSIGHTS (statistically validated from full trade history):
+{backtest_block}
+NOTE: If current rsi_buy or score_thresh differ significantly from the best combo above,
+consider moving toward the validated range — unless that direction is blocked by recent failures.
 
 OVERALL (last {len(trades)} trades): {len(wins)}W / {len(losses)}L — Win rate: {win_rate}%
 
