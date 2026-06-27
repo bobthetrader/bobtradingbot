@@ -53,7 +53,7 @@ _CLOSE_TYPES = {"SELL","CLOSE","STOP_LOSS","TAKE_PROFIT","SHORT_CLOSE","SELL_SHO
 
 def _calc_realized_pnl(paper_mode: bool) -> float:
     """Sum pnl_eur across all closed main-bot and scalper trades."""
-    trade_file = "trade_events_paper.jsonl" if paper_mode else "trade_events.jsonl"
+    trade_file = "trade_events_paper.jsonl" if paper_mode else "trade_events_live.jsonl"
     total = 0.0
     for fname in (trade_file, "scalper_trades.jsonl"):
         path = os.path.join(DATA_DIR, fname)
@@ -294,7 +294,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 def _build_page() -> str:
     status = _read_json("bot_status.json")
-    trades = _read_jsonl_tail("trade_events.jsonl", n=15)
+    _trade_file = "trade_events_paper.jsonl" if status.get("paper_mode", True) else "trade_events_live.jsonl"
+    trades = _read_jsonl_tail(_trade_file, n=15)
 
     # ── Balance ───────────────────────────────────────────────────────────────
     # Use portfolio_value (cash + open positions) for accurate display

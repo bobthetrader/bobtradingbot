@@ -56,24 +56,32 @@ class ScalperAI:
 
     def analyze(self) -> dict:
         """Run analysis, write params file. Returns new params dict or {}."""
+        trades  = self._load_trades(n=50)
+        current = self._load_current_params()
+
         if not self._api_key:
             logger.warning("[SCALP-AI] OPENROUTER_API_KEY not set — skipping AI review")
+            self._log_adjustment(trades, current, current, [],
+                                 "OPENROUTER_API_KEY not set — add it to .env to enable AI tuning")
             return {}
 
-        trades = self._load_trades(n=50)
         if len(trades) < _MIN_TRADES:
             logger.info("[SCALP-AI] Only %d trades — need %d to analyze", len(trades), _MIN_TRADES)
+            self._log_adjustment(trades, current, current, [],
+                                 f"Insufficient data: {len(trades)} trades (need {_MIN_TRADES})")
             return {}
 
-        current = self._load_current_params()
-        prompt  = self._build_prompt(trades, current)
-
-        raw = self._call_openrouter(prompt)
+        prompt = self._build_prompt(trades, current)
+        raw    = self._call_openrouter(prompt)
         if not raw:
+            self._log_adjustment(trades, current, current, [],
+                                 "All OpenRouter models failed to respond — will retry next trigger")
             return {}
 
         suggested = self._parse_response(raw)
         if not suggested:
+            self._log_adjustment(trades, current, current, [],
+                                 "Could not parse AI response — will retry next trigger")
             return {}
 
         validated = self._validate(suggested, current)
