@@ -9,13 +9,10 @@ and appends to data/scalper_ai_adjustments.jsonl (read by dashboard).
 import json
 import logging
 import os
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-
-_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Free models tried in order — first success wins
 _FREE_MODELS = [
@@ -195,25 +192,25 @@ Respond ONLY with valid JSON — no markdown, no explanation outside the JSON:
 }}"""
 
     def _call_openrouter(self, prompt: str) -> str:
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type":  "application/json",
-            "HTTP-Referer":  "https://github.com/tradingbot",
-            "X-Title":       "ScalperAI",
-        }
-        payload = {
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
-            "max_tokens":  512,
-        }
+        try:
+            import openai
+        except ImportError:
+            logger.warning("[SCALP-AI] openai package not installed")
+            return ""
         for model in _FREE_MODELS:
             try:
-                payload["model"] = model
-                data = json.dumps(payload).encode()
-                req  = urllib.request.Request(_OPENROUTER_URL, data=data, headers=headers)
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    body = json.loads(resp.read().decode())
-                content = body["choices"][0]["message"]["content"].strip()
+                client = openai.OpenAI(
+                    api_key=self._api_key,
+                    base_url="https://openrouter.ai/api/v1",
+                    default_headers={"HTTP-Referer": "https://github.com/tradingbot"},
+                )
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                    max_tokens=512,
+                )
+                content = resp.choices[0].message.content.strip()
                 logger.info("[SCALP-AI] Got response from %s (%d chars)", model, len(content))
                 return content
             except Exception as exc:
