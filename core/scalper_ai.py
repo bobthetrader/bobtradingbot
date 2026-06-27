@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # Models tried in order — first success wins (same pool as main AI panel)
 _FREE_MODELS = [
     "meta-llama/llama-3.1-8b-instruct",
-    "deepseek/deepseek-r1",
+    "deepseek/deepseek-chat",
     "nousresearch/hermes-3-llama-3.1-70b",
 ]
 
