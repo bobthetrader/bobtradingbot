@@ -25,7 +25,7 @@ set -e
 LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')]"
 REPO="/home/botuser/bobtradingbot"
 RECS_FILE="backtest_recommendations.json"
-VOLUME="tradingbot_tradingbot_data"
+VOLUME="bobtradingbot_tradingbot_data"
 
 echo "$LOG_PREFIX Starting daily recommendations pull"
 
