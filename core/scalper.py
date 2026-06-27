@@ -432,7 +432,7 @@ class ScalperEngine:
                     best_signals = signals
 
         if best_pair:
-            self._open_position(best_pair, best_price, best_score, best_signals)
+            self._open_position(best_pair, best_price, best_score, best_signals, bear)
 
         # Prune scores for pairs that are no longer in the active set
         active_set = set(active_pairs)
@@ -513,18 +513,29 @@ class ScalperEngine:
 
     # ── Order execution ───────────────────────────────────────────────────────
 
-    def _open_position(self, pair: str, price: float, score: float, signals: dict):
-        qty = round(_ALLOCATION_EUR / price, 8)
-        ts  = time.time()
+    def _open_position(self, pair: str, price: float, score: float,
+                       signals: dict, bear: bool = False):
+        qty    = round(_ALLOCATION_EUR / price, 8)
+        ts     = time.time()
+        open_dt = datetime.fromtimestamp(ts, tz=timezone.utc)
         with self._lock:
+            concurrent = len(self._positions)  # other open positions before adding this one
             self._positions[pair] = {
-                "qty":          qty,
-                "entry":        price,
-                "ts":           ts,
-                "score":        score,
-                "rsi":          signals.get("rsi"),
-                "vwap_dev":     signals.get("vwap_dev"),
-                "ob_imbalance": signals.get("ob_imbalance"),
+                "qty":              qty,
+                "entry":            price,
+                "ts":               ts,
+                "score":            score,
+                "rsi":              signals.get("rsi"),
+                "vwap_dev":         signals.get("vwap_dev"),
+                "ob_imbalance":     signals.get("ob_imbalance"),
+                "entry_hour_utc":   open_dt.hour,
+                "entry_weekday":    open_dt.weekday(),   # 0=Mon, 6=Sun
+                "concurrent_pos":   concurrent,
+                "btc_bear":         bear,
+                "active_rsi_buy":   self._ai_rsi_buy,
+                "active_rsi_sell":  self._ai_rsi_sell,
+                "active_score_thresh": self._ai_score_thresh,
+                "active_vwap_thresh":  self._ai_vwap_thresh,
             }
         self._save_positions()
         try:
@@ -538,7 +549,7 @@ class ScalperEngine:
         )
 
     def _get_exit_signals(self, pair: str) -> dict:
-        """Fetch RSI and VWAP deviation at the moment of exit (no order book needed)."""
+        """Fetch RSI, VWAP deviation and order book imbalance at the moment of exit."""
         try:
             ohlc = self._api.get_ohlc_data(pair, interval=1)
             if not ohlc:
@@ -549,14 +560,28 @@ class ScalperEngine:
             candles = ohlc[key]
             if len(candles) < _RSI_PERIOD + 2:
                 return {}
-            closes = [float(r[4]) for r in candles]
-            rsi    = _calc_rsi(closes, _RSI_PERIOD)
-            vwap   = _calc_vwap(candles[-_VWAP_CANDLES:])
-            price  = closes[-1]
+            closes   = [float(r[4]) for r in candles]
+            rsi      = _calc_rsi(closes, _RSI_PERIOD)
+            vwap     = _calc_vwap(candles[-_VWAP_CANDLES:])
+            price    = closes[-1]
             vwap_dev = round((price - vwap) / vwap * 100, 4) if vwap and vwap > 0 else None
+
+            ob_imbalance = None
+            ob = self._api.get_order_book(pair, count=10)
+            if ob:
+                book    = next(iter(ob.values()), {}) if isinstance(ob, dict) else {}
+                bids    = book.get("bids", [])
+                asks    = book.get("asks", [])
+                bid_vol = sum(float(b[1]) for b in bids if len(b) >= 2)
+                ask_vol = sum(float(a[1]) for a in asks if len(a) >= 2)
+                total   = bid_vol + ask_vol
+                if total > 0:
+                    ob_imbalance = round((bid_vol - ask_vol) / total, 4)
+
             return {
-                "exit_rsi":      round(rsi, 2) if rsi is not None else None,
-                "exit_vwap_dev": vwap_dev,
+                "exit_rsi":          round(rsi, 2) if rsi is not None else None,
+                "exit_vwap_dev":     vwap_dev,
+                "exit_ob_imbalance": ob_imbalance,
             }
         except Exception:
             return {}
@@ -572,21 +597,37 @@ class ScalperEngine:
         held_min = (time.time() - pos["ts"]) / 60
         sig      = exit_signals or {}
         trade = {
-            "ts":           datetime.now(timezone.utc).isoformat(),
-            "pair":         pair,
-            "entry":        round(pos["entry"], 6),
-            "exit":         round(price, 6),
-            "qty":          pos["qty"],
-            "pnl_eur":      round(pnl_eur, 4),
-            "pnl_pct":      round(pct, 3),
-            "reason":       reason,
-            "held_min":     round(held_min, 1),
-            "entry_score":  round(pos.get("score", 0), 2),
-            "entry_rsi":          pos.get("rsi"),
-            "entry_vwap_dev":     pos.get("vwap_dev"),
-            "entry_ob_imbalance": pos.get("ob_imbalance"),
-            "exit_rsi":           sig.get("exit_rsi"),
-            "exit_vwap_dev":      sig.get("exit_vwap_dev"),
+            # ── Timestamps ───────────────────────────────────────────────────
+            "open_ts":        datetime.fromtimestamp(pos["ts"], tz=timezone.utc).isoformat(),
+            "ts":             datetime.now(timezone.utc).isoformat(),
+            # ── Trade basics ─────────────────────────────────────────────────
+            "pair":           pair,
+            "entry":          round(pos["entry"], 6),
+            "exit":           round(price, 6),
+            "qty":            pos["qty"],
+            "pnl_eur":        round(pnl_eur, 4),
+            "pnl_pct":        round(pct, 3),
+            "reason":         reason,
+            "held_min":       round(held_min, 1),
+            # ── Entry signals ─────────────────────────────────────────────────
+            "entry_score":          round(pos.get("score", 0), 2),
+            "entry_rsi":            pos.get("rsi"),
+            "entry_vwap_dev":       pos.get("vwap_dev"),
+            "entry_ob_imbalance":   pos.get("ob_imbalance"),
+            # ── Exit signals ─────────────────────────────────────────────────
+            "exit_rsi":             sig.get("exit_rsi"),
+            "exit_vwap_dev":        sig.get("exit_vwap_dev"),
+            "exit_ob_imbalance":    sig.get("exit_ob_imbalance"),
+            # ── Context at entry ─────────────────────────────────────────────
+            "entry_hour_utc":       pos.get("entry_hour_utc"),
+            "entry_weekday":        pos.get("entry_weekday"),   # 0=Mon, 6=Sun
+            "concurrent_positions": pos.get("concurrent_pos"),
+            "btc_bear_at_entry":    pos.get("btc_bear"),
+            # ── Active AI params when trade was taken ─────────────────────────
+            "param_rsi_buy":        pos.get("active_rsi_buy"),
+            "param_rsi_sell":       pos.get("active_rsi_sell"),
+            "param_score_thresh":   pos.get("active_score_thresh"),
+            "param_vwap_thresh":    pos.get("active_vwap_thresh"),
         }
         # Return allocation + P&L to paper balance (allocation was deducted on buy)
         try:
