@@ -2604,16 +2604,27 @@ class TradingBot:
                         if drop_from_peak >= self.trailing_stop_percent:
                             return pair, "TRAILING_STOP", change_percent
 
-            # Short position exits â€” use dedicated short TP/SL (lower than long TP)
+            # Short position exits
             short_qty = self.short_qty.get(pair, 0.0)
             short_entry = self.short_entry_prices.get(pair, 0.0)
             if self.enable_live_shorts and short_qty > 0 and short_entry > 0:
                 short_change_percent = ((short_entry - current_price) / short_entry) * 100.0
                 if short_change_percent >= self.short_take_profit_percent:
                     return pair, "SHORT_TAKE_PROFIT", short_change_percent
-                # Felix's rule: NEVER close a short at a loss. SHORT_HARD_STOP and
-                # SHORT_TIME_STOP are disabled so a losing short is held until it
-                # recovers into real net profit (handled by SHORT_TAKE_PROFIT above).
+                # Stop loss: price moved against short by short_stop_loss_percent
+                if self.short_stop_loss_percent > 0 and short_change_percent <= -self.short_stop_loss_percent:
+                    return pair, "SHORT_STOP_LOSS", short_change_percent
+                # Time review: after 12h close if net P&L (after accrued position fees)
+                # won't survive the cost of another 4h rollover (0.02%)
+                open_ts = self.entry_timestamps.get(pair) or 0
+                if open_ts:
+                    hours_held = (time.time() - open_ts) / 3600
+                    if hours_held >= 12:
+                        n_rollovers = int(hours_held / 4)
+                        position_fees_pct = 0.04 + (n_rollovers * 0.02)  # open+close margin fees + rollovers
+                        net_pnl_pct = short_change_percent - position_fees_pct
+                        if net_pnl_pct < 0.02:  # below cost of next 4h rollover
+                            return pair, "SHORT_TIME_REVIEW", short_change_percent
 
         return None, None, None
 
@@ -3958,6 +3969,22 @@ class TradingBot:
                             except Exception as exc:
                                 self.logger.warning("MANUAL_SELL error for %s: %s", _fp, exc)
 
+
+                    # Manual close for individual short (from dashboard button)
+                    for _fp in list(self.trade_pairs):
+                        _sc_file = os.path.join(_data_dir, f'FORCE_SHORT_CLOSE_{_fp}')
+                        if os.path.exists(_sc_file):
+                            try:
+                                os.remove(_sc_file)
+                                _sqty = self.short_qty.get(_fp, 0.0)
+                                _sprice = self.pair_prices.get(_fp, 0)
+                                if _sqty > 0 and _sprice > 0:
+                                    self.logger.info("MANUAL_SHORT_CLOSE: %s @ %.4f", _fp, _sprice)
+                                    self.execute_close_short_order(_fp, _sprice)
+                                else:
+                                    self.logger.info("MANUAL_SHORT_CLOSE: %s -- no short to close", _fp)
+                            except Exception as exc:
+                                self.logger.warning("MANUAL_SHORT_CLOSE error for %s: %s", _fp, exc)
                     # â”€â”€ Phase 3: Portfolio risk management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     regime_state, pause_state, adjusted_pnl, portfolio_value, holdings_value = self._manage_portfolio_risk(current_balance)
 
@@ -3983,7 +4010,7 @@ class TradingBot:
                     if risk_pair:
                         _price = self.pair_prices.get(risk_pair, 0)
                         print(f"\n[{risk_type}] {risk_pair} at {change:.2f}%")
-                        if risk_type == "SHORT_TAKE_PROFIT":
+                        if risk_type in ("SHORT_TAKE_PROFIT", "SHORT_STOP_LOSS", "SHORT_TIME_REVIEW"):
                             self.execute_close_short_order(risk_pair, _price)
                         else:
                             self.execute_sell_order(risk_pair, _price,

@@ -81,5 +81,5 @@ initial_balance = 500.0
 enabled = true
 leverage = "2"
 max_short_notional_eur = 30.0
-short_take_profit_percent = 2.0
-short_stop_loss_percent = 1.0
+short_take_profit_percent = 1.1
+short_stop_loss_percent = 0.5

@@ -1326,6 +1326,24 @@ def start_dashboard(port: int = 8080):
             except Exception as e:
                 return Response(f"Error: {e}", status=500)
 
+        @app.route("/close-short/<pair>")
+        def close_short(pair):
+            """Close a single open short position — triggered from dashboard."""
+            try:
+                safe_pair = pair.upper().replace("/", "").replace("..", "")
+                path = os.path.join(DATA_DIR, f"FORCE_SHORT_CLOSE_{safe_pair}")
+                open(path, "w").close()
+                return Response(
+                    "<html><body style='background:#0d1117;color:#ff4444;font-family:monospace;padding:40px'>"
+                    f"<h2>&#x2705; SHORT CLOSE triggered for {safe_pair}</h2>"
+                    "<p>The bot will close this short on the next loop (within 60 seconds).</p>"
+                    "<a href='/' style='color:#58a6ff'>&#x2190; Back to dashboard</a>"
+                    "</body></html>",
+                    mimetype="text/html"
+                )
+            except Exception as e:
+                return Response(f"Error: {e}", status=500)
+
         @app.route("/force-sell")
         def force_sell():
             try:
