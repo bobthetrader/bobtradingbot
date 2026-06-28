@@ -104,6 +104,7 @@ except ImportError:
                 os.environ.setdefault(_k.strip(), _v.strip())
 
 from core import notifier as _notifier
+from core import fee_sync as _fee_sync
 try:
     from core.ws_feed import KrakenWSFeed as _KrakenWSFeed
     _WS_FEED_AVAILABLE = True
@@ -420,12 +421,15 @@ class TradingBot:
         self.adaptive_tp_enabled = bool(self.config.get('risk_management', {}).get('adaptive_take_profit', True))
         self.max_tp_percent = float(self.config.get('risk_management', {}).get('max_take_profit_percent', 14.0))
         self.sell_fee_buffer_percent = float(self.config.get('risk_management', {}).get('sell_fee_buffer_percent', 0.0))
-        # Explicit fee estimates (percent): used for net-profit calculations and guards
-        # Defaults are Kraken base-tier rates verified 2026-06-28 via AssetPairs API:
-        #   taker 0.40% / maker 0.25% (worst case, <$10k 30-day USD volume)
-        self.fees_maker_percent = float(self.config.get('risk_management', {}).get('fees_maker_percent', 0.25))
-        self.fees_taker_percent = float(self.config.get('risk_management', {}).get('fees_taker_percent', 0.40))
-        # Normalized fee fractions (e.g. 0.0040 for 0.40%) — use pct_to_frac for consistency
+        # Load live Kraken fee schedule (falls back to config then hardcoded base-tier)
+        _data_dir = os.path.join(os.path.dirname(__file__), 'data')
+        self._fee_data = _fee_sync.load(_data_dir)
+        self._fee_last_sync = time.time()
+        _live_taker = _fee_sync.base_taker(self._fee_data)
+        _live_maker = _fee_sync.base_maker(self._fee_data)
+        # Config can override (e.g. to lock in a higher tier if you know your volume)
+        self.fees_maker_percent = float(self.config.get('risk_management', {}).get('fees_maker_percent', _live_maker))
+        self.fees_taker_percent = float(self.config.get('risk_management', {}).get('fees_taker_percent', _live_taker))
         try:
             self.fees_maker_frac = pct_to_frac(self.fees_maker_percent)
             self.fees_taker_frac = pct_to_frac(self.fees_taker_percent)
@@ -433,6 +437,9 @@ class TradingBot:
             self.logger.warning(“Fee config error — using Kraken base-tier defaults (maker 0.25%, taker 0.40%)”)
             self.fees_maker_frac = 0.0025
             self.fees_taker_frac = 0.0040
+        self.logger.info(“Fees loaded: taker=%.2f%% maker=%.2f%% (source: %s)”,
+                         self.fees_taker_percent, self.fees_maker_percent,
+                         self._fee_data.get(“source”, “unknown”))
         # Re-entry guard: only pairs listed here are subject to blocking new BUYs until
         # the last closed trade for that pair achieved min_reentry_profit_pct net profit
         self.reentry_guard_pairs = [p.upper() for p in self.config.get('risk_management', {}).get('reentry_guard_pairs', ['VER'])]
@@ -2039,6 +2046,27 @@ class TradingBot:
             return True
         return False
 
+    def _maybe_refresh_fees(self):
+        """Refresh Kraken fee schedule once per 24h; update runtime fee values if changed."""
+        if time.time() - self._fee_last_sync < 86_400:
+            return
+        _data_dir = os.path.join(os.path.dirname(__file__), 'data')
+        fresh = _fee_sync.load(_data_dir)
+        self._fee_last_sync = time.time()
+        new_taker = float(self.config.get('risk_management', {}).get('fees_taker_percent',
+                                                                      _fee_sync.base_taker(fresh)))
+        new_maker = float(self.config.get('risk_management', {}).get('fees_maker_percent',
+                                                                      _fee_sync.base_maker(fresh)))
+        if new_taker != self.fees_taker_percent or new_maker != self.fees_maker_percent:
+            self.logger.info("Fee update: taker %.2f%%→%.2f%% maker %.2f%%→%.2f%%",
+                             self.fees_taker_percent, new_taker,
+                             self.fees_maker_percent, new_maker)
+            self.fees_taker_percent = new_taker
+            self.fees_maker_percent = new_maker
+            self.fees_taker_frac = new_taker / 100.0
+            self.fees_maker_frac = new_maker / 100.0
+        self._fee_data = fresh
+
     def _maybe_send_daily_report(self):
         """Save the daily CSV report to data/reports/ once per day at the configured time."""
         from datetime import datetime as _dt, timezone as _tz
@@ -3231,6 +3259,9 @@ class TradingBot:
 
         # Daily email report
         self._maybe_send_daily_report()
+
+        # Refresh Kraken fee schedule once per 24h
+        self._maybe_refresh_fees()
 
         # Portfolio valuation — must be calculated before monthly tracking uses it
         self._refresh_cashflows_from_ledger()

@@ -13,7 +13,7 @@ Signals (scored, threshold ±2.5 to enter):
   Order book bid vol > ask vol by >20% → +1  (buying pressure)
   Order book ask vol > bid vol by >20% → -1  (selling pressure)
 
-TP: 0.58% dynamic / SL: 0.20%  (clears 0.52% round-trip Kraken taker fee)
+TP: 0.86% dynamic / SL: 0.20%  (clears 0.80% round-trip Kraken taker fee at base tier)
 """
 
 import json
@@ -23,6 +23,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+from core import fee_sync as _fee_sync
 
 logger = logging.getLogger(__name__)
 
@@ -88,13 +90,13 @@ _FEE_TIERS = [
 ]
 
 
-def _fee_tier(volume_usd: float) -> tuple:
-    """Return (taker_fee_pct, round_trip_pct, dynamic_tp_pct) for given 30-day volume."""
-    taker = 0.40
-    for threshold, fee in reversed(_FEE_TIERS):
-        if volume_usd >= threshold:
-            taker = fee
-            break
+def _fee_tier(volume_usd: float, data_dir: str = "data") -> tuple:
+    """Return (taker_fee_pct, round_trip_pct, dynamic_tp_pct) for given 30-day volume.
+
+    Uses live kraken_fees.json when available; falls back to _FEE_TIERS table.
+    """
+    fees = _fee_sync.load(data_dir)
+    taker = _fee_sync.taker_for_volume(fees, volume_usd)
     round_trip = taker * 2
     dynamic_tp = round(round_trip + _MIN_PROFIT_BPS, 4)
     return taker, round_trip, dynamic_tp
@@ -216,7 +218,7 @@ class ScalperEngine:
         wins  = sum(1 for t in self._trade_log if t.get("pnl_eur", 0) > 0)
         losses = sum(1 for t in self._trade_log if t.get("pnl_eur", 0) < 0)
         total = len(self._trade_log)
-        taker, round_trip, dynamic_tp = _fee_tier(self._volume_usd)
+        taker, round_trip, dynamic_tp = _fee_tier(self._volume_usd, str(self._data_dir))
         return {
             "positions":        positions,
             "recent_trades":    recent,
@@ -357,7 +359,7 @@ class ScalperEngine:
             entry      = pos["entry"]
             pct_change = (price - entry) / entry * 100
             held_min   = (time.time() - pos["ts"]) / 60
-            _, _, tp   = _fee_tier(self._volume_usd)
+            _, _, tp   = _fee_tier(self._volume_usd, str(self._data_dir))
             with self._lock:
                 sl = self._ai_sl_pct
 
@@ -643,7 +645,7 @@ class ScalperEngine:
         self._volume_usd += trade_value_usd
         self._save_volume()
 
-        _, _, current_tp = _fee_tier(self._volume_usd)
+        _, _, current_tp = _fee_tier(self._volume_usd, str(self._data_dir))
         with self._lock:
             self._trade_log.append(trade)
             if len(self._trade_log) > 100:
