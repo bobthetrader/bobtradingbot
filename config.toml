@@ -51,9 +51,9 @@ pause_after_loss_streak_minutes = 0
 take_profit_percent = 2.0
 adaptive_take_profit = false
 max_take_profit_percent = 5.0
-sell_fee_buffer_percent = 0.26
-fees_maker_percent = 0.16
-fees_taker_percent = 0.26
+sell_fee_buffer_percent = 0.40
+fees_maker_percent = 0.25
+fees_taker_percent = 0.40
 reentry_guard_pairs = []
 min_reentry_profit_pct = 0.0
 min_net_sell_profit_pct = 2.0
@@ -124,8 +124,8 @@ bear_log_interval_minutes = 60
 enabled = false
 leverage = "1"
 max_short_notional_eur = 25.0
-short_take_profit_percent = 1.26
-short_stop_loss_percent = 5.0
+short_take_profit_percent = 1.4
+short_stop_loss_percent = 0.5
 
 [logging]
 log_level = "INFO"

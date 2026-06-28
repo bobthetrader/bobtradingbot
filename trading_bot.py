@@ -421,16 +421,18 @@ class TradingBot:
         self.max_tp_percent = float(self.config.get('risk_management', {}).get('max_take_profit_percent', 14.0))
         self.sell_fee_buffer_percent = float(self.config.get('risk_management', {}).get('sell_fee_buffer_percent', 0.0))
         # Explicit fee estimates (percent): used for net-profit calculations and guards
-        self.fees_maker_percent = float(self.config.get('risk_management', {}).get('fees_maker_percent', 0.16))
-        self.fees_taker_percent = float(self.config.get('risk_management', {}).get('fees_taker_percent', 0.26))
-        # Normalized fee fractions (e.g. 0.0026 for 0.26%) â€” use pct_to_frac for consistency
+        # Defaults are Kraken base-tier rates verified 2026-06-28 via AssetPairs API:
+        #   taker 0.40% / maker 0.25% (worst case, <$10k 30-day USD volume)
+        self.fees_maker_percent = float(self.config.get('risk_management', {}).get('fees_maker_percent', 0.25))
+        self.fees_taker_percent = float(self.config.get('risk_management', {}).get('fees_taker_percent', 0.40))
+        # Normalized fee fractions (e.g. 0.0040 for 0.40%) — use pct_to_frac for consistency
         try:
             self.fees_maker_frac = pct_to_frac(self.fees_maker_percent)
             self.fees_taker_frac = pct_to_frac(self.fees_taker_percent)
         except Exception:
-            self.logger.warning("Fee config error — using Kraken defaults (maker 0.16%, taker 0.26%)")
-            self.fees_maker_frac = 0.0016
-            self.fees_taker_frac = 0.0026
+            self.logger.warning(“Fee config error — using Kraken base-tier defaults (maker 0.25%, taker 0.40%)”)
+            self.fees_maker_frac = 0.0025
+            self.fees_taker_frac = 0.0040
         # Re-entry guard: only pairs listed here are subject to blocking new BUYs until
         # the last closed trade for that pair achieved min_reentry_profit_pct net profit
         self.reentry_guard_pairs = [p.upper() for p in self.config.get('risk_management', {}).get('reentry_guard_pairs', ['VER'])]

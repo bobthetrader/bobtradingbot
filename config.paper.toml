@@ -20,6 +20,9 @@ min_auto_scale_notional = 0.1
 min_buy_score = 10.0                 # Needs strong RSI or trend signal
 take_profit_percent = 2.0            # 2.0% TP vs 0.8% SL = 2.5:1 ratio
 min_net_sell_profit_pct = 0.5
+fees_maker_percent = 0.25
+fees_taker_percent = 0.40
+sell_fee_buffer_percent = 0.40
 enable_trading_hours = false
 enable_regime_filter = false
 enable_volume_filter = false
@@ -81,5 +84,5 @@ initial_balance = 500.0
 enabled = true
 leverage = "2"
 max_short_notional_eur = 30.0
-short_take_profit_percent = 1.1
+short_take_profit_percent = 1.4
 short_stop_loss_percent = 0.5
