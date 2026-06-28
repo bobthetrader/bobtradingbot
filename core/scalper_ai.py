@@ -41,7 +41,7 @@ _DEFAULTS = {
 _MIN_TRADES        = 20    # minimum trades in window before AI will run
 _NEUTRAL_TOLERANCE = 5.0   # pp — within 5 percentage points of baseline = neutral (keep)
 _MAX_FAILED        = 10    # sliding window of remembered failed changes
-_FAILED_EXPIRY_H   = 48    # hours before a failed change can be retried
+_FAILED_EXPIRY_H   = 24    # hours before a failed change can be retried
 _MAX_BLACKLIST     = 5     # never blacklist more than this many pairs at once
 
 
@@ -72,7 +72,7 @@ class ScalperAI:
             self._evaluate_experiment(state, all_trades)
 
         # Step 2: propose next single-param experiment
-        window = all_trades[-50:]
+        window = all_trades[-75:]  # 3 full cycles for broader context
         if len(window) < _MIN_TRADES:
             logger.info("[SCALP-AI] Only %d trades in window — need %d", len(window), _MIN_TRADES)
             return {}
@@ -164,7 +164,9 @@ class ScalperAI:
 
         param     = suggestion["param"]
         reasoning = suggestion.get("reasoning", "")
-        blacklist = suggestion.get("pairs_blacklist", state.get("pairs_blacklist", []))
+        # Always rebuild blacklist fresh from current window — never inherit stale state.
+        # Pairs that were bad under old params may be fine under new ones.
+        blacklist = suggestion.get("pairs_blacklist", [])
 
         if param not in _BOUNDS:
             logger.warning("[SCALP-AI] AI returned unknown param=%s — skipping", param)
@@ -333,6 +335,21 @@ class ScalperAI:
                 f"(baseline WR={pending['baseline_win_rate']:.1f}%)"
             )
 
+        # Last 3 experiment cycles — trajectory context
+        recent_cycles = self._load_recent_cycles(3)
+        cycle_lines = []
+        for c in recent_cycles:
+            ctype   = c.get("type", "?")
+            changes = c.get("changes", [])
+            change_str = ", ".join(
+                f"{ch['param']} {ch['old']}→{ch['new']}" for ch in changes
+            ) if changes else "no param change"
+            cycle_lines.append(
+                f"  [{ctype.upper()}] WR={c.get('win_rate','?')}% | "
+                f"{change_str} | {c.get('reasoning','')[:120]}"
+            )
+        cycle_block = "\n".join(cycle_lines) if cycle_lines else "  No history yet"
+
         # Trade log (compact)
         rows = []
         for t in trades:
@@ -404,6 +421,11 @@ BACKTEST INSIGHTS (statistically validated from full trade history):
 NOTE: If current rsi_buy or score_thresh differ significantly from the best combo above,
 consider moving toward the validated range — unless that direction is blocked by recent failures.
 
+LAST 3 EXPERIMENT CYCLES (most recent last):
+{cycle_block}
+Use this trajectory to understand where the market is heading — not just where it was.
+If a direction was tried and reverted, consider whether market conditions have since changed.
+
 OVERALL (last {len(trades)} trades): {len(wins)}W / {len(losses)}L — Win rate: {win_rate}%
 
 PER-PAIR WIN RATES:
@@ -416,14 +438,13 @@ TRADE LOG (pair | RSI at entry | VWAP% | score | held | exit reason | P&L%):
 {chr(10).join(rows)}
 
 TASK:
-1. Study the trade log and time-of-day patterns.
-2. Identify the single parameter change most likely to improve win rate.
-3. Consider the current time ({now_utc.strftime('%H:%M UTC')}) — if certain hours perform better/worse,
-   factor that into which direction to move a parameter right now.
-4. Do NOT suggest any direction listed in BLOCKED DIRECTIONS.
-5. Also suggest pairs_blacklist: pairs with ≤33% win rate AND at least 3 trades in this window.
-   IMPORTANT: only blacklist pairs that are clearly worse than the rest — maximum 3-5 pairs.
-   If overall win rate is below 40%, the problem is market conditions not specific pairs, so blacklist nothing.
+1. Study the last 3 experiment cycles to understand the TRAJECTORY — what has been tried, what worked, what didn't.
+2. Based on where the market is NOW (not where it was 75 trades ago), identify the single parameter change most likely to improve win rate.
+3. Consider the current time ({now_utc.strftime('%H:%M UTC')}) — factor time-of-day patterns into your suggestion.
+4. Do NOT suggest any direction listed in BLOCKED DIRECTIONS (unless market conditions have clearly shifted).
+5. For pairs_blacklist: only blacklist pairs with ≤33% WR AND at least 3 trades in this 75-trade window.
+   A pair that was bad under old parameters may be fine now — only blacklist based on CURRENT window data.
+   If overall win rate is below 40%, the problem is market conditions not specific pairs, so return an empty list.
 
 Respond ONLY with valid JSON (no markdown, no extra text):
 {{
@@ -502,6 +523,26 @@ Respond ONLY with valid JSON (no markdown, no extra text):
             return 0.0
         wins = sum(1 for t in trades if t.get("pnl_eur", 0) > 0)
         return round(wins / len(trades) * 100, 1)
+
+    def _load_recent_cycles(self, n: int = 3) -> list:
+        """Return the last n completed AI cycles from the adjustment log."""
+        try:
+            if not self._adjustments_path.exists():
+                return []
+            lines = self._adjustments_path.read_text(encoding="utf-8").strip().split("\n")
+            entries = []
+            for line in reversed(lines):
+                try:
+                    e = json.loads(line)
+                    if e.get("type", "").startswith(("propose", "evaluate")):
+                        entries.append(e)
+                        if len(entries) >= n:
+                            break
+                except Exception:
+                    pass
+            return list(reversed(entries))
+        except Exception:
+            return []
 
     def _pair_stats(self, trades: list) -> dict:
         stats: dict = {}
