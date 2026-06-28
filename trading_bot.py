@@ -1,4 +1,4 @@
-﻿﻿# Trading Bot Core Logic - Multi-Pair Analysis
+# Trading Bot Core Logic - Multi-Pair Analysis
 """
 Kraken Trading Bot â€" Core Engine
 This module is the heart of the trading bot.  It contains the ``TradingBot``
