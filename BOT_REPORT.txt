@@ -1,7 +1,7 @@
 ================================================================================
 KRAKEN ALGORITHMIC TRADING BOT — COMPREHENSIVE BUILD REPORT
 ================================================================================
-Last updated: June 2026
+Last updated: 28 June 2026
 Repository:   https://github.com/bobthetrader/bobtradingbot
 Deployment:   Hetzner VPS (primary) — bobtradingbot.com
 Exchange:     Kraken (paper mode active, live mode ready)
@@ -15,21 +15,23 @@ CONTENTS
 3.  Trading Strategy & Signal Generation
 4.  Per-Pair Strategy Profiles
 5.  Risk Management & Position Sizing
-6.  Market Regime Detection
-7.  Ichimoku Cloud + Gaussian Channel Filter
-8.  Scalping Strategy
-9.  AI Intelligence Panel (5 Models)
-10. Data Sources & Buy Gate Wiring
-11. Self-Learning Systems
-12. New Listings Monitor
-13. Alpaca Correlated Stocks
-14. Circuit Breaker
-15. Persistent History (PostgreSQL)
-16. Dashboard
-17. Deployment & Infrastructure
-18. Current Configuration (Paper Mode)
-19. Switching to Live Trading
-20. Known Issues & Future Improvements
+6.  Short Position Management
+7.  Market Regime Detection
+8.  Ichimoku Cloud + Gaussian Channel Filter
+9.  Scalping Strategy
+10. Scalper AI Parameter Tuner
+11. AI Intelligence Panel (5 Models)
+12. Data Sources & Buy Gate Wiring
+13. Self-Learning Systems
+14. New Listings Monitor
+15. Alpaca Correlated Stocks
+16. Circuit Breaker
+17. Persistent History (PostgreSQL)
+18. Dashboard
+19. Deployment & Infrastructure
+20. Current Configuration (Paper Mode)
+21. Switching to Live Trading
+22. Known Issues & Future Improvements
 
 
 ================================================================================
@@ -67,7 +69,9 @@ D:\tradingbot\
 ├── docker-compose.yml           Hetzner Docker setup (bot + PostgreSQL)
 │
 ├── core/
-│   ├── scalper.py               10-pair scalping engine (15s loop, dynamic TP)
+│   ├── scalper.py               Scalping engine (15s loop, dynamic TP, 500+ pairs)
+│   ├── scalper_ai.py            Scalper AI parameter tuner (A/B experiments, 75-trade window)
+│   ├── scalper_backtest.py      Statistical backtester (Wilson CI + Bayesian + Kelly + BH FDR)
 │   ├── ichimoku_gaussian.py     Ichimoku Cloud + Gaussian Channel filter
 │   ├── market_intelligence.py   5-model AI panel orchestrator
 │   ├── sharpe_data.py           Sharpe.ai institutional data
@@ -82,17 +86,30 @@ D:\tradingbot\
 │   ├── ws_feed.py               Kraken WebSocket real-time price feed
 │   └── notifier.py              Telegram notifications
 │
+├── backtest/
+│   └── scalper_backtest.py      Standalone backtester for scalper signal analysis
+│
+├── scripts/
+│   ├── daily_backtest.ps1       Windows Task Scheduler: pull trades → backtest → push recs
+│   ├── server_daily_pull.sh     Server cron: git pull + copy recs to Docker volume
+│   └── logs/                    Daily backtest logs (backtest_YYYY-MM-DD.log)
+│
 └── data/                        Persisted state (Docker volume /app/data/)
-    ├── bot_status.json             Written every loop, read by dashboard
-    ├── purchase_prices_paper.json  Open paper positions
-    ├── trade_events_paper.jsonl    Paper trade journal (Sharpe reads this)
-    ├── intelligence_log.jsonl      AI panel decision history with outcomes
-    ├── optimizer_state.json        Optimizer experiment state
-    ├── listing_watchlist.json      New listings being tracked
-    ├── scalper_positions.json      Open scalp positions (survives restarts)
-    ├── scalper_trades.jsonl        Scalp trade history (also in PostgreSQL)
-    ├── scalper_volume.json         Cumulative scalp volume for fee tier tracking
-    └── history_buffer.json         Price history for RSI/SMA warmup
+    ├── bot_status.json              Written every loop, read by dashboard
+    ├── purchase_prices_paper.json   Open paper positions (longs + shorts with side field)
+    ├── trade_events_paper.jsonl     Paper trade journal (Sharpe reads this)
+    ├── intelligence_log.jsonl       AI panel decision history with outcomes
+    ├── optimizer_state.json         Optimizer experiment state
+    ├── listing_watchlist.json       New listings being tracked
+    ├── scalper_positions.json       Open scalp positions (survives restarts)
+    ├── scalper_trades.jsonl         Scalp trade history (also in PostgreSQL)
+    ├── scalper_volume.json          Cumulative scalp volume for fee tier tracking
+    ├── scalper_ai_params.json       AI-tuned scalper parameters + pair blacklist
+    ├── scalper_ai_state.json        A/B experiment state (survives restarts)
+    ├── scalper_ai_adjustments.jsonl Dashboard adjustment history (last N cycles)
+    ├── backtest_recommendations.json Top signal combos from statistical backtest
+    ├── reports/trade_report_YYYY-MM-DD.csv  Daily CSV report (auto-generated 09:35 UTC)
+    └── history_buffer.json          Price history for RSI/SMA warmup
 
 
 ================================================================================
@@ -178,7 +195,61 @@ Buy Gate Adjustments (stacked):
 
 
 ================================================================================
-6. MARKET REGIME DETECTION
+6. SHORT POSITION MANAGEMENT
+================================================================================
+
+File: trading_bot.py (execute_open_short_order / execute_close_short_order)
+Config: config.paper.toml [shorting]
+Requires: Kraken margin trading enabled on account
+
+OVERVIEW
+  The bot opens leveraged short positions (2× leverage, max €30 notional) when
+  a pair has a strong bearish signal and the trend is confirmed bearish. Shorts
+  are tracked separately from longs in short_qty / short_entry_prices dicts and
+  persisted in purchase_prices_paper.json with side="short".
+
+KRAKEN MARGIN FEES (applied to all shorts)
+  Opening trade fee (taker):  0.26%
+  Opening margin position fee: 0.02%
+  Rollover fee:               0.02% every 4 hours
+  Closing trade fee (taker):  0.26%
+  Total fees for 12h hold:    ~0.62% (3 rollovers)
+
+EXIT CONDITIONS (priority order)
+  1. SHORT_TAKE_PROFIT   Price falls ≥ 1.1% from entry (covers ~0.62% fees + 0.5% buffer)
+  2. SHORT_STOP_LOSS     Price rises ≥ 0.5% from entry — cut loss immediately
+  3. SHORT_TIME_REVIEW   After 12h, every loop: if net P&L (gross − position fees) is
+                         below the cost of the next 4h rollover (0.02%), close the short.
+                         Formula: net_pnl = gross_change% − (0.04% + n_rollovers × 0.02%)
+                         Close if net_pnl < 0.02%
+
+TIME REVIEW LOGIC
+  At T+12h the bot starts checking whether holding another 4h still makes sense.
+  Position fees accrue as: open_fee(0.02%) + n_rollovers × 0.02% + close_fee(0.02%)
+  If current net P&L (after position fees) < one more rollover (0.02%), close now.
+  This fires every loop after 12h — naturally re-evaluates at each 4h rollover tick.
+
+MANUAL CLOSE
+  Dashboard endpoint: /close-short/<pair>
+  Creates FORCE_SHORT_CLOSE_<pair> flag file in data volume.
+  Bot detects on next loop and calls execute_close_short_order at current price.
+
+CONFIGURATION (config.paper.toml)
+  [shorting]
+  enabled                  = true
+  leverage                 = 2
+  max_short_notional_eur   = 30.0
+  short_take_profit_percent = 1.1   (covers 12h fees + 0.5% buffer)
+  short_stop_loss_percent  = 0.5    (cut if price moves 0.5% against short)
+
+STATE PERSISTENCE
+  Open shorts stored in purchase_prices_paper.json with side="short", qty, entry_price_eur,
+  entry_ts. Loaded back on restart so short_qty / short_entry_prices are correctly populated.
+  entry_timestamps[pair] used for time review (Unix seconds since short opened).
+
+
+================================================================================
+7. MARKET REGIME DETECTION
 ================================================================================
 
 Three-state classification using SMA8/21/50 on BTC price history:
@@ -201,7 +272,7 @@ BTC downtrend flag (separate from above):
 
 
 ================================================================================
-7. ICHIMOKU CLOUD + GAUSSIAN CHANNEL FILTER
+8. ICHIMOKU CLOUD + GAUSSIAN CHANNEL FILTER
 ================================================================================
 
 File: core/ichimoku_gaussian.py
@@ -243,7 +314,7 @@ DASHBOARD CARD
 
 
 ================================================================================
-8. SCALPING STRATEGY
+9. SCALPING STRATEGY
 ================================================================================
 
 File: core/scalper.py
@@ -302,7 +373,66 @@ DASHBOARD
 
 
 ================================================================================
-9. AI INTELLIGENCE PANEL (5 MODELS)
+10. SCALPER AI PARAMETER TUNER
+================================================================================
+
+File:    core/scalper_ai.py
+Trigger: Every 25 closed scalper trades
+Models:  Llama 3.1 8B → DeepSeek Chat → Hermes 3 70B (cascade, cheapest first)
+
+OVERVIEW
+  A/B experiment system that tunes scalper parameters one at a time using recent
+  trade data. Each cycle: evaluate the previous experiment, then propose the next
+  single-parameter change to test for the following 25 trades.
+
+PARAMETERS TUNED
+  rsi_buy      (25–40)   RSI threshold to enter a long scalp
+  rsi_sell     (60–75)   RSI threshold to exit
+  vwap_thresh  (0.001–0.006)  % deviation from VWAP required to signal
+  score_thresh (1.5–3.0) Minimum combined signal score to trade
+  sl_pct       (0.15–0.35%)   Stop-loss percentage
+
+ANALYSIS WINDOW
+  75 trades (3 full cycles) — gives a broader market picture before proposing
+  changes. Experiment evaluation always uses exactly 25 trades (clean A/B).
+
+BLACKLIST (pairs to exclude from scalping)
+  - Rebuilt fresh each AI cycle — never inherited from previous state
+  - AI suggests pairs with ≤33% WR in the current 75-trade window
+  - Hard guard: pairs with >50% WR in the window CANNOT be blacklisted
+    regardless of what the AI suggests
+  - Cap: maximum 5 pairs blacklisted at any time
+  - Cap logic: if AI suggests >5, use actual worst performers from window data
+  - If overall WR < 40%, AI is instructed to blacklist nothing (market problem, not pairs)
+
+EXPERIMENT EVALUATION
+  After 25 trades: compare experiment WR vs baseline WR
+  Within 5 percentage points of baseline → KEPT (neutral tolerance)
+  More than 5pp worse → REVERTED, direction marked as failed for 24h
+
+FAILED CHANGE MEMORY
+  A parameter direction that was tried and reverted is blocked for 24 hours.
+  After 24h it is eligible again (crypto regime can shift hourly).
+  Max 10 failed changes remembered at any time (rolling window).
+
+3-CYCLE TRAJECTORY CONTEXT IN PROMPT
+  The last 3 experiment cycles are included in the AI prompt showing: type
+  (propose/evaluate), WR achieved, what changed, and the AI's reasoning.
+  This lets the AI see the DIRECTION things are moving, not just the current state.
+
+BACKTEST INSIGHTS INJECTED INTO PROMPT
+  On each AI trigger, top 3 statistically validated signal combinations from
+  backtest_recommendations.json are injected into the prompt as BACKTEST INSIGHTS.
+  Includes Wilson CI, Bayesian probability, Kelly fraction, BH-significance flag.
+  AI uses these to guide which direction to nudge parameters.
+
+DASHBOARD DISPLAY
+  Adjustment History card shows: timestamp, WR, parameter changes, AI reasoning.
+  Current blacklisted pairs shown at top of scalper card.
+
+
+================================================================================
+11. AI INTELLIGENCE PANEL (5 MODELS)
 ================================================================================
 
 File: core/market_intelligence.py
@@ -337,7 +467,7 @@ retrospectively so models can calibrate against their own accuracy over time.
 
 
 ================================================================================
-10. DATA SOURCES & BUY GATE WIRING
+12. DATA SOURCES & BUY GATE WIRING
 ================================================================================
 
 FREE (no API key):
@@ -384,7 +514,7 @@ Data refresh intervals:
 
 
 ================================================================================
-11. SELF-LEARNING SYSTEMS
+13. SELF-LEARNING SYSTEMS
 ================================================================================
 
 A. SCIENTIFIC METHOD PARAMETER OPTIMIZER (core/param_optimizer.py)
@@ -430,9 +560,40 @@ Minimum 5 closed trades for calculation. Updated every 5 closed trades.
 Separate journals for paper and live mode.
 Scalper trades tracked separately — not mixed into main bot Sharpe.
 
+F. SCALPER AI PARAMETER TUNER  →  see Section 10 for full details
+────────────────────────────────
+Every 25 scalper trades: AI evaluates last experiment, proposes next single-param
+change using a 75-trade (3-cycle) window. Blacklist rebuilt fresh each cycle.
+
+G. STATISTICAL BACKTEST → SCALPER AI FEEDBACK LOOP
+────────────────────────────────────────────────────
+File:    backtest/scalper_backtest.py  (standalone, run locally)
+Method:  Wilson Score CI + Bayesian Beta-Binomial + Kelly Criterion + BH FDR correction
+         Tests all combinations of rsi_buy_max and score_min from real scalper_trades.jsonl.
+         Filters to BH-significant combinations, ranks by reliability.
+
+Output:  data/backtest_recommendations.json (auto-committed to git after each run)
+         Contains top 3 validated signal combos with Wilson CI, P(WR>50%), Kelly fraction.
+
+Daily pipeline (runs at 09:30–09:45 UTC):
+  09:30  Server cron extracts scalper_trades.jsonl from Docker volume
+  09:35  Windows Task Scheduler runs scripts/daily_backtest.ps1 on local PC:
+           - SSHes to server with restricted key (id_ed25519_botauto)
+           - Pulls scalper_trades.jsonl to local
+           - Runs statistical backtest locally
+           - SSHes back to push backtest_recommendations.json to server
+  09:45  Server cron runs server_daily_pull.sh:
+           - git pull (picks up recommendations)
+           - Copies recommendations to Docker data volume
+  Bot:   Reads recommendations on next AI trigger — no restart needed.
+
+SSH security: restricted key (id_ed25519_botauto, no passphrase) limited via
+  command= in /root/.ssh/authorized_keys to only run extract or pull commands.
+  Admin key (id_ed25519, passphrase) used for manual SSH sessions.
+
 
 ================================================================================
-12. NEW LISTINGS MONITOR (core/listings_monitor.py)
+14. NEW LISTINGS MONITOR (core/listings_monitor.py)
 ================================================================================
 
 Three detection sources (polled every 10 minutes):
@@ -456,7 +617,7 @@ Dashboard card shows: status, price vs detection, qty held, P&L, 12h timer.
 
 
 ================================================================================
-13. ALPACA CORRELATED STOCKS (core/alpaca_interface.py)
+15. ALPACA CORRELATED STOCKS (core/alpaca_interface.py)
 ================================================================================
 
 Trades crypto-correlated stocks on Alpaca when strong Kraken signals fire.
@@ -471,7 +632,7 @@ Only trades when US market is open (checked via /v2/clock)
 
 
 ================================================================================
-14. CIRCUIT BREAKER
+16. CIRCUIT BREAKER
 ================================================================================
 
 Protects capital during severe drawdown events.
@@ -494,7 +655,7 @@ Dashboard: Red banner appears at top of page when circuit breaker is active
 
 
 ================================================================================
-15. PERSISTENT HISTORY (PostgreSQL + SQLite)
+17. PERSISTENT HISTORY (PostgreSQL + SQLite)
 ================================================================================
 
 PostgreSQL (Docker container, same Hetzner server as bot)
@@ -519,7 +680,7 @@ see whether their past calls were correct — the core AI learning loop.
 
 
 ================================================================================
-16. DASHBOARD (dashboard.py)
+18. DASHBOARD (dashboard.py)
 ================================================================================
 
 URL: https://bobtradingbot.com
@@ -556,7 +717,7 @@ Special UI elements:
 
 
 ================================================================================
-17. DEPLOYMENT & INFRASTRUCTURE
+19. DEPLOYMENT & INFRASTRUCTURE
 ================================================================================
 
 Primary: Hetzner VPS (178.105.159.157)
@@ -578,6 +739,16 @@ Local Docker standby (D:\tradingbot):
   - Dashboard at http://localhost:8080
   - Only activate if Hetzner goes down
 
+Daily automation (runs at 09:30–09:45 UTC every day):
+  Server cron + Windows Task Scheduler run the statistical backtest pipeline.
+  See Section 13.G for full details. Logs at scripts/logs/backtest_YYYY-MM-DD.log
+
+SSH key setup:
+  id_ed25519          Admin key (passphrase protected) — manual SSH sessions
+  id_ed25519_botauto  Restricted key (no passphrase) — automation pipeline only
+                      Limited via command= in /root/.ssh/authorized_keys to only
+                      run 'extract' or 'pull' via server gatekeeper script bot_auto.sh
+
 Required environment variables (.env on server):
   KRAKEN_API_KEY / KRAKEN_API_SECRET
   OPENROUTER_API_KEY      AI panel (Hermes, Sonar, DeepSeek, Llama, GPT)
@@ -592,7 +763,7 @@ Required environment variables (.env on server):
 
 
 ================================================================================
-18. CURRENT CONFIGURATION (PAPER MODE)
+20. CURRENT CONFIGURATION (PAPER MODE)
 ================================================================================
 
 Active config: config.paper.toml
@@ -617,11 +788,19 @@ Main bot risk settings:
 
 Scalper settings:
   loop_interval              15 seconds
-  score_threshold            1.5
+  score_threshold            1.5 (AI-tuned, range 1.5–3.0)
   take_profit                dynamic (starts 0.58%, drops as fees drop)
-  stop_loss                  0.20%
+  stop_loss                  0.20% (AI-tuned, range 0.15–0.35%)
   allocation_per_trade       €10
   max_hold                   60 minutes
+  AI review every            25 closed trades
+
+Short settings:
+  leverage                   2×
+  max_notional               €30 per short
+  take_profit                1.1% (covers ~0.62% Kraken fees for 12h + 0.5% buffer)
+  stop_loss                  0.5% (cut if price rises 0.5% against short)
+  time_review_after          12h (re-evaluate every 4h vs rollover cost)
 
 Optimizer: every 10 closed trades
 Sharpe target: ≥3.0 (success), <1.0 (failure zone)
@@ -629,7 +808,7 @@ Monthly goal: +3% to +8%
 
 
 ================================================================================
-19. SWITCHING TO LIVE TRADING
+21. SWITCHING TO LIVE TRADING
 ================================================================================
 
 Pre-flight checklist:
@@ -658,7 +837,7 @@ Revenue model (at current fee tier):
 
 
 ================================================================================
-20. KNOWN ISSUES & FUTURE IMPROVEMENTS
+22. KNOWN ISSUES & FUTURE IMPROVEMENTS
 ================================================================================
 
 Recent Bug Fixes Applied:
@@ -667,6 +846,12 @@ Recent Bug Fixes Applied:
   - Backtester exit slippage correctly applied (was multiplied by 0.0)
   - Gaussian buy signal only fires when price is near lower band (not below)
   - EUR/USD conversion in volume tracking updated to 1.10
+  - Listings expiry now uses detected_at (Kraken live time) not blog announcement
+  - Scalper AI counter now persists across restarts (reads scalper_trades.jsonl on startup)
+  - Short positions now correctly routed to short_qty/short_entry_prices on restart
+    (previously loaded into long dicts causing duplicate-short guard to fail)
+  - Blacklist can no longer block all pairs: hard cap of 5, fresh rebuild each cycle
+  - Pairs with >50% WR in current window cannot be blacklisted regardless of AI suggestion
 
 Remaining Minor Issues:
   - RSI uses simple mean not Wilder's smoothed average (minor accuracy impact)
@@ -674,6 +859,8 @@ Remaining Minor Issues:
   - Monthly 3% notification flag doesn't reset mid-month on dip and rebound
   - Scalper paper trades don't update the Kraken paper balance (cosmetic only)
   - realized_pnl and fees_paid dicts initialised but not updated during trading
+  - Short P&L in execute_close_short_order records gross PNL (does not deduct
+    Kraken position fees / rollovers — fee impact is real but not shown in journal)
 
 Future Improvements:
   - Walk-forward optimization (rolling windows, not just fixed 30-day backtest)
@@ -682,6 +869,8 @@ Future Improvements:
   - Add Ichimoku cloud position to scalper signal scoring
   - Trailing stop on scalper positions (currently fixed SL only)
   - Multi-strategy true parallelism for higher throughput
+  - FTSE 250 bot (ftse/ directory): wire up IBKR broker, test during London hours
+  - Deduct rollover fees from short P&L journal entries for accurate reporting
 
 
 ================================================================================
@@ -692,13 +881,16 @@ This bot is a complete institutional-grade algorithmic trading stack:
 
   SIGNAL LAYER    → RSI/BB/SMA per pair with regime-aware switching
   TREND FILTER    → Ichimoku Cloud (20/30/60) + Gaussian Channel on 1h candles
-  SCALPING        → 10-pair fast loop with dynamic fee-aware take profits
+  SCALPING        → 500+ pair scan, dynamic fee-aware TP, 15s loop
+  SCALPER AI      → A/B experiments on 5 params, 75-trade window, 3-cycle trajectory
+  SHORTS          → Fee-aware TP (1.1%), 0.5% stop-loss, 12h time review vs rollover cost
   INTELLIGENCE    → 5 AI models + 4 real-time data streams
   BUY GATE        → AI score + social sentiment + on-chain + Ichimoku stacked
   ON-CHAIN        → BTC/ETH network metrics, exchange flows
   SOCIAL          → CoinGecko trending, Fear & Greed, LunarCrush
   RISK MGMT       → 7-layer position sizing, 3-layer stops, circuit breaker
-  SELF-LEARNING   → Backtest-gated optimizer + Kelly criterion + AI calibration
+  SELF-LEARNING   → Backtest-gated optimizer + Kelly + AI calibration + scalper AI
+  BACKTEST LOOP   → Daily statistical backtest → recommendations → scalper AI prompt
   MULTI-EXCHANGE  → Kraken (crypto) + Alpaca (correlated stocks)
   NEW LISTINGS    → 3-source detection, 60-min wait, 12h exit, TP/SL monitored
   PERSISTENCE     → PostgreSQL (scalper + positions) + SQLite (history)
@@ -711,6 +903,8 @@ The system improves automatically over time through:
   3. AI panel calibration (models see if past calls were right)
   4. Sharpe-guided parameter selection (only changes that improve Sharpe deploy)
   5. Dynamic scalper TP (automatically tightens as Kraken fees drop with volume)
+  6. Scalper AI tuner (A/B experiments guided by 3-cycle trajectory + backtest recs)
+  7. Daily statistical backtest (Wilson CI + Bayesian + BH FDR → feeds scalper AI)
 
 Monthly target: +3% to +8% return on starting balance.
 Success threshold: Sharpe ratio ≥ 3.0.
