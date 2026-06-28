@@ -174,6 +174,21 @@ class ScalperAI:
         new_value = round(max(lo, min(hi, float(suggestion["new_value"]))), 4)
         old_value = float(state["current_params"].get(param, _DEFAULTS[param]))
 
+        # Strip any pair the AI wants to blacklist that actually has decent recent WR.
+        # AI only sees a text summary — it can misjudge pairs it hasn't seen much data for.
+        if blacklist:
+            pair_wrs = self._pair_stats(window)
+            filtered = []
+            for p in blacklist:
+                s = pair_wrs.get(p)
+                if s and (s["w"] + s["l"]) >= 3:
+                    wr = s["w"] / (s["w"] + s["l"])
+                    if wr > 0.50:
+                        logger.info("[SCALP-AI] Dropping %s from blacklist: WR=%.0f%% in window", p, wr * 100)
+                        continue
+                filtered.append(p)
+            blacklist = filtered
+
         # Cap blacklist — if overall WR is low it's a market condition, not pair-specific
         if len(blacklist) > _MAX_BLACKLIST:
             pair_wrs = self._pair_stats(window)
