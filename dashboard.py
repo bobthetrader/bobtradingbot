@@ -978,7 +978,7 @@ def _build_page() -> str:
         scalper_tp_pct         = 0.58
 
     # ── Scalper AI Tuner ──────────────────────────────────────────────────────
-    ai_adjustments = _read_jsonl_tail("scalper_ai_adjustments.jsonl", n=10)
+    ai_adjustments = _read_jsonl_tail("scalper_ai_adjustments.jsonl", n=1)
     ai_params_raw  = _read_json("scalper_ai_params.json")
     _PARAM_LABELS  = {
         "rsi_buy":      "RSI Buy",
@@ -1112,7 +1112,7 @@ def _build_page() -> str:
 
         scalper_ai_html = (
             params_bar
-            + '<b style="color:#8b949e;font-size:11px">ADJUSTMENT HISTORY</b>'
+            + '<b style="color:#8b949e;font-size:11px">LAST EXPERIMENT</b>'
             + '<table style="width:100%;margin-top:6px">'
             + '<tr><th>Time</th><th>WR</th><th>Changes</th><th>AI Reasoning</th></tr>'
             + adj_rows + '</table>'
