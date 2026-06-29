@@ -65,11 +65,12 @@ _AI_REVIEW_EVERY = 25      # trigger AI param review after this many closed trad
 
 # Hard bounds — AI suggestions are clamped to these before applying
 _AI_BOUNDS = {
-    "rsi_buy":      (25.0, 40.0),
-    "rsi_sell":     (60.0, 75.0),
-    "vwap_thresh":  (0.001, 0.006),
-    "score_thresh": (1.5, 3.0),
-    "sl_pct":       (0.15, 0.35),
+    "rsi_buy":       (25.0, 40.0),
+    "rsi_sell":      (60.0, 75.0),
+    "vwap_thresh":   (0.001, 0.006),
+    "score_thresh":  (1.5, 3.0),
+    "sl_pct":        (0.15, 0.35),
+    "max_hold_min":  (20.0, 90.0),
 }
 
 # Kraken fee tiers: (30-day USD volume threshold, taker fee %)
@@ -163,7 +164,9 @@ class ScalperEngine:
         self._ai_rsi_sell    = _RSI_SELL
         self._ai_vwap_thresh = _VWAP_THRESH
         self._ai_score_thresh= _SCORE_THRESH
-        self._ai_sl_pct      = _SL_PCT
+        self._ai_sl_pct       = _SL_PCT
+        self._ai_max_hold_min = float(_MAX_HOLD_MIN)
+        self._ai_skip_hours: set = set()
         self._ai_blacklist: set = set()
 
         # Persistent paths
@@ -236,12 +239,14 @@ class ScalperEngine:
             "active_pairs_count": len(self._active_pairs) if self._active_pairs else len(_PAIRS_FALLBACK),
             "screener_last_ts": round(self._screener_ts),
             "ai_params": {
-                "rsi_buy":      self._ai_rsi_buy,
-                "rsi_sell":     self._ai_rsi_sell,
-                "vwap_thresh":  self._ai_vwap_thresh,
-                "score_thresh": self._ai_score_thresh,
-                "sl_pct":       self._ai_sl_pct,
-                "blacklist":    list(self._ai_blacklist),
+                "rsi_buy":        self._ai_rsi_buy,
+                "rsi_sell":       self._ai_rsi_sell,
+                "vwap_thresh":    self._ai_vwap_thresh,
+                "score_thresh":   self._ai_score_thresh,
+                "sl_pct":         self._ai_sl_pct,
+                "max_hold_min":   self._ai_max_hold_min,
+                "skip_hours_utc": sorted(self._ai_skip_hours),
+                "blacklist":      list(self._ai_blacklist),
             },
         }
 
@@ -359,17 +364,33 @@ class ScalperEngine:
             entry      = pos["entry"]
             pct_change = (price - entry) / entry * 100
             held_min   = (time.time() - pos["ts"]) / 60
-            _, _, tp   = _fee_tier(self._volume_usd, str(self._data_dir))
+            _, round_trip, tp = _fee_tier(self._volume_usd, str(self._data_dir))
+
+            floor_activated = False
             with self._lock:
-                sl = self._ai_sl_pct
+                sl       = self._ai_sl_pct
+                max_hold = self._ai_max_hold_min
+                sl_floor = pos.get("sl_floor_pct")
+                be_activation = round(tp * 0.5, 4)  # halfway to TP (~0.43% at base tier)
+                if sl_floor is None and pct_change >= be_activation:
+                    pos["sl_floor_pct"] = be_activation
+                    sl_floor = be_activation
+                    floor_activated = True
+
+            if floor_activated:
+                self._save_positions()
+                logger.info("[SCALP] Breakeven floor set for %s at +%.2f%%", pair, be_activation)
 
             if pct_change >= tp:
                 self._close_position(pair, price, "TAKE_PROFIT", pct_change,
                                      self._get_exit_signals(pair))
+            elif sl_floor is not None and pct_change <= sl_floor:
+                self._close_position(pair, price, "BREAKEVEN", pct_change,
+                                     self._get_exit_signals(pair))
             elif pct_change <= -sl:
                 self._close_position(pair, price, "STOP_LOSS", pct_change,
                                      self._get_exit_signals(pair))
-            elif held_min >= _MAX_HOLD_MIN:
+            elif held_min >= max_hold:
                 self._close_position(pair, price, "TIMEOUT", pct_change,
                                      self._get_exit_signals(pair))
 
@@ -397,8 +418,15 @@ class ScalperEngine:
 
     def _scan_entries(self):
         bear = self._is_bear_market()
+        with self._lock:
+            skip_hours = self._ai_skip_hours
+        hour_gated = datetime.now(timezone.utc).hour in skip_hours
+
         if bear:
             logger.debug("[SCALP] Bear market — scoring pairs for display but skipping entries")
+        if hour_gated:
+            logger.debug("[SCALP] Hour %d UTC gated by backtest — skipping entries",
+                         datetime.now(timezone.utc).hour)
 
         active_pairs = self._active_pairs or list(_PAIRS_FALLBACK)
 
@@ -425,7 +453,7 @@ class ScalperEngine:
             with self._lock:
                 self._pair_scores[pair] = score
 
-            if bear or score < thresh:
+            if bear or hour_gated or score < thresh:
                 continue
 
             if score > best_score:
@@ -765,14 +793,19 @@ class ScalperEngine:
             lo, hi = _AI_BOUNDS["score_thresh"]
             self._ai_score_thresh= max(lo, min(hi, float(p.get("score_thresh",_SCORE_THRESH))))
             lo, hi = _AI_BOUNDS["sl_pct"]
-            self._ai_sl_pct      = max(lo, min(hi, float(p.get("sl_pct",      _SL_PCT))))
+            self._ai_sl_pct       = max(lo, min(hi, float(p.get("sl_pct",       _SL_PCT))))
+            lo, hi = _AI_BOUNDS["max_hold_min"]
+            self._ai_max_hold_min = max(lo, min(hi, float(p.get("max_hold_min", _MAX_HOLD_MIN))))
+            sh = p.get("skip_hours_utc", [])
+            self._ai_skip_hours  = set(int(h) for h in sh) if isinstance(sh, list) else set()
             bl = p.get("pairs_blacklist", [])
             self._ai_blacklist   = set(bl) if isinstance(bl, list) else set()
             logger.info(
                 "[SCALP-AI] Params loaded — RSI_BUY=%.0f RSI_SELL=%.0f "
-                "VWAP=%.3f SCORE=%.1f SL=%.2f%% blacklist=%s",
+                "VWAP=%.3f SCORE=%.1f SL=%.2f%% MAX_HOLD=%.0fm skip_hours=%s blacklist=%s",
                 self._ai_rsi_buy, self._ai_rsi_sell, self._ai_vwap_thresh,
-                self._ai_score_thresh, self._ai_sl_pct, list(self._ai_blacklist),
+                self._ai_score_thresh, self._ai_sl_pct, self._ai_max_hold_min,
+                sorted(self._ai_skip_hours), list(self._ai_blacklist),
             )
         except Exception as exc:
             logger.warning("[SCALP-AI] Could not load AI params: %s", exc)

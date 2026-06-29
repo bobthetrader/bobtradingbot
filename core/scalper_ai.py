@@ -23,19 +23,21 @@ _MODELS = [
 ]
 
 _BOUNDS = {
-    "rsi_buy":      (25.0, 40.0),
-    "rsi_sell":     (60.0, 75.0),
-    "vwap_thresh":  (0.001, 0.006),
-    "score_thresh": (1.5, 3.0),
-    "sl_pct":       (0.15, 0.35),
+    "rsi_buy":       (25.0, 40.0),
+    "rsi_sell":      (60.0, 75.0),
+    "vwap_thresh":   (0.001, 0.006),
+    "score_thresh":  (1.5, 3.0),
+    "sl_pct":        (0.15, 0.35),
+    "max_hold_min":  (20.0, 90.0),
 }
 
 _DEFAULTS = {
-    "rsi_buy":      35.0,
-    "rsi_sell":     65.0,
-    "vwap_thresh":  0.003,
-    "score_thresh": 2.5,
-    "sl_pct":       0.20,
+    "rsi_buy":       35.0,
+    "rsi_sell":      65.0,
+    "vwap_thresh":   0.003,
+    "score_thresh":  2.5,
+    "sl_pct":        0.20,
+    "max_hold_min":  60.0,
 }
 
 _MIN_TRADES        = 20    # minimum trades in window before AI will run
@@ -387,6 +389,19 @@ class ScalperAI:
                     f"{c['win_rate']}% WR [{c['wilson_lo']}%–{c['wilson_hi']}%], "
                     f"P(>50%)={c['prob_above_50']}%, n={c['n_trades']}"
                 )
+            ts = recs.get("timeout_stats")
+            if ts:
+                rec_lines.append(
+                    f"  TIMEOUT STATS (max_hold_min={ts.get('current_max_hold_min', '?')}m): "
+                    f"{ts['count']} timeouts ({ts['pct_of_trades']}% of trades), "
+                    f"WR={ts['win_rate']}%, avg P&L={ts['avg_pnl_pct']:+.3f}%, avg hold={ts['avg_hold_min']:.0f}m. "
+                    f"If timeout rate is high and avg P&L is near zero, consider reducing max_hold_min."
+                )
+            bad_hours = recs.get("bad_hours_utc", [])
+            if bad_hours:
+                rec_lines.append(
+                    f"  GATED HOURS (entries blocked by backtest, already applied): UTC {sorted(bad_hours)}"
+                )
             backtest_block = "\n".join(rec_lines)
         else:
             backtest_block = "  Not available yet — run the local backtest tool first."
@@ -400,15 +415,16 @@ You then propose the next single-parameter change based on what you learn.
 CURRENT TIME: {now_utc.strftime('%H:%M UTC, %A')}
 
 CURRENT PARAMETERS (active right now):
-  rsi_buy (enter long when RSI below this):  {current['rsi_buy']}
-  rsi_sell (exit when RSI above this):       {current['rsi_sell']}
-  vwap_thresh (% price deviation from VWAP): {current['vwap_thresh']}
-  score_thresh (minimum combined score):     {current['score_thresh']}
-  sl_pct (stop-loss %):                      {current['sl_pct']}
+  rsi_buy (enter long when RSI below this):   {current['rsi_buy']}
+  rsi_sell (exit when RSI above this):        {current['rsi_sell']}
+  vwap_thresh (% price deviation from VWAP):  {current['vwap_thresh']}
+  score_thresh (minimum combined score):      {current['score_thresh']}
+  sl_pct (stop-loss %):                       {current['sl_pct']}
+  max_hold_min (force-exit after N minutes):  {current['max_hold_min']}
 
 PARAMETER BOUNDS (must stay within):
   rsi_buy: 25–40  |  rsi_sell: 60–75  |  vwap_thresh: 0.001–0.006
-  score_thresh: 1.5–3.0  |  sl_pct: 0.15–0.35
+  score_thresh: 1.5–3.0  |  sl_pct: 0.15–0.35  |  max_hold_min: 20–90
 
 PENDING EXPERIMENT: {pending_str}
 
@@ -448,7 +464,7 @@ TASK:
 
 Respond ONLY with valid JSON (no markdown, no extra text):
 {{
-  "param": "<one of: rsi_buy, rsi_sell, vwap_thresh, score_thresh, sl_pct>",
+  "param": "<one of: rsi_buy, rsi_sell, vwap_thresh, score_thresh, sl_pct, max_hold_min>",
   "new_value": <number within the param's bounds>,
   "pairs_blacklist": [<pair strings to blacklist, or empty list>],
   "reasoning": "<1-2 sentences: what pattern you saw and why this single change should help>"
@@ -580,6 +596,9 @@ Respond ONLY with valid JSON (no markdown, no extra text):
             out = dict(params)
             out["pairs_blacklist"] = blacklist
             out["updated_at"]      = datetime.now(timezone.utc).isoformat()
+            # Propagate bad hours from latest backtest — these come from data, not AI
+            recs = self._load_backtest_recs()
+            out["skip_hours_utc"] = recs.get("bad_hours_utc", [])
             tmp = self._params_path.with_suffix(".tmp")
             tmp.write_text(json.dumps(out, separators=(",", ":")), encoding="utf-8")
             tmp.replace(self._params_path)

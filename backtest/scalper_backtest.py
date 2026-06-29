@@ -807,11 +807,39 @@ def compute_recommendations(df: pd.DataFrame) -> dict:
     # BH-significant first, then by Wilson lower bound
     combos.sort(key=lambda c: (c["bh_significant"], c["wilson_lo"]), reverse=True)
 
+    # Timeout stats for AI hint about max_hold_min tuning
+    timeout_stats = None
+    if "reason" in df.columns and "held_min" in df.columns:
+        t_df = df[df["reason"] == "TIMEOUT"]
+        if len(t_df) > 0:
+            timeout_stats = {
+                "current_max_hold_min": int(df["held_min"].max()) if "held_min" in df.columns else 60,
+                "count":          len(t_df),
+                "pct_of_trades":  round(len(t_df) / len(df) * 100, 1),
+                "win_rate":       round(t_df["win"].mean() * 100, 1),
+                "avg_pnl_pct":    round(t_df["pnl_pct"].mean(), 3),
+                "avg_hold_min":   round(t_df["held_min"].mean(), 1),
+            }
+
+    # Bad hours — gate entries during statistically poor UTC hours
+    bad_hours_utc = []
+    if "entry_hour_utc" in df.columns:
+        _MIN_TRADES_HOUR = 5
+        for h in range(24):
+            g = df[df["entry_hour_utc"] == h]
+            if len(g) < _MIN_TRADES_HOUR:
+                continue
+            wr = g["win"].mean() * 100
+            if wr < 35.0:
+                bad_hours_utc.append(h)
+
     return {
         "generated_at":     datetime.now(timezone.utc).isoformat(),
         "trade_count":      len(df),
         "best":             combos[0],
         "top_combinations": combos[:5],
+        "timeout_stats":    timeout_stats,
+        "bad_hours_utc":    bad_hours_utc,
     }
 
 
