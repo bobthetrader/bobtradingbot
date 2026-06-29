@@ -13,7 +13,8 @@ Signals (scored, threshold ±2.5 to enter):
   Order book bid vol > ask vol by >20% → +1  (buying pressure)
   Order book ask vol > bid vol by >20% → -1  (selling pressure)
 
-TP: 0.86% dynamic / SL: 0.20%  (clears 0.80% round-trip Kraken taker fee at base tier)
+TP: dynamic (round-trip fee + 1.80%) / SL: 0.50%
+At $10k-$50k volume (0.35% taker): TP=2.50%, break-even at 40% WR.
 """
 
 import json
@@ -56,11 +57,11 @@ _VWAP_CANDLES   = 30       # rolling window for VWAP calc
 _VWAP_THRESH    = 0.003    # 0.3% deviation from VWAP to signal
 _OB_IMBALANCE   = 0.20     # 20% bid/ask vol imbalance to signal
 _SCORE_THRESH   = 2.5      # raised: require stronger combined signal
-_TP_PCT         = 0.86     # take-profit % (base — adjusted dynamically by fee tier)
-_SL_PCT         = 0.20     # stop-loss %
+_TP_PCT         = 2.50     # take-profit % (base — adjusted dynamically by fee tier)
+_SL_PCT         = 0.50     # stop-loss %
 _ALLOCATION_EUR = 10.0     # paper EUR per scalp trade
-_MAX_HOLD_MIN   = 60       # force-exit after 60 minutes regardless
-_MIN_PROFIT_BPS = 0.06     # minimum net profit above round-trip fee (6 basis points)
+_MAX_HOLD_MIN   = 120      # force-exit after 120 minutes regardless
+_MIN_PROFIT_BPS = 1.80     # minimum net profit % above round-trip fee
 _AI_REVIEW_EVERY = 25      # trigger AI param review after this many closed trades
 
 # Hard bounds — AI suggestions are clamped to these before applying
@@ -69,25 +70,25 @@ _AI_BOUNDS = {
     "rsi_sell":      (60.0, 75.0),
     "vwap_thresh":   (0.001, 0.006),
     "score_thresh":  (1.5, 3.0),
-    "sl_pct":        (0.15, 0.35),
-    "max_hold_min":  (20.0, 90.0),
+    "sl_pct":        (0.30, 0.80),
+    "max_hold_min":  (30.0, 180.0),
 }
 
 # Kraken fee tiers: (30-day USD volume threshold, taker fee %)
 # Source: Kraken AssetPairs API verified 2026-06-28. Fee volume currency: ZUSD.
 # TP is set dynamically to round_trip_fee + _MIN_PROFIT_BPS
 _FEE_TIERS = [
-    (0,           0.40),  # <$10k       → round trip 0.80%  → TP 0.86%
-    (10_000,      0.35),  # $10k+       → round trip 0.70%  → TP 0.76%
-    (50_000,      0.24),  # $50k+       → round trip 0.48%  → TP 0.54%
-    (100_000,     0.22),  # $100k+      → round trip 0.44%  → TP 0.50%
-    (250_000,     0.20),  # $250k+      → round trip 0.40%  → TP 0.46%
-    (500_000,     0.18),  # $500k+      → round trip 0.36%  → TP 0.42%
-    (1_000_000,   0.16),  # $1M+        → round trip 0.32%  → TP 0.38%
-    (2_500_000,   0.14),  # $2.5M+      → round trip 0.28%  → TP 0.34%
-    (5_000_000,   0.12),  # $5M+        → round trip 0.24%  → TP 0.30%
-    (10_000_000,  0.10),  # $10M+       → round trip 0.20%  → TP 0.26%
-    (100_000_000, 0.08),  # $100M+      → round trip 0.16%  → TP 0.22%
+    (0,           0.40),  # <$10k       → round trip 0.80%  → TP 2.60%
+    (10_000,      0.35),  # $10k+       → round trip 0.70%  → TP 2.50%
+    (50_000,      0.24),  # $50k+       → round trip 0.48%  → TP 2.28%
+    (100_000,     0.22),  # $100k+      → round trip 0.44%  → TP 2.24%
+    (250_000,     0.20),  # $250k+      → round trip 0.40%  → TP 2.20%
+    (500_000,     0.18),  # $500k+      → round trip 0.36%  → TP 2.16%
+    (1_000_000,   0.16),  # $1M+        → round trip 0.32%  → TP 2.12%
+    (2_500_000,   0.14),  # $2.5M+      → round trip 0.28%  → TP 2.08%
+    (5_000_000,   0.12),  # $5M+        → round trip 0.24%  → TP 2.04%
+    (10_000_000,  0.10),  # $10M+       → round trip 0.20%  → TP 2.00%
+    (100_000_000, 0.08),  # $100M+      → round trip 0.16%  → TP 1.96%
 ]
 
 

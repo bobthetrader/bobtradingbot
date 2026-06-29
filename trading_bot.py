@@ -2223,13 +2223,15 @@ class TradingBot:
         return Path(__file__).parent / "data" / "balance_state.json"
 
     def _save_balance_state(self, portfolio_value: float) -> None:
-        """Persist peak_balance, initial_balance_eur, and paper EUR cash so restarts resume correctly."""
+        """Persist peak_balance, initial_balance_eur, paper EUR cash, and circuit-breaker state so restarts resume correctly."""
         try:
             path = self._balance_state_path()
             path.parent.mkdir(parents=True, exist_ok=True)
             state = {
-                "peak_balance":        round(float(getattr(self, "peak_balance", portfolio_value)), 4),
-                "initial_balance_eur": round(float(getattr(self, "initial_balance_eur", portfolio_value)), 4),
+                "peak_balance":              round(float(getattr(self, "peak_balance", portfolio_value)), 4),
+                "initial_balance_eur":       round(float(getattr(self, "initial_balance_eur", portfolio_value)), 4),
+                "circuit_breaker_triggered": bool(getattr(self, "_circuit_breaker_triggered", False)),
+                "trading_paused_until_ts":   int(getattr(self, "trading_paused_until_ts", 0)),
             }
             # Persist the live paper EUR cash so it survives restarts
             _is_paper = getattr(self.api_client, 'paper_mode', False)
@@ -2253,19 +2255,29 @@ class TradingBot:
                 state = json.loads(path.read_text())
                 self.peak_balance        = float(state.get("peak_balance",       fallback_balance))
                 self.initial_balance_eur = float(state.get("initial_balance_eur",fallback_balance))
+                # Restore circuit-breaker state — flag and pause survive restarts
+                self._circuit_breaker_triggered = bool(state.get("circuit_breaker_triggered", False))
+                self.trading_paused_until_ts    = int(state.get("trading_paused_until_ts", 0))
+                # Auto-clear if the 24h pause has already expired
+                if self.trading_paused_until_ts and self.trading_paused_until_ts < int(time.time()):
+                    self._circuit_breaker_triggered = False
+                    self.trading_paused_until_ts    = 0
+                    self.logger.info("Circuit-breaker pause expired — resuming automatically")
                 # Restore paper EUR cash — prevents the ghost-money reset on every restart
                 _is_paper = getattr(self.api_client, 'paper_mode', False)
                 if _is_paper and "paper_balance_eur" in state:
                     restored_paper = float(state["paper_balance_eur"])
                     self.api_client._paper_balance_eur = restored_paper
                     self.logger.info(
-                        "Restored balance state: peak=%.2f initial=%.2f paper_eur=%.2f",
+                        "Restored balance state: peak=%.2f initial=%.2f paper_eur=%.2f cb=%s paused_until=%s",
                         self.peak_balance, self.initial_balance_eur, restored_paper,
+                        self._circuit_breaker_triggered, self.trading_paused_until_ts or "no",
                     )
                 else:
                     self.logger.info(
-                        "Restored balance state: peak=%.2f initial=%.2f",
+                        "Restored balance state: peak=%.2f initial=%.2f cb=%s paused_until=%s",
                         self.peak_balance, self.initial_balance_eur,
+                        self._circuit_breaker_triggered, self.trading_paused_until_ts or "no",
                     )
             else:
                 self.peak_balance        = fallback_balance
