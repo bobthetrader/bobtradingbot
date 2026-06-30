@@ -2262,7 +2262,10 @@ class TradingBot:
                 if self.trading_paused_until_ts and self.trading_paused_until_ts < int(time.time()):
                     self._circuit_breaker_triggered = False
                     self.trading_paused_until_ts    = 0
-                    self.logger.info("Circuit-breaker pause expired — resuming automatically")
+                    # Reset peak so the next CB window starts from current balance,
+                    # not from an ever-more-distant historic high
+                    self.peak_balance = fallback_balance
+                    self.logger.info("Circuit-breaker pause expired — resuming automatically, peak reset to %.2f", fallback_balance)
                 # Restore paper EUR cash — prevents the ghost-money reset on every restart
                 _is_paper = getattr(self.api_client, 'paper_mode', False)
                 if _is_paper and "paper_balance_eur" in state:
@@ -3322,11 +3325,12 @@ class TradingBot:
             except Exception:
                 pass
 
-        # Drawdown circuit-breaker
+        # Drawdown circuit-breaker (skipped in paper mode — loss-streak pause is sufficient)
 
         try:
             self.peak_balance = max(getattr(self, 'peak_balance', portfolio_value), portfolio_value)
-            if self.peak_balance > 0:
+            _paper_mode = getattr(self.api_client, 'paper_mode', False)
+            if self.peak_balance > 0 and not _paper_mode:
                 current_dd_pct = ((self.peak_balance - portfolio_value) / self.peak_balance) * 100.0
                 max_dd_cfg = float(self.config.get('risk_management', {}).get('max_drawdown_percent', 10.0))
                 if current_dd_pct >= max_dd_cfg and not self._circuit_breaker_triggered:
