@@ -514,13 +514,19 @@ Respond ONLY with valid JSON (no markdown, no extra text):
                     f for f in state.get("failed_changes", [])
                     if self._parse_ts(f.get("tried_at", "")) > cutoff
                 ]
-                # Migrate current_params to new signal design — drop unknown keys,
-                # fill missing ones from defaults. Handles old rsi_buy/vwap_thresh state.
+                # Migrate current_params to new signal design.
+                # If the state was written by the old signal (has rsi_buy), reset
+                # ALL params to defaults — old score_thresh=2.0 / sl_pct=0.3 are
+                # wrong for the new 6-point scoring system even though in-bounds.
                 raw = state.get("current_params", {})
-                state["current_params"] = {
-                    k: max(lo, min(hi, float(raw[k]))) if k in raw else _DEFAULTS[k]
-                    for k, (lo, hi) in _BOUNDS.items()
-                }
+                if "rsi_buy" in raw:
+                    logger.info("[SCALP-AI] Old-signal state detected — resetting all params to new defaults")
+                    state["current_params"] = dict(_DEFAULTS)
+                else:
+                    state["current_params"] = {
+                        k: max(lo, min(hi, float(raw[k]))) if k in raw else _DEFAULTS[k]
+                        for k, (lo, hi) in _BOUNDS.items()
+                    }
                 # Also drop any pending experiment that references a now-unknown param
                 pe = state.get("pending_experiment")
                 if pe and pe.get("param") not in _BOUNDS:

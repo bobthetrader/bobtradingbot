@@ -844,6 +844,13 @@ class ScalperEngine:
             if not self._ai_params_path.exists():
                 return
             p = json.loads(self._ai_params_path.read_text())
+            # Old-signal file has rsi_buy / vwap_thresh but not rsi_recovery_thresh.
+            # Inheriting score_thresh=2.0 / sl_pct=0.3 from the old signal into the
+            # new 6-point scoring system is wrong — ignore the whole file and start
+            # fresh from defaults so the new signal runs with correct thresholds.
+            if "rsi_buy" in p and "rsi_recovery_thresh" not in p:
+                logger.info("[SCALP-AI] Old-signal params file detected — ignoring, using new defaults")
+                return
             lo, hi = _AI_BOUNDS["rsi_recovery_thresh"]
             self._ai_rsi_recovery_thresh = max(lo, min(hi, float(p.get("rsi_recovery_thresh", _RSI_RECOVERY_THRESH))))
             lo, hi = _AI_BOUNDS["rsi_sell"]
