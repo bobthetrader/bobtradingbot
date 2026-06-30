@@ -3,6 +3,7 @@
 
 import os
 import sys
+import signal
 import logging
 import atexit
 import argparse
@@ -205,6 +206,21 @@ if __name__ == "__main__":
         backtester = Backtester(kraken, config)
         backtester.run()
     else:
-        logger.info("Starting live trading...") 
+        logger.info("Starting live trading...")
         print("Starting Kraken Trading Bot...")
+
+        # Flush balance state on SIGTERM (Docker stop) so the restored value
+        # on the next start matches the actual balance at shutdown, not the
+        # last periodic save which may be up to one loop-tick behind.
+        def _on_sigterm(signum, frame):
+            logger.info("SIGTERM received — saving balance state before shutdown")
+            try:
+                _portfolio = trading_bot.get_eur_balance()
+                trading_bot._save_balance_state(_portfolio)
+            except Exception as exc:
+                logger.warning("Balance save on SIGTERM failed: %s", exc)
+            sys.exit(0)
+
+        signal.signal(signal.SIGTERM, _on_sigterm)
+
         trading_bot.start_trading(max_runtime_seconds=args.duration)
