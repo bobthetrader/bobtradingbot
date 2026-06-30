@@ -65,6 +65,7 @@ _ALLOCATION_EUR        = 10.0   # paper EUR per scalp trade
 _MAX_HOLD_MIN          = 120    # force-exit after 120 minutes regardless
 _MIN_PROFIT_BPS        = 1.80   # minimum net profit % above round-trip fee
 _AI_REVIEW_EVERY       = 25     # trigger AI param review after this many closed trades
+_AI_TIME_REVIEW_H      = 24    # fallback: trigger AI review after this many hours even with few trades
 
 # Hard bounds — AI suggestions are clamped to these before applying
 _AI_BOUNDS = {
@@ -162,7 +163,8 @@ class ScalperEngine:
         self._trade_log: list = []     # last 100 completed trades (in-memory)
         self._volume_usd: float = 0.0  # cumulative 30-day equivalent volume (USD)
         self._pair_scores: dict = {}   # pair → latest score (+ bullish, - bearish)
-        self._trades_since_ai: int = 0  # counter — triggers AI review every N trades
+        self._trades_since_ai: int   = 0    # counter — triggers AI review every N trades
+        self._last_ai_review_ts: float = time.time()  # epoch of last AI review (time-based fallback)
 
         # Dynamic pair discovery
         self._active_pairs: list = []  # updated by screener every 5 min
@@ -267,6 +269,7 @@ class ScalperEngine:
                 self._refresh_active_pairs()
                 self._check_exits()
                 self._scan_entries()
+                self._check_time_based_ai_review()
             except Exception as exc:
                 logger.error("[SCALP] Loop error: %s", exc, exc_info=True)
             time.sleep(_INTERVAL_SEC)
@@ -737,7 +740,8 @@ class ScalperEngine:
             self._trades_since_ai += 1
             trigger_ai = (self._trades_since_ai >= _AI_REVIEW_EVERY)
             if trigger_ai:
-                self._trades_since_ai = 0
+                self._trades_since_ai   = 0
+                self._last_ai_review_ts = time.time()
 
         self._save_positions()
         self._log_trade(trade)
@@ -883,7 +887,22 @@ class ScalperEngine:
             logger.warning("[SCALP-AI] Could not count completed trades: %s", exc)
             return 0
 
-    def _run_ai_review(self):
+    def _check_time_based_ai_review(self):
+        """Fire an AI review if _AI_TIME_REVIEW_H hours have passed with no trade-triggered review."""
+        elapsed_h = (time.time() - self._last_ai_review_ts) / 3600
+        if elapsed_h < _AI_TIME_REVIEW_H:
+            return
+        with self._lock:
+            # Reset trade counter too so we don't double-fire immediately after
+            self._trades_since_ai  = 0
+            self._last_ai_review_ts = time.time()
+        logger.info(
+            "[SCALP-AI] Time-based AI review triggered (%.1fh since last review, "
+            "no trade-triggered review in that window)", elapsed_h
+        )
+        self._run_ai_review(reason="time")
+
+    def _run_ai_review(self, reason: str = "trades"):
         """Spawn a background thread to run AI analysis (non-blocking)."""
         def _worker():
             try:
@@ -898,4 +917,9 @@ class ScalperEngine:
                 logger.warning("[SCALP-AI] Review thread error: %s", exc)
 
         threading.Thread(target=_worker, daemon=True, name="ScalperAI").start()
-        logger.info("[SCALP-AI] AI review triggered after %d trades", _AI_REVIEW_EVERY)
+        if reason == "time":
+            logger.info("[SCALP-AI] AI review started (time-based fallback, %dh interval)",
+                        _AI_TIME_REVIEW_H)
+        else:
+            logger.info("[SCALP-AI] AI review started (trade-based, every %d trades)",
+                        _AI_REVIEW_EVERY)
