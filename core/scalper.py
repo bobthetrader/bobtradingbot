@@ -849,7 +849,21 @@ class ScalperEngine:
             # new 6-point scoring system is wrong — ignore the whole file and start
             # fresh from defaults so the new signal runs with correct thresholds.
             if "rsi_buy" in p and "rsi_recovery_thresh" not in p:
-                logger.info("[SCALP-AI] Old-signal params file detected — ignoring, using new defaults")
+                logger.info("[SCALP-AI] Old-signal params file detected — overwriting with new defaults")
+                defaults = {
+                    "rsi_recovery_thresh": _RSI_RECOVERY_THRESH,
+                    "rsi_sell":            _RSI_SELL,
+                    "vol_mult":            _VOL_MULT,
+                    "score_thresh":        _SCORE_THRESH,
+                    "sl_pct":              _SL_PCT,
+                    "max_hold_min":        float(_MAX_HOLD_MIN),
+                    "pairs_blacklist":     [],
+                    "skip_hours_utc":      [],
+                    "updated_at":          datetime.now(timezone.utc).isoformat(),
+                }
+                self._ai_params_path.write_text(
+                    json.dumps(defaults, separators=(",", ":")), encoding="utf-8"
+                )
                 return
             lo, hi = _AI_BOUNDS["rsi_recovery_thresh"]
             self._ai_rsi_recovery_thresh = max(lo, min(hi, float(p.get("rsi_recovery_thresh", _RSI_RECOVERY_THRESH))))
