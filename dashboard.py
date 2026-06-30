@@ -980,6 +980,9 @@ def _build_page() -> str:
     # ── Scalper AI Tuner ──────────────────────────────────────────────────────
     ai_adjustments = _read_jsonl_tail("scalper_ai_adjustments.jsonl", n=1)
     ai_params_raw  = _read_json("scalper_ai_params.json")
+    # Old-signal file has rsi_buy but not rsi_recovery_thresh — treat as absent
+    if ai_params_raw and "rsi_buy" in ai_params_raw and "rsi_recovery_thresh" not in ai_params_raw:
+        ai_params_raw = None
     _PARAM_LABELS  = {
         "rsi_recovery_thresh": "RSI Recovery",
         "rsi_sell":            "RSI Sell",
