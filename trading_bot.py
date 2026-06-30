@@ -2258,13 +2258,18 @@ class TradingBot:
                 # Restore circuit-breaker state — flag and pause survive restarts
                 self._circuit_breaker_triggered = bool(state.get("circuit_breaker_triggered", False))
                 self.trading_paused_until_ts    = int(state.get("trading_paused_until_ts", 0))
-                # Auto-clear if the 24h pause has already expired
-                if self.trading_paused_until_ts and self.trading_paused_until_ts < int(time.time()):
+                # In paper mode the drawdown CB is disabled — never restore a triggered state
+                _is_paper = getattr(self.api_client, 'paper_mode', False)
+                if _is_paper and self._circuit_breaker_triggered:
                     self._circuit_breaker_triggered = False
                     self.trading_paused_until_ts    = 0
-                    # Reset peak so the next CB window starts from current balance,
-                    # not from an ever-more-distant historic high
-                    self.peak_balance = fallback_balance
+                    self.peak_balance               = fallback_balance
+                    self.logger.info("Paper mode: cleared persisted circuit-breaker state on startup, peak reset to %.2f", fallback_balance)
+                # Auto-clear if the 24h pause has already expired (live mode)
+                elif self.trading_paused_until_ts and self.trading_paused_until_ts < int(time.time()):
+                    self._circuit_breaker_triggered = False
+                    self.trading_paused_until_ts    = 0
+                    self.peak_balance               = fallback_balance
                     self.logger.info("Circuit-breaker pause expired — resuming automatically, peak reset to %.2f", fallback_balance)
                 # Restore paper EUR cash — prevents the ghost-money reset on every restart
                 _is_paper = getattr(self.api_client, 'paper_mode', False)
