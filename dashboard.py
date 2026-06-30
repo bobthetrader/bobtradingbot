@@ -981,15 +981,16 @@ def _build_page() -> str:
     ai_adjustments = _read_jsonl_tail("scalper_ai_adjustments.jsonl", n=1)
     ai_params_raw  = _read_json("scalper_ai_params.json")
     _PARAM_LABELS  = {
-        "rsi_buy":      "RSI Buy",
-        "rsi_sell":     "RSI Sell",
-        "vwap_thresh":  "VWAP Thresh",
-        "score_thresh": "Score Thresh",
-        "sl_pct":       "Stop Loss %",
+        "rsi_recovery_thresh": "RSI Recovery",
+        "rsi_sell":            "RSI Sell",
+        "vol_mult":            "Vol Mult",
+        "score_thresh":        "Score Thresh",
+        "sl_pct":              "Stop Loss %",
+        "max_hold_min":        "Max Hold (m)",
     }
     _PARAM_DEFAULTS = {
-        "rsi_buy": 35.0, "rsi_sell": 65.0, "vwap_thresh": 0.003,
-        "score_thresh": 1.5, "sl_pct": 0.20,
+        "rsi_recovery_thresh": 45.0, "rsi_sell": 65.0, "vol_mult": 1.5,
+        "score_thresh": 4.0, "sl_pct": 0.50, "max_hold_min": 120.0,
     }
 
     if ai_adjustments:
