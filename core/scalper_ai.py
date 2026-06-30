@@ -502,6 +502,19 @@ Respond ONLY with valid JSON (no markdown, no extra text):
                     f for f in state.get("failed_changes", [])
                     if self._parse_ts(f.get("tried_at", "")) > cutoff
                 ]
+                # Migrate current_params to new signal design — drop unknown keys,
+                # fill missing ones from defaults. Handles old rsi_buy/vwap_thresh state.
+                raw = state.get("current_params", {})
+                state["current_params"] = {
+                    k: max(lo, min(hi, float(raw[k]))) if k in raw else _DEFAULTS[k]
+                    for k, (lo, hi) in _BOUNDS.items()
+                }
+                # Also drop any pending experiment that references a now-unknown param
+                pe = state.get("pending_experiment")
+                if pe and pe.get("param") not in _BOUNDS:
+                    logger.info("[SCALP-AI] Dropping stale pending_experiment for unknown param %s",
+                                pe.get("param"))
+                    state["pending_experiment"] = None
                 return state
             except Exception as exc:
                 logger.warning("[SCALP-AI] State file corrupt — resetting: %s", exc)
