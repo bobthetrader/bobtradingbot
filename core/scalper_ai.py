@@ -377,7 +377,18 @@ class ScalperAI:
             age_h = (datetime.now(timezone.utc).timestamp()
                      - self._parse_ts(recs.get("generated_at", ""))) / 3600
             rec_lines = [f"  Based on {recs['trade_count']} real trades, generated {age_h:.0f}h ago."]
-            # New-signal grid takes priority
+            # Walk-forward validated params take highest priority
+            if recs.get("wf_best"):
+                wf = recs["wf_best"]
+                rec_lines += [
+                    f"  WALK-FORWARD VALIDATED (out-of-sample, most reliable):",
+                    f"    Stable combo: vol_mult≥{wf['vol_mult_min']}, score_thresh≥{wf['score_min']}",
+                    f"    Won {wf['windows_won']}/{wf['windows_total']} windows ({wf['stability_pct']}% stability)",
+                    f"    OOS win rate: {wf['oos_win_rate']}% [{wf['oos_wilson_lo']}%–{wf['oos_wilson_hi']}%] "
+                    f"P(>50%)={wf['oos_prob_above_50']}% n={wf['oos_n_trades']}",
+                    f"    These params held up on UNSEEN data — weight them heavily.",
+                ]
+            # New-signal full-history grid
             if recs.get("new_signal_best"):
                 best = recs["new_signal_best"]
                 rec_lines += [
@@ -453,8 +464,9 @@ BLOCKED DIRECTIONS: {blocked_str}
 
 BACKTEST INSIGHTS (statistically validated from full trade history):
 {backtest_block}
-NOTE: If current vol_mult or score_thresh differ significantly from the best new-signal combo above,
-consider moving toward the validated range — unless that direction is blocked by recent failures.
+NOTE: Prioritise WALK-FORWARD params over full-history grid (walk-forward proved robust on unseen data).
+If current vol_mult or score_thresh differ from walk-forward validated values, move toward them
+unless that direction is blocked by recent live experiment failures.
 
 LAST 3 EXPERIMENT CYCLES (most recent last):
 {cycle_block}

@@ -57,6 +57,11 @@ RSI_RECOVERY_GRID = [30, 35, 40, 45, 50]
 VOL_MULT_GRID     = [1.1, 1.25, 1.5, 2.0, 2.5]
 NEW_SCORE_GRID    = [3.0, 3.5, 4.0, 4.5, 5.0]
 
+# Walk-forward config
+WF_TRAIN          = 100   # trades in each training window
+WF_TEST           = 30    # trades in each test window (step size)
+WF_MIN_TRADES     = WF_TRAIN + WF_TEST   # 130 — minimum to run any windows
+
 
 # ── Docker sync ───────────────────────────────────────────────────────────────
 
@@ -913,6 +918,181 @@ def s_concurrent(df: pd.DataFrame) -> str:
             + tbl(["Other open positions", "Trades", "Win Rate [95% CI] / P(>50%)", "Avg P&L %"], rows))
 
 
+# ── Walk-forward analysis ─────────────────────────────────────────────────────
+
+def _wf_best_combo(train: pd.DataFrame) -> tuple:
+    """Return (vol_mult, score_thresh, train_wr) for the best combo on a training window."""
+    best_lo, best_combo, best_wr = -1.0, None, 0.0
+    for vm in VOL_MULT_GRID:
+        for sc in NEW_SCORE_GRID:
+            g = train[(train["entry_volume_ratio"].fillna(0) >= vm) &
+                      (train["entry_score"] >= sc)]
+            if len(g) < 3:
+                continue
+            pt, lo, hi = wilson_ci(g["win"])
+            if lo > best_lo:
+                best_lo    = lo
+                best_combo = (vm, sc)
+                best_wr    = pt
+    return (best_combo[0], best_combo[1], best_wr) if best_combo else (None, None, 0.0)
+
+
+def s_walk_forward(df: pd.DataFrame) -> str:
+    """Rolling train/test walk-forward on new-signal trades only.
+
+    Filters to trades with entry_vwap_bounce present (new signal design).
+    Shows a progress note when there aren't enough trades yet.
+    As the DB grows this section automatically produces more windows.
+    """
+    out = "<h2>Walk-Forward Validation</h2>"
+
+    # ── Filter to new-signal trades only ──────────────────────────────────────
+    if "entry_vwap_bounce" not in df.columns:
+        return (out + "<p class='note'>No new-signal trades yet — section will populate "
+                "once the VWAP Reclaim bot has been running.</p>")
+
+    ns = df[df["entry_vwap_bounce"].notna()].reset_index(drop=True)
+    n  = len(ns)
+
+    if n < WF_MIN_TRADES:
+        pct  = round(n / WF_MIN_TRADES * 100)
+        bar  = "█" * (pct // 5) + "░" * (20 - pct // 5)
+        return (out +
+                f"<p class='note'><b>Building data: {n} / {WF_MIN_TRADES} new-signal trades "
+                f"needed to begin.</b><br>"
+                f"<span style='font-family:monospace;color:#ffbb33'>[{bar}] {pct}%</span><br>"
+                f"Each window uses {WF_TRAIN} train + {WF_TEST} test trades. "
+                f"The analysis self-improves as more trades accumulate.</p>")
+
+    n_windows = (n - WF_TRAIN) // WF_TEST
+    out += (f"<p class='note'>"
+            f"{n} new-signal trades → <b>{n_windows} walk-forward window{'s' if n_windows != 1 else ''}</b> "
+            f"({WF_TRAIN} train / {WF_TEST} test each, step={WF_TEST}). "
+            f"Each window finds the best vol_mult × score_thresh on training data, "
+            f"then evaluates it on unseen test data. "
+            f"Params that survive out-of-sample are more reliable than full-history grid winners.</p>")
+
+    # ── Run windows ───────────────────────────────────────────────────────────
+    window_rows   = []
+    oos_wrs       = []          # out-of-sample win rates across all windows
+    combo_votes: dict = {}      # combo → count of windows where it won in-sample
+
+    for w in range(n_windows):
+        train_start = w * WF_TEST
+        train_end   = train_start + WF_TRAIN
+        test_end    = train_end + WF_TEST
+
+        train = ns.iloc[train_start:train_end]
+        test  = ns.iloc[train_end:test_end]
+
+        vm, sc, train_wr = _wf_best_combo(train)
+        if vm is None:
+            continue
+
+        # Vote for this combo
+        combo_votes[(vm, sc)] = combo_votes.get((vm, sc), 0) + 1
+
+        # Apply best train combo to test set
+        test_g = test[(test["entry_volume_ratio"].fillna(0) >= vm) &
+                      (test["entry_score"] >= sc)]
+
+        if len(test_g) < 1:
+            oos_wr_pt, oos_lo, oos_hi = 0.0, 0.0, 0.0
+            n_test_filtered = 0
+        else:
+            oos_wr_pt, oos_lo, oos_hi = wilson_ci(test_g["win"])
+            oos_wrs.append(oos_wr_pt)
+            n_test_filtered = len(test_g)
+
+        date_range = ""
+        if "open_ts" in ns.columns:
+            t0 = train["open_ts"].min()
+            t1 = test["open_ts"].max()
+            if pd.notna(t0) and pd.notna(t1):
+                date_range = f"{t0.strftime('%m-%d')} → {t1.strftime('%m-%d')}"
+
+        oos_cell = ci_html(oos_wr_pt, oos_lo, oos_hi, n_test_filtered) if n_test_filtered >= 3 else ("—", "color:#3d444d")
+        window_rows.append([
+            f"W{w+1}" + (f" <span style='color:#3d444d;font-size:10px'>{date_range}</span>" if date_range else ""),
+            f"vol≥{vm} / score≥{sc}",
+            f"{train_wr:.1f}%",
+            n_test_filtered,
+            oos_cell,
+        ])
+
+    if not window_rows:
+        return out + "<p class='note'>Could not form valid windows — check entry_volume_ratio coverage.</p>"
+
+    out += "<h3>Per-Window Results</h3>"
+    out += tbl(["Window", "Best train combo", "Train WR", "Test n", "Out-of-sample WR [95% CI]"],
+               window_rows)
+
+    # ── Aggregate summary ─────────────────────────────────────────────────────
+    out += "<h3>Walk-Forward Summary</h3>"
+
+    avg_oos = round(sum(oos_wrs) / len(oos_wrs), 1) if oos_wrs else 0.0
+    oos_col = col_wr(avg_oos)
+
+    # Most-voted combo = stable winner
+    stable_combo = max(combo_votes, key=combo_votes.get) if combo_votes else None
+    stable_votes = combo_votes.get(stable_combo, 0) if stable_combo else 0
+    stability_pct = round(stable_votes / n_windows * 100) if n_windows else 0
+
+    # Full OOS aggregate: pool all test predictions with their best combo
+    oos_pool_wins = []
+    for w in range(n_windows):
+        train_start = w * WF_TEST
+        train_end   = train_start + WF_TRAIN
+        test_end    = train_end + WF_TEST
+        train = ns.iloc[train_start:train_end]
+        test  = ns.iloc[train_end:test_end]
+        vm, sc, _ = _wf_best_combo(train)
+        if vm is None:
+            continue
+        test_g = test[(test["entry_volume_ratio"].fillna(0) >= vm) &
+                      (test["entry_score"] >= sc)]
+        oos_pool_wins.extend(test_g["win"].tolist())
+
+    pooled_wr, pooled_lo, pooled_hi = (0.0, 0.0, 0.0)
+    if oos_pool_wins:
+        pooled_series = pd.Series(oos_pool_wins)
+        pooled_wr, pooled_lo, pooled_hi = wilson_ci(pooled_series)
+        _, _, _, p_above = bayesian_ci(pooled_series)
+
+    summary_rows = [
+        ["Windows run", str(n_windows)],
+        ["Avg out-of-sample WR", (f"<b style='color:{oos_col}'>{avg_oos}%</b>", "")],
+        ["Pooled OOS WR [95% CI]",
+         ci_html(pooled_wr, pooled_lo, pooled_hi, len(oos_pool_wins),
+                 prob_above_50=p_above if oos_pool_wins else None)
+         if oos_pool_wins else ("—", "")],
+        ["Most stable combo",
+         (f"vol≥{stable_combo[0]} / score≥{stable_combo[1]} "
+          f"<span style='color:#8b949e;font-size:11px'>"
+          f"(won {stable_votes}/{n_windows} windows = {stability_pct}%)</span>",
+          "") if stable_combo else ("—", "")],
+    ]
+    out += tbl(["Metric", "Value"], summary_rows)
+
+    if stable_combo:
+        if stability_pct >= 60 and avg_oos >= 45:
+            verdict_col = "#00c851"
+            verdict = (f"Stable: vol≥{stable_combo[0]}, score≥{stable_combo[1]} wins "
+                       f"{stability_pct}% of windows with {avg_oos}% avg OOS WR — "
+                       f"these params are robust, not just overfitted to history.")
+        elif avg_oos >= 40:
+            verdict_col = "#ffbb33"
+            verdict = (f"Moderate: avg OOS WR {avg_oos}% — signal is working but params "
+                       f"are still unstable across windows. Let more data accumulate.")
+        else:
+            verdict_col = "#ff4444"
+            verdict = (f"Weak: avg OOS WR {avg_oos}% — params that look good in-sample "
+                       f"aren't holding up out-of-sample. Signal may need further tuning.")
+        out += f"<p style='color:{verdict_col};font-weight:bold'>{verdict}</p>"
+
+    return out
+
+
 # ── AI feedback ──────────────────────────────────────────────────────────────
 
 def compute_recommendations(df: pd.DataFrame) -> dict:
@@ -987,6 +1167,41 @@ def compute_recommendations(df: pd.DataFrame) -> dict:
         "timeout_stats":    timeout_stats,
         "bad_hours_utc":    bad_hours_utc,
     }
+
+    # Walk-forward stable winner — more trustworthy than full-history grid
+    ns = df[df["entry_vwap_bounce"].notna()].reset_index(drop=True) if "entry_vwap_bounce" in df.columns else pd.DataFrame()
+    if len(ns) >= WF_MIN_TRADES and "entry_volume_ratio" in ns.columns:
+        n_windows   = (len(ns) - WF_TRAIN) // WF_TEST
+        combo_votes: dict = {}
+        oos_pool_wins: list = []
+        for w in range(n_windows):
+            train = ns.iloc[w * WF_TEST: w * WF_TEST + WF_TRAIN]
+            test  = ns.iloc[w * WF_TEST + WF_TRAIN: w * WF_TEST + WF_TRAIN + WF_TEST]
+            vm, sc, _ = _wf_best_combo(train)
+            if vm is None:
+                continue
+            combo_votes[(vm, sc)] = combo_votes.get((vm, sc), 0) + 1
+            test_g = test[(test["entry_volume_ratio"].fillna(0) >= vm) &
+                          (test["entry_score"] >= sc)]
+            oos_pool_wins.extend(test_g["win"].tolist())
+        if combo_votes and oos_pool_wins:
+            stable = max(combo_votes, key=combo_votes.get)
+            stable_votes = combo_votes[stable]
+            oos_series = pd.Series(oos_pool_wins)
+            oos_wr, oos_lo, oos_hi = wilson_ci(oos_series)
+            _, _, _, p_above = bayesian_ci(oos_series)
+            recs["wf_best"] = {
+                "vol_mult_min":    stable[0],
+                "score_min":       stable[1],
+                "windows_won":     stable_votes,
+                "windows_total":   n_windows,
+                "stability_pct":   round(stable_votes / n_windows * 100),
+                "oos_win_rate":    oos_wr,
+                "oos_wilson_lo":   oos_lo,
+                "oos_wilson_hi":   oos_hi,
+                "oos_prob_above_50": p_above,
+                "oos_n_trades":    len(oos_pool_wins),
+            }
 
     # New-signal grid recs — only populated when new-format trades exist
     new_df = df[df["entry_vwap_bounce"].notna()] if "entry_vwap_bounce" in df.columns else pd.DataFrame()
@@ -1064,6 +1279,7 @@ def generate_report(df: pd.DataFrame, out_path: Path):
     now  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     body = (s_overview(df) + s_time(df) + s_entry_signals(df)
             + s_exit_signals(df) + s_grid(df) + s_new_signal_grid(df)
+            + s_walk_forward(df)
             + s_pairs(df) + s_param_regimes(df) + s_concurrent(df))
 
     html = f"""<!DOCTYPE html>
