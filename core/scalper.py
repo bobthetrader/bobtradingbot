@@ -5,13 +5,12 @@ the top 40 by 24h volume (≥€50k), then scores them every 15 seconds using
 RSI/VWAP/order-book signals.  The highest-scoring pair above the threshold is
 traded rather than the first one found.
 
-Signals (scored, threshold ±2.5 to enter):
-  1-min RSI < 28 → +2  (oversold, buy)
-  1-min RSI > 72 → -2  (overbought, sell)
-  Price < VWAP by >0.3% → +1  (below fair value, buy)
-  Price > VWAP by >0.3% → -1  (above fair value, sell)
-  Order book bid vol > ask vol by >20% → +1  (buying pressure)
-  Order book ask vol > bid vol by >20% → -1  (selling pressure)
+Signals (scored, threshold 4 to enter — max score 6):
+  VWAP Reclaim  (+2): price crossed from below VWAP to above VWAP in last 3 bars
+  RSI Turning   (+2): RSI < 45 AND rising vs 3 bars ago (recovery confirmed)
+  Volume Spike  (+1): current bar volume > 1.5× 20-bar average
+  OB Bid-Heavy  (+1): order book bid vol > ask vol by >20%
+  RSI Overbought(-2): RSI > 72 (exit signal only, not used for entry blocking)
 
 TP: dynamic (round-trip fee + 1.80%) / SL: 0.50%
 At $10k-$50k volume (0.35% taker): TP=2.50%, break-even at 40% WR.
@@ -49,29 +48,32 @@ _SCREENER_CHUNK        = 50    # pairs per Ticker batch call
 _EXCLUDE_KEYWORDS = ("USD", "USDT", "USDC", "DAI", "BUSD", "TUSD", "FRAX",
                      "LUSD", "GUSD", "PYUSD", "EURT", "STEUR", "EURR", "PAX")
 
-_INTERVAL_SEC   = 15
-_RSI_PERIOD     = 14
-_RSI_BUY        = 28.0     # tightened: only buy extremely oversold
-_RSI_SELL       = 72.0     # tightened: only sell extremely overbought
-_VWAP_CANDLES   = 30       # rolling window for VWAP calc
-_VWAP_THRESH    = 0.003    # 0.3% deviation from VWAP to signal
-_OB_IMBALANCE   = 0.20     # 20% bid/ask vol imbalance to signal
-_SCORE_THRESH   = 2.5      # raised: require stronger combined signal
-_TP_PCT         = 2.50     # take-profit % (base — adjusted dynamically by fee tier)
-_SL_PCT         = 0.50     # stop-loss %
-_ALLOCATION_EUR = 10.0     # paper EUR per scalp trade
-_MAX_HOLD_MIN   = 120      # force-exit after 120 minutes regardless
-_MIN_PROFIT_BPS = 1.80     # minimum net profit % above round-trip fee
-_AI_REVIEW_EVERY = 25      # trigger AI param review after this many closed trades
+_INTERVAL_SEC          = 15
+_RSI_PERIOD            = 14
+_RSI_SELL              = 72.0   # exit signal: RSI overbought threshold
+_RSI_RECOVERY_THRESH   = 45.0   # RSI must be below this AND rising to trigger entry
+_RSI_RECOVERY_LOOKBACK = 3      # bars back to compare RSI against (confirms upward turn)
+_VWAP_CANDLES          = 30     # rolling window for VWAP calculation
+_VWAP_BOUNCE_LOOKBACK  = 3      # bars to look back for the VWAP cross from below to above
+_VOL_CANDLES           = 20     # bars used to compute the volume baseline
+_VOL_MULT              = 1.5    # current bar volume must exceed this × baseline to score
+_OB_IMBALANCE          = 0.20   # 20% bid/ask volume imbalance to signal
+_SCORE_THRESH          = 4.0    # entry threshold (max possible score = 6)
+_TP_PCT                = 2.50   # take-profit % (base — adjusted dynamically by fee tier)
+_SL_PCT                = 0.50   # stop-loss %
+_ALLOCATION_EUR        = 10.0   # paper EUR per scalp trade
+_MAX_HOLD_MIN          = 120    # force-exit after 120 minutes regardless
+_MIN_PROFIT_BPS        = 1.80   # minimum net profit % above round-trip fee
+_AI_REVIEW_EVERY       = 25     # trigger AI param review after this many closed trades
 
 # Hard bounds — AI suggestions are clamped to these before applying
 _AI_BOUNDS = {
-    "rsi_buy":       (25.0, 40.0),
-    "rsi_sell":      (60.0, 75.0),
-    "vwap_thresh":   (0.001, 0.006),
-    "score_thresh":  (1.5, 3.0),
-    "sl_pct":        (0.30, 0.80),
-    "max_hold_min":  (30.0, 180.0),
+    "rsi_recovery_thresh": (30.0, 55.0),
+    "rsi_sell":            (60.0, 75.0),
+    "vol_mult":            (1.1,  3.0),
+    "score_thresh":        (2.0,  5.0),
+    "sl_pct":              (0.30, 0.80),
+    "max_hold_min":        (30.0, 180.0),
 }
 
 # Kraken fee tiers: (30-day USD volume threshold, taker fee %)
@@ -136,6 +138,12 @@ def _calc_vwap(candles: list) -> Optional[float]:
     return (num / denom) if denom > 0 else None
 
 
+def _calc_vol_avg(candles: list, period: int = _VOL_CANDLES) -> Optional[float]:
+    """Average volume over the last `period` candles."""
+    vols = [float(row[6]) for row in candles[-period:] if len(row) >= 7]
+    return (sum(vols) / len(vols)) if vols else None
+
+
 class ScalperEngine:
     """Scalping engine — start once, runs forever in a daemon thread."""
 
@@ -161,14 +169,14 @@ class ScalperEngine:
         self._screener_ts: float = 0.0  # epoch of last screener run
 
         # Live AI-tuned params (start at defaults, overwritten by scalper_ai_params.json)
-        self._ai_rsi_buy     = _RSI_BUY
-        self._ai_rsi_sell    = _RSI_SELL
-        self._ai_vwap_thresh = _VWAP_THRESH
-        self._ai_score_thresh= _SCORE_THRESH
-        self._ai_sl_pct       = _SL_PCT
-        self._ai_max_hold_min = float(_MAX_HOLD_MIN)
-        self._ai_skip_hours: set = set()
-        self._ai_blacklist: set = set()
+        self._ai_rsi_recovery_thresh = _RSI_RECOVERY_THRESH
+        self._ai_rsi_sell            = _RSI_SELL
+        self._ai_vol_mult            = _VOL_MULT
+        self._ai_score_thresh        = _SCORE_THRESH
+        self._ai_sl_pct              = _SL_PCT
+        self._ai_max_hold_min        = float(_MAX_HOLD_MIN)
+        self._ai_skip_hours: set     = set()
+        self._ai_blacklist: set      = set()
 
         # Persistent paths
         self._pos_path      = self._data_dir / "scalper_positions.json"
@@ -240,9 +248,9 @@ class ScalperEngine:
             "active_pairs_count": len(self._active_pairs) if self._active_pairs else len(_PAIRS_FALLBACK),
             "screener_last_ts": round(self._screener_ts),
             "ai_params": {
-                "rsi_buy":        self._ai_rsi_buy,
+                "rsi_recovery_thresh": self._ai_rsi_recovery_thresh,
                 "rsi_sell":       self._ai_rsi_sell,
-                "vwap_thresh":    self._ai_vwap_thresh,
+                "vol_mult":       self._ai_vol_mult,
                 "score_thresh":   self._ai_score_thresh,
                 "sl_pct":         self._ai_sl_pct,
                 "max_hold_min":   self._ai_max_hold_min,
@@ -476,7 +484,15 @@ class ScalperEngine:
                 del self._pair_scores[p]
 
     def _score_pair(self, pair: str) -> Optional[tuple]:
-        """Return (score, signals_dict) or None. Uses live AI-tuned thresholds."""
+        """Return (score, signals_dict) or None. Max score = 6.
+
+        Signal design — VWAP Reclaim + Momentum confirmation:
+          VWAP Bounce  (+2): price crossed from below VWAP to above in last N bars
+          RSI Turning  (+2): RSI < rsi_recovery_thresh AND rising vs N bars ago
+          Volume Spike (+1): current bar volume > vol_mult × 20-bar average
+          OB Bid-Heavy (+1): bid volume > ask volume by ob_imbalance threshold
+          RSI Overbought(-2): RSI > rsi_sell (drives exit logic, not entry gate)
+        """
         try:
             ohlc = self._api.get_ohlc_data(pair, interval=1)
             if not ohlc:
@@ -485,7 +501,10 @@ class ScalperEngine:
             if not key:
                 return None
             candles = ohlc[key]
-            if len(candles) < _RSI_PERIOD + 2:
+            min_candles = max(_RSI_PERIOD + _RSI_RECOVERY_LOOKBACK + 2,
+                              _VWAP_CANDLES + _VWAP_BOUNCE_LOOKBACK,
+                              _VOL_CANDLES + 1)
+            if len(candles) < min_candles:
                 return None
 
             closes = [float(r[4]) for r in candles]
@@ -495,26 +514,49 @@ class ScalperEngine:
             score  = 0.0
 
             with self._lock:
-                rsi_buy      = self._ai_rsi_buy
-                rsi_sell     = self._ai_rsi_sell
-                vwap_thresh  = self._ai_vwap_thresh
+                rsi_recovery_thresh = self._ai_rsi_recovery_thresh
+                rsi_sell            = self._ai_rsi_sell
+                vol_mult            = self._ai_vol_mult
 
+            # ── Signal 1: VWAP Bounce (+2) ────────────────────────────────────
+            # Price is now above VWAP but was below VWAP in the last N bars.
+            vwap_bounce  = False
             vwap_dev     = 0.0
-            ob_imbalance = 0.0
-
-            if rsi is not None:
-                if rsi < rsi_buy:
-                    score += 2
-                elif rsi > rsi_sell:
-                    score -= 2
-
             if vwap and vwap > 0:
                 vwap_dev = (price - vwap) / vwap
-                if vwap_dev < -vwap_thresh:
-                    score += 1
-                elif vwap_dev > vwap_thresh:
-                    score -= 1
+                if price > vwap:
+                    prev_closes = closes[-(1 + _VWAP_BOUNCE_LOOKBACK): -1]
+                    if any(c < vwap for c in prev_closes):
+                        vwap_bounce = True
+                        score += 2
 
+            # ── Signal 2: RSI Turning Up (+2) ─────────────────────────────────
+            # RSI is below recovery threshold AND has risen since N bars ago.
+            rsi_rising = False
+            rsi_delta  = None
+            if rsi is not None:
+                if rsi < rsi_recovery_thresh and len(closes) >= _RSI_PERIOD + _RSI_RECOVERY_LOOKBACK + 1:
+                    rsi_prev = _calc_rsi(closes[:-_RSI_RECOVERY_LOOKBACK], _RSI_PERIOD)
+                    if rsi_prev is not None and rsi > rsi_prev:
+                        rsi_rising = True
+                        rsi_delta  = round(rsi - rsi_prev, 2)
+                        score += 2
+                if rsi > rsi_sell:
+                    score -= 2  # overbought — drives exit, not entry blocking
+
+            # ── Signal 3: Volume Spike (+1) ────────────────────────────────────
+            # Current bar volume exceeds vol_mult × recent average.
+            volume_ratio = None
+            if len(candles) >= _VOL_CANDLES + 1:
+                current_vol = float(candles[-1][6]) if len(candles[-1]) >= 7 else 0.0
+                avg_vol     = _calc_vol_avg(candles[:-1])
+                if avg_vol and avg_vol > 0:
+                    volume_ratio = round(current_vol / avg_vol, 3)
+                    if volume_ratio >= vol_mult:
+                        score += 1
+
+            # ── Signal 4: Order Book Bid-Heavy (+1) ───────────────────────────
+            ob_imbalance = 0.0
             ob = self._api.get_order_book(pair, count=10)
             if ob:
                 book    = next(iter(ob.values()), {}) if isinstance(ob, dict) else {}
@@ -532,12 +574,17 @@ class ScalperEngine:
 
             signals = {
                 "rsi":          round(rsi, 2) if rsi is not None else None,
-                "vwap_dev":     round(vwap_dev * 100, 4),   # as percentage
+                "vwap_dev":     round(vwap_dev * 100, 4),
                 "ob_imbalance": round(ob_imbalance, 4),
+                "vwap_bounce":  vwap_bounce,
+                "volume_ratio": volume_ratio,
+                "rsi_delta":    rsi_delta,
+                "rsi_rising":   rsi_rising,
             }
             logger.debug(
-                "[SCALP] %s | score=%.1f | rsi=%.1f | vwap_dev=%.3f%% | ob=%.3f",
-                pair, score, rsi or 0.0, vwap_dev * 100, ob_imbalance,
+                "[SCALP] %s | score=%.1f | bounce=%s | rsi=%.1f | rsi_rising=%s | vol_ratio=%s | ob=%.3f",
+                pair, score, vwap_bounce, rsi or 0.0, rsi_rising,
+                f"{volume_ratio:.2f}" if volume_ratio else "?", ob_imbalance,
             )
             return score, signals
 
@@ -562,14 +609,17 @@ class ScalperEngine:
                 "rsi":              signals.get("rsi"),
                 "vwap_dev":         signals.get("vwap_dev"),
                 "ob_imbalance":     signals.get("ob_imbalance"),
+                "vwap_bounce":      signals.get("vwap_bounce"),
+                "volume_ratio":     signals.get("volume_ratio"),
+                "rsi_delta":        signals.get("rsi_delta"),
                 "entry_hour_utc":   open_dt.hour,
-                "entry_weekday":    open_dt.weekday(),   # 0=Mon, 6=Sun
+                "entry_weekday":    open_dt.weekday(),
                 "concurrent_pos":   concurrent,
                 "btc_bear":         bear,
-                "active_rsi_buy":   self._ai_rsi_buy,
+                "active_rsi_recovery_thresh": self._ai_rsi_recovery_thresh,
                 "active_rsi_sell":  self._ai_rsi_sell,
+                "active_vol_mult":  self._ai_vol_mult,
                 "active_score_thresh": self._ai_score_thresh,
-                "active_vwap_thresh":  self._ai_vwap_thresh,
             }
         self._save_positions()
         try:
@@ -577,9 +627,11 @@ class ScalperEngine:
         except Exception:
             pass
         logger.info(
-            "[SCALP] BUY  %s @ %.6f  qty=%.8f  score=%.1f  rsi=%.1f  vwap_dev=%.3f%%  (paper)",
+            "[SCALP] BUY  %s @ %.6f  qty=%.8f  score=%.1f  bounce=%s  rsi=%.1f  rising=%s  vol_ratio=%s  (paper)",
             pair, price, qty, score,
-            signals.get("rsi") or 0.0, signals.get("vwap_dev") or 0.0,
+            signals.get("vwap_bounce"), signals.get("rsi") or 0.0,
+            signals.get("rsi_rising"),
+            f"{signals['volume_ratio']:.2f}" if signals.get("volume_ratio") else "?",
         )
 
     def _get_exit_signals(self, pair: str) -> dict:
@@ -648,6 +700,9 @@ class ScalperEngine:
             "entry_rsi":            pos.get("rsi"),
             "entry_vwap_dev":       pos.get("vwap_dev"),
             "entry_ob_imbalance":   pos.get("ob_imbalance"),
+            "entry_vwap_bounce":    pos.get("vwap_bounce"),
+            "entry_volume_ratio":   pos.get("volume_ratio"),
+            "entry_rsi_delta":      pos.get("rsi_delta"),
             # ── Exit signals ─────────────────────────────────────────────────
             "exit_rsi":             sig.get("exit_rsi"),
             "exit_vwap_dev":        sig.get("exit_vwap_dev"),
@@ -658,10 +713,10 @@ class ScalperEngine:
             "concurrent_positions": pos.get("concurrent_pos"),
             "btc_bear_at_entry":    pos.get("btc_bear"),
             # ── Active AI params when trade was taken ─────────────────────────
-            "param_rsi_buy":        pos.get("active_rsi_buy"),
+            "param_rsi_recovery_thresh": pos.get("active_rsi_recovery_thresh"),
             "param_rsi_sell":       pos.get("active_rsi_sell"),
+            "param_vol_mult":       pos.get("active_vol_mult"),
             "param_score_thresh":   pos.get("active_score_thresh"),
-            "param_vwap_thresh":    pos.get("active_vwap_thresh"),
         }
         # Return allocation + P&L to paper balance (allocation was deducted on buy)
         try:
@@ -785,26 +840,26 @@ class ScalperEngine:
             if not self._ai_params_path.exists():
                 return
             p = json.loads(self._ai_params_path.read_text())
-            lo, hi = _AI_BOUNDS["rsi_buy"]
-            self._ai_rsi_buy     = max(lo, min(hi, float(p.get("rsi_buy",     _RSI_BUY))))
+            lo, hi = _AI_BOUNDS["rsi_recovery_thresh"]
+            self._ai_rsi_recovery_thresh = max(lo, min(hi, float(p.get("rsi_recovery_thresh", _RSI_RECOVERY_THRESH))))
             lo, hi = _AI_BOUNDS["rsi_sell"]
             self._ai_rsi_sell    = max(lo, min(hi, float(p.get("rsi_sell",    _RSI_SELL))))
-            lo, hi = _AI_BOUNDS["vwap_thresh"]
-            self._ai_vwap_thresh = max(lo, min(hi, float(p.get("vwap_thresh", _VWAP_THRESH))))
+            lo, hi = _AI_BOUNDS["vol_mult"]
+            self._ai_vol_mult    = max(lo, min(hi, float(p.get("vol_mult",    _VOL_MULT))))
             lo, hi = _AI_BOUNDS["score_thresh"]
             self._ai_score_thresh= max(lo, min(hi, float(p.get("score_thresh",_SCORE_THRESH))))
             lo, hi = _AI_BOUNDS["sl_pct"]
-            self._ai_sl_pct       = max(lo, min(hi, float(p.get("sl_pct",       _SL_PCT))))
+            self._ai_sl_pct      = max(lo, min(hi, float(p.get("sl_pct",      _SL_PCT))))
             lo, hi = _AI_BOUNDS["max_hold_min"]
-            self._ai_max_hold_min = max(lo, min(hi, float(p.get("max_hold_min", _MAX_HOLD_MIN))))
+            self._ai_max_hold_min= max(lo, min(hi, float(p.get("max_hold_min",_MAX_HOLD_MIN))))
             sh = p.get("skip_hours_utc", [])
             self._ai_skip_hours  = set(int(h) for h in sh) if isinstance(sh, list) else set()
             bl = p.get("pairs_blacklist", [])
             self._ai_blacklist   = set(bl) if isinstance(bl, list) else set()
             logger.info(
-                "[SCALP-AI] Params loaded — RSI_BUY=%.0f RSI_SELL=%.0f "
-                "VWAP=%.3f SCORE=%.1f SL=%.2f%% MAX_HOLD=%.0fm skip_hours=%s blacklist=%s",
-                self._ai_rsi_buy, self._ai_rsi_sell, self._ai_vwap_thresh,
+                "[SCALP-AI] Params loaded — RSI_RECOVERY=%.0f RSI_SELL=%.0f "
+                "VOL_MULT=%.2f SCORE=%.1f SL=%.2f%% MAX_HOLD=%.0fm skip_hours=%s blacklist=%s",
+                self._ai_rsi_recovery_thresh, self._ai_rsi_sell, self._ai_vol_mult,
                 self._ai_score_thresh, self._ai_sl_pct, self._ai_max_hold_min,
                 sorted(self._ai_skip_hours), list(self._ai_blacklist),
             )

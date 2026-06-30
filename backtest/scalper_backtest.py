@@ -52,6 +52,11 @@ MIN_TRADES_GRID = 5     # minimum trades in a grid cell to show a result
 BH_ALPHA        = 0.05  # false discovery rate for Benjamini-Hochberg
 RECS_FILENAME   = "backtest_recommendations.json"
 
+# New-signal grid (VWAP Reclaim + Momentum — trades after signal redesign)
+RSI_RECOVERY_GRID = [30, 35, 40, 45, 50]
+VOL_MULT_GRID     = [1.1, 1.25, 1.5, 2.0, 2.5]
+NEW_SCORE_GRID    = [3.0, 3.5, 4.0, 4.5, 5.0]
+
 
 # ── Docker sync ───────────────────────────────────────────────────────────────
 
@@ -118,7 +123,9 @@ def load_trades(path: Path) -> pd.DataFrame:
     for col in ["entry_rsi", "entry_vwap_dev", "entry_score", "entry_ob_imbalance",
                 "exit_rsi", "exit_vwap_dev", "exit_ob_imbalance",
                 "pnl_pct", "pnl_eur", "held_min",
+                "entry_volume_ratio", "entry_rsi_delta",
                 "param_rsi_buy", "param_rsi_sell", "param_score_thresh", "param_vwap_thresh",
+                "param_rsi_recovery_thresh", "param_vol_mult",
                 "entry_hour_utc", "entry_weekday", "concurrent_positions",
                 "btc_bear_at_entry"]:
         if col in df.columns:
@@ -534,6 +541,67 @@ def s_entry_signals(df: pd.DataFrame) -> str:
         out += "<h3>Order Book Imbalance at Entry</h3>"
         out += tbl(["OB imbalance", "Trades", "Win Rate [95% CI] / P(>50%)", "Avg P&L %"], rows)
 
+    # ── New-signal fields (only present in trades after the VWAP Reclaim redesign) ──
+    if "entry_vwap_bounce" in df.columns and df["entry_vwap_bounce"].notna().any():
+        rows = []
+        for bounce_val, label in [(True, "VWAP Bounce (crossed above)"), (False, "No Bounce (already above VWAP)")]:
+            g = df[df["entry_vwap_bounce"] == bounce_val]
+            if len(g) < 2:
+                continue
+            pt, lo, hi       = wilson_ci(g["win"])
+            _, _, _, p_above = bayesian_ci(g["win"])
+            avg_pnl          = g["pnl_pct"].mean()
+            rows.append([
+                label, len(g),
+                ci_html(pt, lo, hi, len(g), prob_above_50=p_above),
+                (f"{avg_pnl:+.3f}%", f"color:{col_pnl(avg_pnl)}"),
+            ])
+        out += "<h3>VWAP Bounce Signal</h3>"
+        out += tbl(["Condition", "Trades", "Win Rate [95% CI] / P(>50%)", "Avg P&L %"], rows)
+
+    if "entry_volume_ratio" in df.columns and df["entry_volume_ratio"].notna().any():
+        vol_buckets = [(0.0, 1.0, "Below avg (<1.0×)"),
+                       (1.0, 1.25, "1.0–1.25×"),
+                       (1.25, 1.5, "1.25–1.5×"),
+                       (1.5, 2.0, "1.5–2.0×"),
+                       (2.0, 99,  "Strong spike (>2.0×)")]
+        rows = []
+        for lo_v, hi_v, label in vol_buckets:
+            g = df[(df["entry_volume_ratio"] >= lo_v) & (df["entry_volume_ratio"] < hi_v)]
+            if len(g) < 2:
+                continue
+            pt, lo, hi       = wilson_ci(g["win"])
+            _, _, _, p_above = bayesian_ci(g["win"])
+            avg_pnl          = g["pnl_pct"].mean()
+            rows.append([
+                label, len(g),
+                ci_html(pt, lo, hi, len(g), prob_above_50=p_above),
+                (f"{avg_pnl:+.3f}%", f"color:{col_pnl(avg_pnl)}"),
+            ])
+        out += "<h3>Volume Ratio at Entry (current / 20-bar avg)</h3>"
+        out += tbl(["Volume ratio", "Trades", "Win Rate [95% CI] / P(>50%)", "Avg P&L %"], rows)
+
+    if "entry_rsi_delta" in df.columns and df["entry_rsi_delta"].notna().any():
+        rsi_delta_buckets = [(-50, 0.0, "RSI falling (negative delta)"),
+                             (0.0, 2.0,  "RSI flat (0–2 points)"),
+                             (2.0, 5.0,  "RSI recovering (2–5 points)"),
+                             (5.0, 99,   "RSI strong turn (>5 points)")]
+        rows = []
+        for lo_d, hi_d, label in rsi_delta_buckets:
+            g = df[(df["entry_rsi_delta"] >= lo_d) & (df["entry_rsi_delta"] < hi_d)]
+            if len(g) < 2:
+                continue
+            pt, lo, hi       = wilson_ci(g["win"])
+            _, _, _, p_above = bayesian_ci(g["win"])
+            avg_pnl          = g["pnl_pct"].mean()
+            rows.append([
+                label, len(g),
+                ci_html(pt, lo, hi, len(g), prob_above_50=p_above),
+                (f"{avg_pnl:+.3f}%", f"color:{col_pnl(avg_pnl)}"),
+            ])
+        out += "<h3>RSI Delta at Entry (RSI now vs 3 bars ago)</h3>"
+        out += tbl(["RSI delta", "Trades", "Win Rate [95% CI] / P(>50%)", "Avg P&L %"], rows)
+
     return out
 
 
@@ -676,6 +744,55 @@ def s_grid(df: pd.DataFrame) -> str:
     return out
 
 
+def s_new_signal_grid(df: pd.DataFrame) -> str:
+    """Grid search over new-signal params: vol_mult × score_thresh, for new-format trades only."""
+    new_df = df[df["entry_vwap_bounce"].notna()] if "entry_vwap_bounce" in df.columns else pd.DataFrame()
+    if len(new_df) < MIN_TRADES_GRID:
+        return ""
+
+    out  = "<h2>New Signal Grid: Volume Mult × Score Threshold</h2>"
+    out += ("<p class='note'>Only trades recorded after the VWAP Reclaim redesign. "
+            "Volume ratio at entry vs vol_mult cutoff; score_thresh filters combined 6-point score.</p>")
+
+    cells = {}
+    for vol_mult in VOL_MULT_GRID:
+        for score in NEW_SCORE_GRID:
+            g = new_df[(new_df["entry_volume_ratio"].fillna(0) >= vol_mult) &
+                       (new_df["entry_score"] >= score)]
+            if len(g) < MIN_TRADES_GRID:
+                cells[(vol_mult, score)] = None
+                continue
+            pt, lo, hi       = wilson_ci(g["win"])
+            _, _, _, p_above = bayesian_ci(g["win"])
+            p_val            = _binomial_pval(g["win"])
+            cells[(vol_mult, score)] = (pt, lo, hi, len(g), p_above, p_val)
+
+    eligible = [k for k, v in cells.items() if v is not None]
+    if not eligible:
+        return out + "<p class='note'>Not enough trades yet to populate this grid.</p>"
+
+    p_vals   = [cells[k][5] for k in eligible]
+    bh_flags = bh_correct(p_vals) if p_vals else []
+    bh_lookup = {k: bh_flags[i] for i, k in enumerate(eligible)}
+
+    headers = ["Vol mult ↓ / Score ≥ →"] + [str(s) for s in NEW_SCORE_GRID]
+    rows    = []
+    for vol_mult in VOL_MULT_GRID:
+        row = [str(vol_mult)]
+        for score in NEW_SCORE_GRID:
+            cell = cells.get((vol_mult, score))
+            if cell is None:
+                row.append(("—", "color:#3d444d;text-align:center"))
+            else:
+                pt, lo, hi, n, p_above, _ = cell
+                bh_sig = bh_lookup.get((vol_mult, score), False)
+                row.append(ci_html(pt, lo, hi, n, prob_above_50=p_above, bh_sig=bh_sig))
+        rows.append(row)
+
+    out += tbl(headers, rows)
+    return out
+
+
 def s_pairs(df: pd.DataFrame) -> str:
     rows = []
     for pair, g in df.groupby("pair"):
@@ -700,31 +817,60 @@ def s_pairs(df: pd.DataFrame) -> str:
 
 
 def s_param_regimes(df: pd.DataFrame) -> str:
-    if "param_rsi_buy" not in df.columns or df["param_rsi_buy"].isna().all():
+    # Support both old signal (param_rsi_buy) and new signal (param_rsi_recovery_thresh)
+    new_signal = ("param_rsi_recovery_thresh" in df.columns and
+                  df["param_rsi_recovery_thresh"].notna().any())
+    old_signal = ("param_rsi_buy" in df.columns and
+                  df["param_rsi_buy"].notna().any())
+
+    if not new_signal and not old_signal:
         return ("<h2>AI Parameter Regimes</h2>"
-                "<p class='note'>param_rsi_buy not in trade records yet — deploy latest bot version.</p>")
+                "<p class='note'>param_rsi_recovery_thresh / param_rsi_buy not in trade records yet — deploy latest bot version.</p>")
 
     out = "<h2>AI Parameter Regimes</h2>"
-    out += "<p class='note'>Win rates grouped by the RSI buy threshold active when each trade was taken.</p>"
 
-    rows = []
-    for rsi_buy in sorted(df["param_rsi_buy"].dropna().unique()):
-        g              = df[df["param_rsi_buy"] == rsi_buy]
-        pt, lo, hi     = wilson_ci(g["win"])
-        _, _, _, p_ab  = bayesian_ci(g["win"])
-        tot_pnl        = g["pnl_eur"].sum()
-        score          = (g["param_score_thresh"].mode()[0]
-                          if "param_score_thresh" in g.columns and g["param_score_thresh"].notna().any()
-                          else "—")
-        rows.append([
-            str(rsi_buy), str(score), len(g),
-            ci_html(pt, lo, hi, len(g), prob_above_50=p_ab),
-            (f"€{tot_pnl:+.4f}", f"color:{col_pnl(tot_pnl)}"),
-            sharpe(g["pnl_pct"]),
-        ])
+    if new_signal:
+        out += "<p class='note'>Win rates grouped by the RSI recovery threshold active when each trade was taken (new VWAP Reclaim signal).</p>"
+        rows = []
+        for rsi_thresh in sorted(df["param_rsi_recovery_thresh"].dropna().unique()):
+            g              = df[df["param_rsi_recovery_thresh"] == rsi_thresh]
+            pt, lo, hi     = wilson_ci(g["win"])
+            _, _, _, p_ab  = bayesian_ci(g["win"])
+            tot_pnl        = g["pnl_eur"].sum()
+            score          = (g["param_score_thresh"].mode()[0]
+                              if "param_score_thresh" in g.columns and g["param_score_thresh"].notna().any()
+                              else "—")
+            vol_mult       = (g["param_vol_mult"].mode()[0]
+                              if "param_vol_mult" in g.columns and g["param_vol_mult"].notna().any()
+                              else "—")
+            rows.append([
+                str(rsi_thresh), str(score), str(vol_mult), len(g),
+                ci_html(pt, lo, hi, len(g), prob_above_50=p_ab),
+                (f"€{tot_pnl:+.4f}", f"color:{col_pnl(tot_pnl)}"),
+                sharpe(g["pnl_pct"]),
+            ])
+        out += tbl(["RSI recovery thresh", "Score thresh (mode)", "Vol mult (mode)", "Trades",
+                    "Win Rate [95% CI] / P(>50%)", "Total P&L", "Sharpe"], rows)
 
-    out += tbl(["RSI buy threshold", "Score thresh (mode)", "Trades",
-                "Win Rate [95% CI] / P(>50%)", "Total P&L", "Sharpe"], rows)
+    if old_signal:
+        out += "<p class='note'>Historical — RSI buy threshold (old mean-reversion signal).</p>"
+        rows = []
+        for rsi_buy in sorted(df["param_rsi_buy"].dropna().unique()):
+            g              = df[df["param_rsi_buy"] == rsi_buy]
+            pt, lo, hi     = wilson_ci(g["win"])
+            _, _, _, p_ab  = bayesian_ci(g["win"])
+            tot_pnl        = g["pnl_eur"].sum()
+            score          = (g["param_score_thresh"].mode()[0]
+                              if "param_score_thresh" in g.columns and g["param_score_thresh"].notna().any()
+                              else "—")
+            rows.append([
+                str(rsi_buy), str(score), len(g),
+                ci_html(pt, lo, hi, len(g), prob_above_50=p_ab),
+                (f"€{tot_pnl:+.4f}", f"color:{col_pnl(tot_pnl)}"),
+                sharpe(g["pnl_pct"]),
+            ])
+        out += tbl(["RSI buy threshold", "Score thresh (mode)", "Trades",
+                    "Win Rate [95% CI] / P(>50%)", "Total P&L", "Sharpe"], rows)
 
     if "btc_bear_at_entry" in df.columns and df["btc_bear_at_entry"].notna().any():
         bear  = df[df["btc_bear_at_entry"] == 1]
@@ -833,7 +979,7 @@ def compute_recommendations(df: pd.DataFrame) -> dict:
             if wr < 35.0:
                 bad_hours_utc.append(h)
 
-    return {
+    recs = {
         "generated_at":     datetime.now(timezone.utc).isoformat(),
         "trade_count":      len(df),
         "best":             combos[0],
@@ -841,6 +987,41 @@ def compute_recommendations(df: pd.DataFrame) -> dict:
         "timeout_stats":    timeout_stats,
         "bad_hours_utc":    bad_hours_utc,
     }
+
+    # New-signal grid recs — only populated when new-format trades exist
+    new_df = df[df["entry_vwap_bounce"].notna()] if "entry_vwap_bounce" in df.columns else pd.DataFrame()
+    if len(new_df) >= MIN_TRADES_GRID and "entry_volume_ratio" in new_df.columns:
+        new_combos = []
+        for vol_mult in VOL_MULT_GRID:
+            for score in NEW_SCORE_GRID:
+                g = new_df[(new_df["entry_volume_ratio"].fillna(0) >= vol_mult) &
+                           (new_df["entry_score"] >= score)]
+                n = len(g)
+                if n < MIN_TRADES_GRID:
+                    continue
+                pt, lo, hi       = wilson_ci(g["win"])
+                _, _, _, p_above = bayesian_ci(g["win"])
+                p_val            = _binomial_pval(g["win"])
+                new_combos.append({
+                    "vol_mult_min":  vol_mult,
+                    "score_min":     score,
+                    "win_rate":      pt,
+                    "wilson_lo":     lo,
+                    "wilson_hi":     hi,
+                    "prob_above_50": p_above,
+                    "n_trades":      n,
+                    "p_value":       round(p_val, 6),
+                })
+        if new_combos:
+            p_vals_new   = [c["p_value"] for c in new_combos]
+            bh_flags_new = bh_correct(p_vals_new)
+            for c, sig in zip(new_combos, bh_flags_new):
+                c["bh_significant"] = sig
+            new_combos.sort(key=lambda c: (c["bh_significant"], c["wilson_lo"]), reverse=True)
+            recs["new_signal_best"]             = new_combos[0]
+            recs["new_signal_top_combinations"] = new_combos[:5]
+
+    return recs
 
 
 def git_push_recommendations(recs: dict):
@@ -856,9 +1037,14 @@ def git_push_recommendations(recs: dict):
     try:
         subprocess.run(["git", "-C", str(repo_root), "add", RECS_FILENAME],
                        check=True, capture_output=True)
-        msg = (f"Update backtest recommendations "
-               f"({recs['trade_count']} trades, "
-               f"best RSI<={recs['best']['rsi_buy_max']} score>={recs['best']['score_min']})")
+        if "new_signal_best" in recs:
+            nb = recs["new_signal_best"]
+            msg = (f"Update backtest recommendations ({recs['trade_count']} trades, "
+                   f"new-signal best vol_mult>={nb['vol_mult_min']} score>={nb['score_min']} "
+                   f"WR={nb['win_rate']:.1f}%)")
+        else:
+            msg = (f"Update backtest recommendations ({recs['trade_count']} trades, "
+                   f"best RSI<={recs['best']['rsi_buy_max']} score>={recs['best']['score_min']})")
         result = subprocess.run(
             ["git", "-C", str(repo_root), "commit", "-m", msg],
             capture_output=True, text=True,
@@ -877,7 +1063,7 @@ def git_push_recommendations(recs: dict):
 def generate_report(df: pd.DataFrame, out_path: Path):
     now  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     body = (s_overview(df) + s_time(df) + s_entry_signals(df)
-            + s_exit_signals(df) + s_grid(df)
+            + s_exit_signals(df) + s_grid(df) + s_new_signal_grid(df)
             + s_pairs(df) + s_param_regimes(df) + s_concurrent(df))
 
     html = f"""<!DOCTYPE html>
@@ -908,10 +1094,16 @@ def generate_report(df: pd.DataFrame, out_path: Path):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         (DATA_DIR / RECS_FILENAME).write_text(json.dumps(recs, indent=2), encoding="utf-8")
         best = recs["best"]
-        sig = "BH-sig" if best['bh_significant'] else "not-BH-sig"
-        print(f"\nBest validated combo: RSI<={best['rsi_buy_max']}, Score>={best['score_min']} "
+        sig  = "BH-sig" if best['bh_significant'] else "not-BH-sig"
+        print(f"\nBest legacy combo: RSI<={best['rsi_buy_max']}, Score>={best['score_min']} "
               f"-> {best['win_rate']}% WR [{best['wilson_lo']}%-{best['wilson_hi']}%], "
               f"P(>50%)={best['prob_above_50']}%, n={best['n_trades']}, {sig}")
+        if "new_signal_best" in recs:
+            nb   = recs["new_signal_best"]
+            nsig = "BH-sig" if nb['bh_significant'] else "not-BH-sig"
+            print(f"Best new-signal combo: vol_mult>={nb['vol_mult_min']}, Score>={nb['score_min']} "
+                  f"-> {nb['win_rate']}% WR [{nb['wilson_lo']}%-{nb['wilson_hi']}%], "
+                  f"P(>50%)={nb['prob_above_50']}%, n={nb['n_trades']}, {nsig}")
         git_push_recommendations(recs)
 
 

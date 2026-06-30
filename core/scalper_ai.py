@@ -23,21 +23,21 @@ _MODELS = [
 ]
 
 _BOUNDS = {
-    "rsi_buy":       (25.0, 40.0),
-    "rsi_sell":      (60.0, 75.0),
-    "vwap_thresh":   (0.001, 0.006),
-    "score_thresh":  (1.5, 3.0),
-    "sl_pct":        (0.15, 0.35),
-    "max_hold_min":  (20.0, 90.0),
+    "rsi_recovery_thresh": (30.0, 55.0),
+    "rsi_sell":            (60.0, 75.0),
+    "vol_mult":            (1.1,  3.0),
+    "score_thresh":        (2.0,  5.0),
+    "sl_pct":              (0.30, 0.80),
+    "max_hold_min":        (30.0, 180.0),
 }
 
 _DEFAULTS = {
-    "rsi_buy":       35.0,
-    "rsi_sell":      65.0,
-    "vwap_thresh":   0.003,
-    "score_thresh":  2.5,
-    "sl_pct":        0.20,
-    "max_hold_min":  60.0,
+    "rsi_recovery_thresh": 45.0,
+    "rsi_sell":            65.0,
+    "vol_mult":            1.5,
+    "score_thresh":        4.0,
+    "sl_pct":              0.50,
+    "max_hold_min":        120.0,
 }
 
 _MIN_TRADES        = 20    # minimum trades in window before AI will run
@@ -357,8 +357,10 @@ class ScalperAI:
         for t in trades:
             rows.append(
                 f"  {t.get('pair','?'):12s} | "
-                f"RSI={str(t.get('entry_rsi') or '?'):>6} | "
-                f"VWAP%={str(t.get('entry_vwap_dev') or '?'):>7} | "
+                f"bounce={str(t.get('entry_vwap_bounce') or '?'):>5} | "
+                f"RSI={str(t.get('entry_rsi') or '?'):>5} | "
+                f"rising={str(t.get('entry_rsi_delta') or '?'):>5} | "
+                f"vol_r={str(t.get('entry_volume_ratio') or '?'):>5} | "
                 f"score={str(t.get('entry_score') or '?'):>4} | "
                 f"held={t.get('held_min', 0):>5.1f}m | "
                 f"reason={t.get('reason', '?'):12s} | "
@@ -369,26 +371,36 @@ class ScalperAI:
         hour_block   = "\n".join(hour_lines)   if hour_lines   else "  No data"
         pair_block   = "\n".join(pair_lines)   if pair_lines   else "  No data"
 
-        # Backtest recommendations block
+        # Backtest recommendations block — prefer new-signal data if available
         recs = self._load_backtest_recs()
-        if recs and recs.get("top_combinations"):
-            best     = recs["best"]
-            age_h    = (datetime.now(timezone.utc).timestamp()
-                        - self._parse_ts(recs.get("generated_at", ""))) / 3600
-            rec_lines = [
-                f"  Based on {recs['trade_count']} real trades, generated {age_h:.0f}h ago.",
-                f"  Best validated combination: RSI ≤ {best['rsi_buy_max']}, Score ≥ {best['score_min']}",
-                f"    Win rate: {best['win_rate']}%  Wilson CI: [{best['wilson_lo']}%–{best['wilson_hi']}%]",
-                f"    P(true WR > 50%): {best['prob_above_50']}%  |  n={best['n_trades']}  |  BH-significant: {'YES ★' if best['bh_significant'] else 'NO'}",
-                f"  Top 3 combinations (BH-significant first, then by reliability):",
-            ]
-            for i, c in enumerate(recs["top_combinations"][:3], 1):
-                sig = "★" if c["bh_significant"] else " "
-                rec_lines.append(
-                    f"    {i}.{sig} RSI ≤ {c['rsi_buy_max']}, Score ≥ {c['score_min']} → "
-                    f"{c['win_rate']}% WR [{c['wilson_lo']}%–{c['wilson_hi']}%], "
-                    f"P(>50%)={c['prob_above_50']}%, n={c['n_trades']}"
-                )
+        if recs:
+            age_h = (datetime.now(timezone.utc).timestamp()
+                     - self._parse_ts(recs.get("generated_at", ""))) / 3600
+            rec_lines = [f"  Based on {recs['trade_count']} real trades, generated {age_h:.0f}h ago."]
+            # New-signal grid takes priority
+            if recs.get("new_signal_best"):
+                best = recs["new_signal_best"]
+                rec_lines += [
+                    f"  NEW SIGNAL (VWAP Reclaim) best combo: vol_mult ≥ {best['vol_mult_min']}, Score ≥ {best['score_min']}",
+                    f"    Win rate: {best['win_rate']}%  Wilson CI: [{best['wilson_lo']}%–{best['wilson_hi']}%]",
+                    f"    P(true WR > 50%): {best['prob_above_50']}%  |  n={best['n_trades']}  |  BH-significant: {'YES ★' if best['bh_significant'] else 'NO'}",
+                    f"  Top 3 new-signal combinations:",
+                ]
+                for i, c in enumerate(recs.get("new_signal_top_combinations", [])[:3], 1):
+                    sig = "★" if c["bh_significant"] else " "
+                    rec_lines.append(
+                        f"    {i}.{sig} vol_mult ≥ {c['vol_mult_min']}, Score ≥ {c['score_min']} → "
+                        f"{c['win_rate']}% WR [{c['wilson_lo']}%–{c['wilson_hi']}%], "
+                        f"P(>50%)={c['prob_above_50']}%, n={c['n_trades']}"
+                    )
+            elif recs.get("top_combinations"):
+                # Fall back to legacy RSI-grid recs for context
+                best = recs["best"]
+                rec_lines += [
+                    f"  Legacy RSI-grid best (old mean-reversion signal, for context only):",
+                    f"    RSI ≤ {best['rsi_buy_max']}, Score ≥ {best['score_min']} → "
+                    f"{best['win_rate']}% WR, n={best['n_trades']}",
+                ]
             ts = recs.get("timeout_stats")
             if ts:
                 rec_lines.append(
@@ -412,19 +424,26 @@ Each cycle you suggest ONE parameter change. It runs for 25 trades, then gets ev
 If win rate improves or stays neutral (within 5%), the change is kept. Otherwise it's reverted.
 You then propose the next single-parameter change based on what you learn.
 
+SIGNAL DESIGN (VWAP Reclaim + Momentum — max score 6, entry threshold = score_thresh):
+  VWAP Bounce  (+2): price crossed from below VWAP to above in last 3 bars
+  RSI Turning  (+2): RSI < rsi_recovery_thresh AND rising vs 3 bars ago
+  Volume Spike (+1): current bar volume > vol_mult × 20-bar average
+  OB Bid-Heavy (+1): bid volume > ask volume by 20%+
+  RSI Overbought(-2): RSI > rsi_sell (exit signal only)
+
 CURRENT TIME: {now_utc.strftime('%H:%M UTC, %A')}
 
 CURRENT PARAMETERS (active right now):
-  rsi_buy (enter long when RSI below this):   {current['rsi_buy']}
-  rsi_sell (exit when RSI above this):        {current['rsi_sell']}
-  vwap_thresh (% price deviation from VWAP):  {current['vwap_thresh']}
-  score_thresh (minimum combined score):      {current['score_thresh']}
+  rsi_recovery_thresh (RSI must be below this AND rising to score +2): {current['rsi_recovery_thresh']}
+  rsi_sell (RSI overbought exit threshold):   {current['rsi_sell']}
+  vol_mult (volume spike multiplier vs 20-bar avg): {current['vol_mult']}
+  score_thresh (minimum combined score to enter, max=6): {current['score_thresh']}
   sl_pct (stop-loss %):                       {current['sl_pct']}
   max_hold_min (force-exit after N minutes):  {current['max_hold_min']}
 
 PARAMETER BOUNDS (must stay within):
-  rsi_buy: 25–40  |  rsi_sell: 60–75  |  vwap_thresh: 0.001–0.006
-  score_thresh: 1.5–3.0  |  sl_pct: 0.15–0.35  |  max_hold_min: 20–90
+  rsi_recovery_thresh: 30–55  |  rsi_sell: 60–75  |  vol_mult: 1.1–3.0
+  score_thresh: 2.0–5.0  |  sl_pct: 0.30–0.80  |  max_hold_min: 30–180
 
 PENDING EXPERIMENT: {pending_str}
 
@@ -434,7 +453,7 @@ BLOCKED DIRECTIONS: {blocked_str}
 
 BACKTEST INSIGHTS (statistically validated from full trade history):
 {backtest_block}
-NOTE: If current rsi_buy or score_thresh differ significantly from the best combo above,
+NOTE: If current vol_mult or score_thresh differ significantly from the best new-signal combo above,
 consider moving toward the validated range — unless that direction is blocked by recent failures.
 
 LAST 3 EXPERIMENT CYCLES (most recent last):
@@ -464,7 +483,7 @@ TASK:
 
 Respond ONLY with valid JSON (no markdown, no extra text):
 {{
-  "param": "<one of: rsi_buy, rsi_sell, vwap_thresh, score_thresh, sl_pct, max_hold_min>",
+  "param": "<one of: rsi_recovery_thresh, rsi_sell, vol_mult, score_thresh, sl_pct, max_hold_min>",
   "new_value": <number within the param's bounds>,
   "pairs_blacklist": [<pair strings to blacklist, or empty list>],
   "reasoning": "<1-2 sentences: what pattern you saw and why this single change should help>"
