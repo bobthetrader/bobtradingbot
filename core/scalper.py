@@ -51,8 +51,9 @@ _EXCLUDE_KEYWORDS = ("USD", "USDT", "USDC", "DAI", "BUSD", "TUSD", "FRAX",
 _INTERVAL_SEC          = 15
 _RSI_PERIOD            = 14
 _RSI_SELL              = 72.0   # exit signal: RSI overbought threshold
-_RSI_RECOVERY_THRESH   = 45.0   # RSI must be below this AND rising to trigger entry
+_RSI_RECOVERY_THRESH   = 35.0   # RSI must be genuinely oversold (not just below neutral)
 _RSI_RECOVERY_LOOKBACK = 3      # bars back to compare RSI against (confirms upward turn)
+_RSI_DELTA_MIN         = 3.0    # minimum RSI recovery in points — filters noise ticks
 _VWAP_CANDLES          = 30     # rolling window for VWAP calculation
 _VWAP_BOUNCE_LOOKBACK  = 3      # bars to look back for the VWAP cross from below to above
 _VOL_CANDLES           = 20     # bars used to compute the volume baseline
@@ -69,7 +70,7 @@ _AI_TIME_REVIEW_H      = 24    # fallback: trigger AI review after this many hou
 
 # Hard bounds — AI suggestions are clamped to these before applying
 _AI_BOUNDS = {
-    "rsi_recovery_thresh": (30.0, 55.0),
+    "rsi_recovery_thresh": (25.0, 40.0),
     "rsi_sell":            (60.0, 75.0),
     "vol_mult":            (1.1,  3.0),
     "score_thresh":        (2.0,  5.0),
@@ -522,25 +523,29 @@ class ScalperEngine:
                 vol_mult            = self._ai_vol_mult
 
             # ── Signal 1: VWAP Bounce (+2) ────────────────────────────────────
-            # Price is now above VWAP but was below VWAP in the last N bars.
+            # Price is now HOLDING above VWAP (current AND prev close both above),
+            # after having been below within the lookback window. Single-candle
+            # crosses are excluded — requires confirmed reclaim, not a spike.
             vwap_bounce  = False
             vwap_dev     = 0.0
             if vwap and vwap > 0:
                 vwap_dev = (price - vwap) / vwap
-                if price > vwap:
-                    prev_closes = closes[-(1 + _VWAP_BOUNCE_LOOKBACK): -1]
-                    if any(c < vwap for c in prev_closes):
+                prev_close = closes[-2] if len(closes) >= 2 else None
+                if price > vwap and prev_close is not None and prev_close > vwap:
+                    lookback = closes[-(1 + _VWAP_BOUNCE_LOOKBACK + 1): -2]
+                    if any(c < vwap for c in lookback):
                         vwap_bounce = True
                         score += 2
 
             # ── Signal 2: RSI Turning Up (+2) ─────────────────────────────────
-            # RSI is below recovery threshold AND has risen since N bars ago.
+            # RSI is genuinely oversold (< rsi_recovery_thresh) AND has recovered
+            # by at least _RSI_DELTA_MIN points — filters noise ticks.
             rsi_rising = False
             rsi_delta  = None
             if rsi is not None:
                 if rsi < rsi_recovery_thresh and len(closes) >= _RSI_PERIOD + _RSI_RECOVERY_LOOKBACK + 1:
                     rsi_prev = _calc_rsi(closes[:-_RSI_RECOVERY_LOOKBACK], _RSI_PERIOD)
-                    if rsi_prev is not None and rsi > rsi_prev:
+                    if rsi_prev is not None and (rsi - rsi_prev) >= _RSI_DELTA_MIN:
                         rsi_rising = True
                         rsi_delta  = round(rsi - rsi_prev, 2)
                         score += 2

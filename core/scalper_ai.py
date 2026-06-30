@@ -23,7 +23,7 @@ _MODELS = [
 ]
 
 _BOUNDS = {
-    "rsi_recovery_thresh": (30.0, 55.0),
+    "rsi_recovery_thresh": (25.0, 40.0),
     "rsi_sell":            (60.0, 75.0),
     "vol_mult":            (1.1,  3.0),
     "score_thresh":        (2.0,  5.0),
@@ -32,7 +32,7 @@ _BOUNDS = {
 }
 
 _DEFAULTS = {
-    "rsi_recovery_thresh": 45.0,
+    "rsi_recovery_thresh": 35.0,
     "rsi_sell":            65.0,
     "vol_mult":            1.5,
     "score_thresh":        4.0,
