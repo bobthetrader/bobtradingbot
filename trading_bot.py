@@ -4342,10 +4342,16 @@ class TradingBot:
                                 pass
                         with open(os.path.join(os.path.dirname(__file__), 'data', 'bot_status.json'), 'w') as _sf:
                             json.dump(_status, _sf)
-                        self._save_balance_state(_status.get("portfolio_value", 0.0))
                         self.logger.debug("Dashboard status written (loop %d)", iteration)
                     except Exception as exc:
                         self.logger.warning("bot_status.json write failed: %s", exc)
+
+                    # Balance state is saved independently so a status-write failure
+                    # never silently starves it — stale file = wrong balance on restart.
+                    try:
+                        self._save_balance_state(self.get_eur_balance())
+                    except Exception as exc:
+                        self.logger.warning("balance_state.json write failed: %s", exc)
 
                     # â”€â”€ Periodic metrics (every 10 loops) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     if iteration % 10 == 0:
