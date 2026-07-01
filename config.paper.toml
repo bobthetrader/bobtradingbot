@@ -35,7 +35,8 @@ mr_rsi_overbought_threshold = 70     # Only sell genuine overbought (RSI > 70)
 break_even_trigger_percent = 1.0     # Move SL to entry only after +1.0% gain
 max_consecutive_losses = 5
 pause_after_loss_streak_minutes = 0
-max_open_positions = 3
+max_open_positions = 6               # was 3 — 3 slots stayed full of parked longs, blocking new long entries
+time_stop_hours = 24                 # was default 72 — recycle flat/dead-money longs faster so slots free up
 
 [intelligence]
 refresh_seconds = 600
