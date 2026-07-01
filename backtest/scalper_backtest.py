@@ -56,6 +56,9 @@ RECS_FILENAME   = "backtest_recommendations.json"
 RSI_RECOVERY_GRID = [30, 35, 40, 45, 50]
 VOL_MULT_GRID     = [1.1, 1.25, 1.5, 2.0, 2.5]
 NEW_SCORE_GRID    = [3.0, 3.5, 4.0, 4.5, 5.0]
+# Minimum entry_vwap_dev % (reclaim strength) — winners cleared VWAP convincingly,
+# losers hovered right at it. Tests a min_vwap_dev entry filter.
+VWAP_DEV_GRID     = [0.0, 0.10, 0.15, 0.20, 0.30, 0.50]
 
 # Walk-forward config
 WF_TRAIN          = 100   # trades in each training window
@@ -918,6 +921,67 @@ def s_concurrent(df: pd.DataFrame) -> str:
             + tbl(["Other open positions", "Trades", "Win Rate [95% CI] / P(>50%)", "Avg P&L %"], rows))
 
 
+# ── VWAP reclaim-strength analysis ───────────────────────────────────────────
+
+def _vwap_dev_threshold_stats(new_df: pd.DataFrame):
+    """Win-rate / Wilson CI for new-signal trades filtered by a minimum
+    entry_vwap_dev (reclaim strength). Returns (rows, best) where best is the
+    threshold with the highest Wilson lower bound that still keeps >=10 trades."""
+    rows = []
+    if "entry_vwap_dev" not in new_df.columns or len(new_df) == 0:
+        return rows, None
+    base_n = len(new_df)
+    for t in VWAP_DEV_GRID:
+        g = new_df[new_df["entry_vwap_dev"].fillna(-999.0) >= t]
+        n = len(g)
+        if n < MIN_TRADES_GRID:
+            continue
+        pt, lo, hi       = wilson_ci(g["win"])
+        _, _, _, p_above = bayesian_ci(g["win"])
+        rows.append({
+            "min_vwap_dev":  t,
+            "win_rate":      pt,
+            "wilson_lo":     lo,
+            "wilson_hi":     hi,
+            "prob_above_50": p_above,
+            "n_trades":      n,
+            "pct_kept":      round(n / base_n * 100, 1) if base_n else 0.0,
+        })
+    best = None
+    for r in rows:
+        if r["n_trades"] >= 10 and (best is None or r["wilson_lo"] > best["wilson_lo"]):
+            best = r
+    return rows, best
+
+
+def s_vwap_dev(df: pd.DataFrame) -> str:
+    out = "<h2>VWAP Reclaim Strength (entry_vwap_dev)</h2>"
+    new_df = df[df["entry_vwap_bounce"].notna()] if "entry_vwap_bounce" in df.columns else pd.DataFrame()
+    if "entry_vwap_dev" not in df.columns or len(new_df) < MIN_TRADES_GRID:
+        return out + "<p class='note'>Not enough new-signal trades yet to analyse reclaim strength.</p>"
+    rows_data, best = _vwap_dev_threshold_stats(new_df)
+    if not rows_data:
+        return out + "<p class='note'>Not enough trades per threshold.</p>"
+    headers = ["min entry_vwap_dev %", "Win Rate [95% CI] / P(>50%)", "Trades kept", "% kept"]
+    rows = []
+    for r in rows_data:
+        html, _ = ci_html(r["win_rate"], r["wilson_lo"], r["wilson_hi"],
+                          r["n_trades"], prob_above_50=r["prob_above_50"])
+        rows.append([f'{r["min_vwap_dev"]:.2f}', (html, ""),
+                     str(r["n_trades"]), f'{r["pct_kept"]}%'])
+    out += tbl(headers, rows)
+    out += ("<p class='note'><b>Hypothesis:</b> winners cleared VWAP convincingly at entry "
+            "while losers hovered right at it. A higher <code>min_vwap_dev</code> should raise "
+            "win rate at the cost of fewer trades. The best threshold is written to "
+            "<code>backtest_recommendations.json</code> as <code>vwap_dev_best</code>; the "
+            "scalper applies it via the AI tuner (default 0.0 = off until data supports it).</p>")
+    if best:
+        out += (f"<p class='note'><b>Best:</b> min_vwap_dev &ge; {best['min_vwap_dev']:.2f}% "
+                f"&rarr; WR {best['win_rate']:.1f}% [{best['wilson_lo']:.0f}–{best['wilson_hi']:.0f}] "
+                f"n={best['n_trades']} ({best['pct_kept']}% of trades kept).</p>")
+    return out
+
+
 # ── Walk-forward analysis ─────────────────────────────────────────────────────
 
 def _wf_best_combo(train: pd.DataFrame) -> tuple:
@@ -1236,6 +1300,12 @@ def compute_recommendations(df: pd.DataFrame) -> dict:
             recs["new_signal_best"]             = new_combos[0]
             recs["new_signal_top_combinations"] = new_combos[:5]
 
+    # VWAP reclaim-strength threshold — validate a min_vwap_dev entry filter
+    if len(new_df) >= MIN_TRADES_GRID and "entry_vwap_dev" in new_df.columns:
+        _, vdev_best = _vwap_dev_threshold_stats(new_df)
+        if vdev_best:
+            recs["vwap_dev_best"] = vdev_best
+
     return recs
 
 
@@ -1279,7 +1349,7 @@ def generate_report(df: pd.DataFrame, out_path: Path):
     now  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     body = (s_overview(df) + s_time(df) + s_entry_signals(df)
             + s_exit_signals(df) + s_grid(df) + s_new_signal_grid(df)
-            + s_walk_forward(df)
+            + s_vwap_dev(df) + s_walk_forward(df)
             + s_pairs(df) + s_param_regimes(df) + s_concurrent(df))
 
     html = f"""<!DOCTYPE html>

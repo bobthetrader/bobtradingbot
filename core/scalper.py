@@ -62,6 +62,7 @@ _OB_IMBALANCE          = 0.20   # 20% bid/ask volume imbalance to signal
 _SCORE_THRESH          = 4.0    # entry threshold (max possible score = 6)
 _TP_PCT                = 2.50   # take-profit % (base — adjusted dynamically by fee tier)
 _SL_PCT                = 0.50   # stop-loss %
+_MIN_VWAP_DEV          = 0.0    # min entry vwap_dev % (VWAP reclaim strength gate; 0 = off, AI-tuned)
 _ALLOCATION_EUR        = 50.0   # paper EUR per scalp trade
 _MAX_CONCURRENT_POS    = 8      # cap on simultaneous open positions (× alloc = max deployed)
 _MAX_HOLD_MIN          = 120    # force-exit after 120 minutes regardless
@@ -77,6 +78,7 @@ _AI_BOUNDS = {
     "score_thresh":        (2.0,  5.0),
     "sl_pct":              (0.30, 0.80),
     "max_hold_min":        (30.0, 180.0),
+    "min_vwap_dev":        (0.0,  0.50),
 }
 
 # Kraken fee tiers: (30-day USD volume threshold, taker fee %)
@@ -179,6 +181,7 @@ class ScalperEngine:
         self._ai_score_thresh        = _SCORE_THRESH
         self._ai_sl_pct              = _SL_PCT
         self._ai_max_hold_min        = float(_MAX_HOLD_MIN)
+        self._ai_min_vwap_dev        = _MIN_VWAP_DEV
         self._ai_skip_hours: set     = set()
         self._ai_blacklist: set      = set()
 
@@ -258,6 +261,7 @@ class ScalperEngine:
                 "score_thresh":   self._ai_score_thresh,
                 "sl_pct":         self._ai_sl_pct,
                 "max_hold_min":   self._ai_max_hold_min,
+                "min_vwap_dev":   self._ai_min_vwap_dev,
                 "skip_hours_utc": sorted(self._ai_skip_hours),
                 "blacklist":      list(self._ai_blacklist),
             },
@@ -475,6 +479,14 @@ class ScalperEngine:
 
             if bear or hour_gated or at_capacity or score < thresh:
                 continue
+
+            # VWAP reclaim-strength gate (AI-tuned, default 0 = off): only enter when
+            # price has cleared VWAP by at least min_vwap_dev. Winners cleared it
+            # convincingly (dev ~0.5%); losers hovered right at it (dev ~0.05%).
+            if self._ai_min_vwap_dev > 0:
+                _vdev = signals.get("vwap_dev")
+                if _vdev is None or _vdev < self._ai_min_vwap_dev:
+                    continue
 
             if score > best_score:
                 price = self._get_price(pair)
@@ -875,6 +887,7 @@ class ScalperEngine:
                     "score_thresh":        _SCORE_THRESH,
                     "sl_pct":              _SL_PCT,
                     "max_hold_min":        float(_MAX_HOLD_MIN),
+                    "min_vwap_dev":        _MIN_VWAP_DEV,
                     "pairs_blacklist":     [],
                     "skip_hours_utc":      [],
                     "updated_at":          datetime.now(timezone.utc).isoformat(),
@@ -895,16 +908,18 @@ class ScalperEngine:
             self._ai_sl_pct      = max(lo, min(hi, float(p.get("sl_pct",      _SL_PCT))))
             lo, hi = _AI_BOUNDS["max_hold_min"]
             self._ai_max_hold_min= max(lo, min(hi, float(p.get("max_hold_min",_MAX_HOLD_MIN))))
+            lo, hi = _AI_BOUNDS["min_vwap_dev"]
+            self._ai_min_vwap_dev= max(lo, min(hi, float(p.get("min_vwap_dev",_MIN_VWAP_DEV))))
             sh = p.get("skip_hours_utc", [])
             self._ai_skip_hours  = set(int(h) for h in sh) if isinstance(sh, list) else set()
             bl = p.get("pairs_blacklist", [])
             self._ai_blacklist   = set(bl) if isinstance(bl, list) else set()
             logger.info(
                 "[SCALP-AI] Params loaded — RSI_RECOVERY=%.0f RSI_SELL=%.0f "
-                "VOL_MULT=%.2f SCORE=%.1f SL=%.2f%% MAX_HOLD=%.0fm skip_hours=%s blacklist=%s",
+                "VOL_MULT=%.2f SCORE=%.1f SL=%.2f%% MAX_HOLD=%.0fm MIN_VWAP_DEV=%.2f%% skip_hours=%s blacklist=%s",
                 self._ai_rsi_recovery_thresh, self._ai_rsi_sell, self._ai_vol_mult,
                 self._ai_score_thresh, self._ai_sl_pct, self._ai_max_hold_min,
-                sorted(self._ai_skip_hours), list(self._ai_blacklist),
+                self._ai_min_vwap_dev, sorted(self._ai_skip_hours), list(self._ai_blacklist),
             )
         except Exception as exc:
             logger.warning("[SCALP-AI] Could not load AI params: %s", exc)

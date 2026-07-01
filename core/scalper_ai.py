@@ -29,6 +29,7 @@ _BOUNDS = {
     "score_thresh":        (2.0,  5.0),
     "sl_pct":              (0.30, 0.80),
     "max_hold_min":        (30.0, 180.0),
+    "min_vwap_dev":        (0.0,  0.50),
 }
 
 _DEFAULTS = {
@@ -38,6 +39,7 @@ _DEFAULTS = {
     "score_thresh":        4.0,
     "sl_pct":              0.50,
     "max_hold_min":        120.0,
+    "min_vwap_dev":        0.0,
 }
 
 _MIN_TRADES        = 20    # minimum trades in window before AI will run
@@ -412,6 +414,15 @@ class ScalperAI:
                     f"    RSI ≤ {best['rsi_buy_max']}, Score ≥ {best['score_min']} → "
                     f"{best['win_rate']}% WR, n={best['n_trades']}",
                 ]
+            if recs.get("vwap_dev_best"):
+                vd = recs["vwap_dev_best"]
+                rec_lines += [
+                    f"  VWAP RECLAIM STRENGTH: best min_vwap_dev ≥ {vd['min_vwap_dev']}% → "
+                    f"{vd['win_rate']}% WR [{vd['wilson_lo']}%–{vd['wilson_hi']}%], "
+                    f"n={vd['n_trades']} ({vd['pct_kept']}% of trades kept).",
+                    f"    Raise min_vwap_dev only if a higher threshold shows a clearly better "
+                    f"CI lower bound — it trades fewer signals for higher-quality entries.",
+                ]
             ts = recs.get("timeout_stats")
             if ts:
                 rec_lines.append(
@@ -451,10 +462,12 @@ CURRENT PARAMETERS (active right now):
   score_thresh (minimum combined score to enter, max=6): {current['score_thresh']}
   sl_pct (stop-loss %):                       {current['sl_pct']}
   max_hold_min (force-exit after N minutes):  {current['max_hold_min']}
+  min_vwap_dev (min VWAP reclaim strength % to enter; 0 = off): {current['min_vwap_dev']}
 
 PARAMETER BOUNDS (must stay within):
   rsi_recovery_thresh: 30–55  |  rsi_sell: 60–75  |  vol_mult: 1.1–3.0
   score_thresh: 2.0–5.0  |  sl_pct: 0.30–0.80  |  max_hold_min: 30–180
+  min_vwap_dev: 0.0–0.50
 
 PENDING EXPERIMENT: {pending_str}
 
@@ -495,7 +508,7 @@ TASK:
 
 Respond ONLY with valid JSON (no markdown, no extra text):
 {{
-  "param": "<one of: rsi_recovery_thresh, rsi_sell, vol_mult, score_thresh, sl_pct, max_hold_min>",
+  "param": "<one of: rsi_recovery_thresh, rsi_sell, vol_mult, score_thresh, sl_pct, max_hold_min, min_vwap_dev>",
   "new_value": <number within the param's bounds>,
   "pairs_blacklist": [<pair strings to blacklist, or empty list>],
   "reasoning": "<1-2 sentences: what pattern you saw and why this single change should help>"
