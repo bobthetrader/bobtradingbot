@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-01T08:35:09.410144+00:00",
+  "generated_at": "2026-07-01T22:11:00.655049+00:00",
   "trade_count": 1543,
   "best": {
     "rsi_buy_max": 35,
@@ -152,5 +152,14 @@
       "p_value": 0.984558,
       "bh_significant": false
     }
-  ]
+  ],
+  "vwap_dev_best": {
+    "min_vwap_dev": 0.0,
+    "win_rate": 23.7,
+    "wilson_lo": 13.0,
+    "wilson_hi": 39.2,
+    "prob_above_50": 0.1,
+    "n_trades": 38,
+    "pct_kept": 84.4
+  }
 }
