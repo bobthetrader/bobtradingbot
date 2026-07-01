@@ -3591,7 +3591,13 @@ class TradingBot:
             trend_bearish = not self._ema_bullish.get(pair, True)
             risk_off_ok  = (not self._is_risk_on_regime()
                             if self.enable_regime_filter else True)
-            if (trend_bearish or abs(score) >= self.min_buy_score) and risk_off_ok and abs(score) >= self.min_buy_score:
+            # Require a CONFIRMED bearish EMA trend to short — not just a score.
+            # Previously this was `trend_bearish or |score|>=min`, which (with the
+            # separate |score|>=min term) collapsed to score-only: the bot shorted
+            # any pair scoring >=min regardless of trend, so it kept shorting dips in
+            # uptrends that then bounced (~24% short WR). AND-ing trend_bearish only
+            # shorts confirmed downtrends.
+            if trend_bearish and abs(score) >= self.min_buy_score and risk_off_ok:
                 self.execute_open_short_order(pair, price)
             else:
                 self.logger.info(
