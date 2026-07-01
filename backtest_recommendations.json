@@ -1,81 +1,81 @@
 {
-  "generated_at": "2026-06-30T08:35:10.341005+00:00",
-  "trade_count": 1494,
+  "generated_at": "2026-07-01T08:35:09.410144+00:00",
+  "trade_count": 1543,
   "best": {
     "rsi_buy_max": 35,
     "score_min": 3.5,
-    "win_rate": 42.8,
-    "wilson_lo": 37.3,
-    "wilson_hi": 48.5,
-    "prob_above_50": 0.7,
-    "n_trades": 292,
-    "p_value": 0.994136,
+    "win_rate": 42.2,
+    "wilson_lo": 36.8,
+    "wilson_hi": 47.9,
+    "prob_above_50": 0.3,
+    "n_trades": 303,
+    "p_value": 0.997133,
     "bh_significant": false
   },
   "top_combinations": [
     {
       "rsi_buy_max": 35,
       "score_min": 3.5,
-      "win_rate": 42.8,
-      "wilson_lo": 37.3,
-      "wilson_hi": 48.5,
-      "prob_above_50": 0.7,
-      "n_trades": 292,
-      "p_value": 0.994136,
+      "win_rate": 42.2,
+      "wilson_lo": 36.8,
+      "wilson_hi": 47.9,
+      "prob_above_50": 0.3,
+      "n_trades": 303,
+      "p_value": 0.997133,
       "bh_significant": false
     },
     {
       "rsi_buy_max": 35,
       "score_min": 4.0,
-      "win_rate": 42.8,
-      "wilson_lo": 37.3,
-      "wilson_hi": 48.5,
-      "prob_above_50": 0.7,
-      "n_trades": 292,
-      "p_value": 0.994136,
-      "bh_significant": false
-    },
-    {
-      "rsi_buy_max": 33,
-      "score_min": 3.5,
-      "win_rate": 42.5,
-      "wilson_lo": 36.9,
-      "wilson_hi": 48.3,
-      "prob_above_50": 0.5,
-      "n_trades": 285,
-      "p_value": 0.995483,
-      "bh_significant": false
-    },
-    {
-      "rsi_buy_max": 33,
-      "score_min": 4.0,
-      "win_rate": 42.5,
-      "wilson_lo": 36.9,
-      "wilson_hi": 48.3,
-      "prob_above_50": 0.5,
-      "n_trades": 285,
-      "p_value": 0.995483,
-      "bh_significant": false
-    },
-    {
-      "rsi_buy_max": 32,
-      "score_min": 3.5,
-      "win_rate": 42.5,
+      "win_rate": 42.2,
       "wilson_lo": 36.8,
-      "wilson_hi": 48.4,
-      "prob_above_50": 0.6,
-      "n_trades": 280,
-      "p_value": 0.994974,
+      "wilson_hi": 47.9,
+      "prob_above_50": 0.3,
+      "n_trades": 303,
+      "p_value": 0.997133,
+      "bh_significant": false
+    },
+    {
+      "rsi_buy_max": 33,
+      "score_min": 1.5,
+      "win_rate": 39.4,
+      "wilson_lo": 36.6,
+      "wilson_hi": 42.3,
+      "prob_above_50": 0.0,
+      "n_trades": 1114,
+      "p_value": 1.0,
+      "bh_significant": false
+    },
+    {
+      "rsi_buy_max": 33,
+      "score_min": 2.0,
+      "win_rate": 39.4,
+      "wilson_lo": 36.6,
+      "wilson_hi": 42.3,
+      "prob_above_50": 0.0,
+      "n_trades": 1114,
+      "p_value": 1.0,
+      "bh_significant": false
+    },
+    {
+      "rsi_buy_max": 35,
+      "score_min": 1.5,
+      "win_rate": 39.3,
+      "wilson_lo": 36.5,
+      "wilson_hi": 42.1,
+      "prob_above_50": 0.0,
+      "n_trades": 1169,
+      "p_value": 1.0,
       "bh_significant": false
     }
   ],
   "timeout_stats": {
     "current_max_hold_min": 121,
-    "count": 226,
-    "pct_of_trades": 15.1,
-    "win_rate": 65.9,
-    "avg_pnl_pct": 0.119,
-    "avg_hold_min": 63.9
+    "count": 235,
+    "pct_of_trades": 15.2,
+    "win_rate": 66.8,
+    "avg_pnl_pct": 0.122,
+    "avg_hold_min": 66.1
   },
   "bad_hours_utc": [
     4,
@@ -84,5 +84,73 @@
     16,
     21,
     22
+  ],
+  "new_signal_best": {
+    "vol_mult_min": 1.1,
+    "score_min": 3.5,
+    "win_rate": 27.8,
+    "wilson_lo": 12.5,
+    "wilson_hi": 50.9,
+    "prob_above_50": 3.2,
+    "n_trades": 18,
+    "p_value": 0.984558,
+    "bh_significant": false
+  },
+  "new_signal_top_combinations": [
+    {
+      "vol_mult_min": 1.1,
+      "score_min": 3.5,
+      "win_rate": 27.8,
+      "wilson_lo": 12.5,
+      "wilson_hi": 50.9,
+      "prob_above_50": 3.2,
+      "n_trades": 18,
+      "p_value": 0.984558,
+      "bh_significant": false
+    },
+    {
+      "vol_mult_min": 1.1,
+      "score_min": 4.0,
+      "win_rate": 27.8,
+      "wilson_lo": 12.5,
+      "wilson_hi": 50.9,
+      "prob_above_50": 3.2,
+      "n_trades": 18,
+      "p_value": 0.984558,
+      "bh_significant": false
+    },
+    {
+      "vol_mult_min": 1.25,
+      "score_min": 3.5,
+      "win_rate": 27.8,
+      "wilson_lo": 12.5,
+      "wilson_hi": 50.9,
+      "prob_above_50": 3.2,
+      "n_trades": 18,
+      "p_value": 0.984558,
+      "bh_significant": false
+    },
+    {
+      "vol_mult_min": 1.25,
+      "score_min": 4.0,
+      "win_rate": 27.8,
+      "wilson_lo": 12.5,
+      "wilson_hi": 50.9,
+      "prob_above_50": 3.2,
+      "n_trades": 18,
+      "p_value": 0.984558,
+      "bh_significant": false
+    },
+    {
+      "vol_mult_min": 1.5,
+      "score_min": 3.5,
+      "win_rate": 27.8,
+      "wilson_lo": 12.5,
+      "wilson_hi": 50.9,
+      "prob_above_50": 3.2,
+      "n_trades": 18,
+      "p_value": 0.984558,
+      "bh_significant": false
+    }
   ]
 }
