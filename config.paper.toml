@@ -86,3 +86,6 @@ leverage = "2"
 max_short_notional_eur = 30.0
 short_take_profit_percent = 1.4
 short_stop_loss_percent = 0.5
+# Hard backstop: force-close EVERY short past this loss each loop (the normal
+# soft stop above closes only one position per loop, so runaways queue up).
+short_hard_stop_percent = 1.5

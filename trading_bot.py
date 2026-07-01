@@ -492,6 +492,9 @@ class TradingBot:
         self.max_short_notional_eur = float(self.config.get('shorting', {}).get('max_short_notional_eur', 50.0))
         self.short_take_profit_percent = float(self.config.get('shorting', {}).get('short_take_profit_percent', 2.5))
         self.short_stop_loss_percent = float(self.config.get('shorting', {}).get('short_stop_loss_percent', 3.5))
+        # Hard backstop applied to ALL open shorts every loop (see _enforce_short_hard_stops).
+        # 0 disables. Distinct from the soft stop, which the single-exit check reaches one-per-loop.
+        self.short_hard_stop_percent = float(self.config.get('shorting', {}).get('short_hard_stop_percent', 1.5))
         # Safety: minimum margin buffer (fraction of free margin to keep)
         self.min_free_margin_buffer = float(self.config.get('shorting', {}).get('min_free_margin_buffer', 0.05))
         # Short enabling toggle
@@ -2570,6 +2573,37 @@ class TradingBot:
         except Exception:
             return 0.1
 
+    def _enforce_short_hard_stops(self):
+        """Force-close EVERY open short past the hard backstop, in one pass.
+
+        check_take_profit_or_stop_loss() returns only the first breached pair, so
+        at most one position closes per ~60s loop. During a market-wide spike
+        several shorts breach the soft stop at once and bleed while queued behind
+        each other. This sweep runs every loop and closes ALL shorts that have
+        moved past short_hard_stop_percent against us, regardless of queue order,
+        capping the tail risk (observed losses ran to -7.9% vs a 0.5% soft stop).
+        """
+        if not self.enable_live_shorts or self.short_hard_stop_percent <= 0:
+            return 0
+        closed = 0
+        for pair in list(self.short_qty.keys()):
+            qty = self.short_qty.get(pair, 0.0)
+            entry = self.short_entry_prices.get(pair, 0.0)
+            if qty <= 0 or entry <= 0:
+                continue
+            price = self.pair_prices.get(pair, 0.0)
+            if price <= 0:
+                continue
+            change_pct = ((entry - price) / entry) * 100.0
+            if change_pct <= -abs(self.short_hard_stop_percent):
+                self.logger.warning(
+                    "SHORT HARD-STOP %s at %.2f%% (backstop -%.2f%%) — force closing",
+                    pair, change_pct, self.short_hard_stop_percent,
+                )
+                self.execute_close_short_order(pair, price, reason='SHORT_HARD_STOP')
+                closed += 1
+        return closed
+
     def check_take_profit_or_stop_loss(self):
         """Evaluate exits with TP first, then ATR stop, hard stop, time stop, then trailing stop."""
         for pair in self.trade_pairs:
@@ -4060,6 +4094,9 @@ class TradingBot:
                                              if self.enable_sentiment_guard else False)
 
                     # â”€â”€ Phase 5: TP/SL exits and partial exits â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                    # Backstop sweep first: cap any runaway shorts the single-exit
+                    # check below can only close one-per-loop.
+                    self._enforce_short_hard_stops()
                     risk_pair, risk_type, change = self.check_take_profit_or_stop_loss()
                     if risk_pair:
                         _price = self.pair_prices.get(risk_pair, 0)
@@ -4977,7 +5014,7 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"Error opening short order: {e}", exc_info=True)
 
-    def execute_close_short_order(self, pair, price):
+    def execute_close_short_order(self, pair, price, reason='SHORT_CLOSE_EXECUTED'):
         """Close an open leveraged short position on *pair* at *price*.
 
         Places a reduce-only BUY order with the same leverage as the original
@@ -5009,7 +5046,7 @@ class TradingBot:
                 self.logger.info("SHORT CLOSE SUCCESS: %s | PNL: %.2f EUR (%.2f%%)",
                                  result, pnl_eur, pnl_pct)
                 self._finalise_trade('SHORT_CLOSE', pair, qty, price, pnl_eur,
-                                     'SHORT_CLOSE_EXECUTED',
+                                     reason,
                                      extra={'entry': entry, 'exit_price': price, 'pnl_pct': pnl_pct})
             else:
                 self.logger.error(f"SHORT CLOSE FAILED for {pair}")
