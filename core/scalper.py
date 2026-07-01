@@ -62,7 +62,8 @@ _OB_IMBALANCE          = 0.20   # 20% bid/ask volume imbalance to signal
 _SCORE_THRESH          = 4.0    # entry threshold (max possible score = 6)
 _TP_PCT                = 2.50   # take-profit % (base — adjusted dynamically by fee tier)
 _SL_PCT                = 0.50   # stop-loss %
-_ALLOCATION_EUR        = 10.0   # paper EUR per scalp trade
+_ALLOCATION_EUR        = 50.0   # paper EUR per scalp trade
+_MAX_CONCURRENT_POS    = 8      # cap on simultaneous open positions (× alloc = max deployed)
 _MAX_HOLD_MIN          = 120    # force-exit after 120 minutes regardless
 _MIN_PROFIT_BPS        = 1.80   # minimum net profit % above round-trip fee
 _AI_REVIEW_EVERY       = 25     # trigger AI param review after this many closed trades
@@ -216,9 +217,9 @@ class ScalperEngine:
         self._thread.start()
         logger.info(
             "[SCALP] Engine started (dynamic) | screener=%ds | top=%d pairs | "
-            "min_vol=€%.0f/day | TP=%.1f%% | SL=%.1f%% | alloc=€%.0f",
+            "min_vol=€%.0f/day | TP=%.1f%% | SL=%.1f%% | alloc=€%.0f | max_pos=%d",
             _SCREENER_INTERVAL_SEC, _MAX_ACTIVE_PAIRS, _MIN_VOL_EUR_24H,
-            _TP_PCT, _SL_PCT, _ALLOCATION_EUR,
+            _TP_PCT, _SL_PCT, _ALLOCATION_EUR, _MAX_CONCURRENT_POS,
         )
 
     def stop(self):
@@ -435,11 +436,17 @@ class ScalperEngine:
             skip_hours = self._ai_skip_hours
         hour_gated = datetime.now(timezone.utc).hour in skip_hours
 
+        with self._lock:
+            at_capacity = len(self._positions) >= _MAX_CONCURRENT_POS
+
         if bear:
             logger.debug("[SCALP] Bear market — scoring pairs for display but skipping entries")
         if hour_gated:
             logger.debug("[SCALP] Hour %d UTC gated by backtest — skipping entries",
                          datetime.now(timezone.utc).hour)
+        if at_capacity:
+            logger.debug("[SCALP] At capacity (%d/%d open) — scoring for display but skipping entries",
+                         _MAX_CONCURRENT_POS, _MAX_CONCURRENT_POS)
 
         active_pairs = self._active_pairs or list(_PAIRS_FALLBACK)
 
@@ -466,7 +473,7 @@ class ScalperEngine:
             with self._lock:
                 self._pair_scores[pair] = score
 
-            if bear or hour_gated or score < thresh:
+            if bear or hour_gated or at_capacity or score < thresh:
                 continue
 
             if score > best_score:
@@ -604,7 +611,8 @@ class ScalperEngine:
 
     def _open_position(self, pair: str, price: float, score: float,
                        signals: dict, bear: bool = False):
-        qty    = round(_ALLOCATION_EUR / price, 8)
+        alloc  = float(_ALLOCATION_EUR)
+        qty    = round(alloc / price, 8)
         ts     = time.time()
         open_dt = datetime.fromtimestamp(ts, tz=timezone.utc)
         with self._lock:
@@ -623,6 +631,7 @@ class ScalperEngine:
                 "entry_hour_utc":   open_dt.hour,
                 "entry_weekday":    open_dt.weekday(),
                 "concurrent_pos":   concurrent,
+                "alloc":            alloc,
                 "btc_bear":         bear,
                 "active_rsi_recovery_thresh": self._ai_rsi_recovery_thresh,
                 "active_rsi_sell":  self._ai_rsi_sell,
@@ -631,7 +640,7 @@ class ScalperEngine:
             }
         self._save_positions()
         try:
-            self._api.adjust_paper_balance(-_ALLOCATION_EUR)
+            self._api.adjust_paper_balance(-alloc)
         except Exception:
             pass
         logger.info(
@@ -726,9 +735,13 @@ class ScalperEngine:
             "param_vol_mult":       pos.get("active_vol_mult"),
             "param_score_thresh":   pos.get("active_score_thresh"),
         }
-        # Return allocation + P&L to paper balance (allocation was deducted on buy)
+        # Return allocation + P&L to paper balance (allocation was deducted on buy).
+        # Use the allocation stored at open so changing _ALLOCATION_EUR mid-flight
+        # refunds exactly what was deducted. Positions with no "alloc" key predate
+        # this field — they were all opened at the old €10 size, so default to that.
+        alloc = float(pos.get("alloc", 10.0))
         try:
-            self._api.adjust_paper_balance(_ALLOCATION_EUR + pnl_eur)
+            self._api.adjust_paper_balance(alloc + pnl_eur)
         except Exception:
             pass
 
