@@ -4104,8 +4104,14 @@ class TradingBot:
                         if risk_type in ("SHORT_TAKE_PROFIT", "SHORT_STOP_LOSS", "SHORT_TIME_REVIEW"):
                             self.execute_close_short_order(risk_pair, _price)
                         else:
+                            # Only a genuine take-profit keeps the profit-target guard.
+                            # STOP_LOSS / HARD_STOP / TIME_STOP / TRAILING_STOP / ATR /
+                            # break-even are risk exits and MUST close even at a loss —
+                            # otherwise execute_sell_order blocks them and the long parks
+                            # indefinitely, hogging a position slot (per its own docstring).
+                            _require_tp = (risk_type == "TAKE_PROFIT")
                             self.execute_sell_order(risk_pair, _price,
-                                                    require_profit_target=True, reason=risk_type)
+                                                    require_profit_target=_require_tp, reason=risk_type)
 
                     if self.enable_partial_exit:
                         for _pp in list(self.trade_pairs):
