@@ -115,3 +115,6 @@ tmp_*.py
 test_*.py
 force_test_*.py
 debug*.py
+
+# DR snapshots pulled from the server (large binaries — never commit)
+backups/
