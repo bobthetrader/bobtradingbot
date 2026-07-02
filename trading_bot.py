@@ -255,6 +255,18 @@ class TradingBot:
 
         self.trade_pairs = self.config['bot_settings'].get('trade_pairs', ['XBTEUR'])
         self._core_trade_pairs = list(self.trade_pairs)  # permanent pairs; listing pairs are temporary
+
+        # Dynamic universe: periodically widen trade_pairs to liquid EUR pairs
+        # discovered from Kraken (config [bot_settings] dynamic_pairs). Off by
+        # default. Core pairs + anything held are always kept; quality gates and
+        # maker orders still apply per pair, so this only adds candidates.
+        _bs = self.config.get('bot_settings', {})
+        self._dynamic_pairs_enabled = bool(_bs.get('dynamic_pairs', False))
+        self._dynamic_min_vol_eur   = float(_bs.get('dynamic_pairs_min_vol_eur', 500_000))
+        self._dynamic_max_pairs     = int(_bs.get('dynamic_pairs_max', 30))
+        self._dynamic_refresh_sec   = int(_bs.get('dynamic_pairs_refresh_min', 15)) * 60
+        self._dynamic_pairs         = set()   # pairs WE added via the screener
+        self._dynamic_last_refresh  = 0.0
         self.pair_signals = {}
         self.pair_prices = {}
         self.pair_scores = {}
@@ -1214,6 +1226,63 @@ class TradingBot:
             self.logger.info(f"Validated trading pairs: {valid_requested}")
         return valid_requested
 
+    def _refresh_dynamic_universe(self):
+        """Periodically widen ``trade_pairs`` to liquid EUR pairs from Kraken.
+
+        Gated by [bot_settings] dynamic_pairs and an interval. Screened pairs that
+        fall out AND aren't held are pruned; core pairs and open positions are
+        never removed. Only touches self._dynamic_pairs, so it never fights the
+        listings monitor (which manages its own temporary pairs).
+        """
+        if not self._dynamic_pairs_enabled:
+            return
+        now = time.time()
+        if now - self._dynamic_last_refresh < self._dynamic_refresh_sec:
+            return
+        self._dynamic_last_refresh = now
+
+        try:
+            from core.pair_screener import discover_liquid_eur_pairs
+        except ImportError:
+            from pair_screener import discover_liquid_eur_pairs
+        try:
+            screened = discover_liquid_eur_pairs(
+                self.api_client,
+                min_vol_eur=self._dynamic_min_vol_eur,
+                max_pairs=self._dynamic_max_pairs,
+            )
+        except Exception as exc:
+            self.logger.warning("Dynamic pair screen failed: %s", exc)
+            return
+        if not screened:
+            return
+
+        # Normalize screened altnames to the bot's canonical names
+        desired = self._fetch_valid_trade_pairs(screened)[: self._dynamic_max_pairs]
+        desired_set = set(desired)
+        held = {p for p in self.trade_pairs
+                if self.position_qty.get(p, 0) > 0 or self.short_qty.get(p, 0) > 0}
+
+        to_add = [p for p in desired if p not in self.trade_pairs]
+        if to_add:
+            self._init_pair_state(to_add)
+            self.trade_pairs = list(self.trade_pairs) + to_add
+            self._dynamic_pairs |= set(to_add)
+
+        # Prune dynamic pairs that dropped out of the screen and aren't held
+        to_remove = [p for p in self._dynamic_pairs
+                     if p not in desired_set and p not in held]
+        if to_remove:
+            self.trade_pairs = [p for p in self.trade_pairs if p not in to_remove]
+            self._dynamic_pairs -= set(to_remove)
+
+        if to_add or to_remove:
+            self.logger.info(
+                "Dynamic universe: +%d -%d -> %d pairs (%d core + %d dynamic)",
+                len(to_add), len(to_remove), len(self.trade_pairs),
+                len(self._core_trade_pairs), len(self._dynamic_pairs),
+            )
+
     def reload_config(self):
         """Hot-reload config.toml and apply all changed settings without restarting.
 
@@ -1236,6 +1305,18 @@ class TradingBot:
             added_pairs = list(new_pairs - old_pairs)
             if added_pairs:
                 self._init_pair_state(added_pairs)
+            # Reload rebuilds trade_pairs from the config's core list only, which
+            # would drop runtime-added pairs. Preserve the dynamic universe and any
+            # pair we still hold so a reload never orphans an open position.
+            _preserve = set(self._dynamic_pairs) | {
+                p for p in old_pairs
+                if self.position_qty.get(p, 0) > 0 or self.short_qty.get(p, 0) > 0
+            }
+            _readd = [p for p in _preserve if p not in self.trade_pairs]
+            if _readd:
+                self._init_pair_state(_readd)
+                self.trade_pairs = list(self.trade_pairs) + _readd
+                new_pairs = set(self.trade_pairs)
             # Immediately reconcile live state so no stale holdings data lingers
             self._sync_account_state()
 
@@ -4007,6 +4088,8 @@ class TradingBot:
             while True:
                 iteration += 1
                 try:
+                    # Phase 0: widen the universe to liquid pairs (interval-gated, no-op if disabled)
+                    self._refresh_dynamic_universe()
                     # â”€â”€ Phase 1: AI panel refresh (background thread) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     self._check_market_intelligence()
 

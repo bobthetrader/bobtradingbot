@@ -11,6 +11,18 @@ loop_interval_seconds = 60
 trade_pairs = [ "XXBTZEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR", "ADAEUR", "DOTEUR", "LINKEUR",]
 allocation_per_trade_percent = 5.0
 
+# Dynamic universe (added 2026-07-02): widen longs beyond the 7 core pairs to any
+# liquid EUR pair, refreshed from Kraken every 15 min. Only pairs above the volume
+# floor qualify (maker fills need depth); core pairs + held positions are always
+# kept. Quality gates + min_buy_score still filter every entry. Paper test — watch
+# the long win rate; set dynamic_pairs = false to revert to the 7 core pairs.
+# €250k/day floor => ~27 liquid EUR pairs (a ~4x expansion). Lower the floor for
+# more breadth (€100k ~= 42 pairs) at the cost of thinner/meme coins.
+dynamic_pairs = true
+dynamic_pairs_min_vol_eur = 250000
+dynamic_pairs_max = 30
+dynamic_pairs_refresh_min = 15
+
 [risk_management]
 max_drawdown_percent = 25.0
 stop_loss_percent = 1.5              # Wider SL — volatile market needs more room
