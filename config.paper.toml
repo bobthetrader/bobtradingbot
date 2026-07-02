@@ -82,7 +82,11 @@ trade_amount_eur = 25.0
 initial_balance = 500.0
 
 [shorting]
-enabled = true
+# Disabled 2026-07-02: shorts were a persistent net loser — 83 trades at 26% WR,
+# net -EUR3.59, and only 7.7% WR since the trend_bearish gate (2026-07-01). Longs
+# are the profit engine (+EUR6.76, 56% WR). Removing shorts recovers the drag.
+# Existing open shorts are still managed/closed (entry gate only); set true to resume.
+enabled = false
 leverage = "2"
 max_short_notional_eur = 30.0
 short_take_profit_percent = 1.4

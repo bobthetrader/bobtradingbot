@@ -2583,7 +2583,10 @@ class TradingBot:
         moved past short_hard_stop_percent against us, regardless of queue order,
         capping the tail risk (observed losses ran to -7.9% vs a 0.5% soft stop).
         """
-        if not self.enable_live_shorts or self.short_hard_stop_percent <= 0:
+        # Run the hard-stop sweep whenever any short is open, even if opening new
+        # shorts is disabled — so turning shorts off drains existing positions
+        # cleanly instead of stranding them with no exit.
+        if self.short_hard_stop_percent <= 0 or not any(q > 0 for q in self.short_qty.values()):
             return 0
         closed = 0
         for pair in list(self.short_qty.keys()):
@@ -2691,7 +2694,7 @@ class TradingBot:
             # Short position exits
             short_qty = self.short_qty.get(pair, 0.0)
             short_entry = self.short_entry_prices.get(pair, 0.0)
-            if self.enable_live_shorts and short_qty > 0 and short_entry > 0:
+            if short_qty > 0 and short_entry > 0:   # manage open shorts even if new shorting is disabled
                 short_change_percent = ((short_entry - current_price) / short_entry) * 100.0
                 if short_change_percent >= self.short_take_profit_percent:
                     return pair, "SHORT_TAKE_PROFIT", short_change_percent
@@ -3604,7 +3607,7 @@ class TradingBot:
                     "SHORT skipped for %s: bearish=%s risk_off=%s score=%.2f",
                     pair, trend_bearish, risk_off_ok, score
                 )
-        elif self.enable_live_shorts and self.short_qty.get(pair, 0.0) > 0:
+        elif self.short_qty.get(pair, 0.0) > 0:   # manage/close open shorts even if new shorting is disabled
             if self._can_close_short_profit_target(pair, price):
                 self.execute_close_short_order(pair, price)
             else:
