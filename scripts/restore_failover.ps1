@@ -12,9 +12,10 @@
 
 $ErrorActionPreference = "Stop"
 $ROOT = "D:\Tradingbot"
-$DR   = "$ROOT\backups\dr\latest.tar.gz"
-$VOL  = "tradingbot_tradingbot_data"       # local compose project = tradingbot
+$PROJ = "tradingbot"                        # explicit compose project (matches existing volumes)
+$VOL  = "tradingbot_tradingbot_data"        # data volume created under that project
 $PG   = "tradingbot_postgres"
+$DR   = "$ROOT\backups\dr\latest.tar.gz"
 
 if (-not (Test-Path $DR)) {
     Write-Error "No DR snapshot at $DR - run pull_dr_backup.ps1 first."
@@ -39,36 +40,44 @@ if (-not (Test-Path "$stage\tradingbot_data.tar.gz")) {
     exit 1
 }
 
-# Stop the trading bot (leave FTSE bot alone; ensure the volume + postgres exist)
+# From here on we drive native docker. Don't let its stderr warnings (e.g. the
+# compose project-name notice) abort the script - check exit codes explicitly.
+$ErrorActionPreference = "Continue"
+
+# Stop the trading bot (leave FTSE bot alone). -p pins the project so the volume
+# names are deterministic regardless of the working-directory case / symlinks.
 Write-Host "Stopping local tradingbot (FTSE bot left running)..."
-docker compose stop tradingbot 2>$null
+docker compose -p $PROJ stop tradingbot
 docker volume create $VOL | Out-Null
 
-# 1. Restore the data volume (wipe then extract)
+# 1. Restore the data volume (wipe then extract). This targets the volume by name
+#    directly, so it's independent of the compose project.
 Write-Host "Restoring data volume $VOL..."
 $rm = "rm -rf /data/* /data/..?* /data/.[!.]* 2>/dev/null; tar xzf /backup/tradingbot_data.tar.gz -C /data"
 docker run --rm -v "${VOL}:/data" -v "${stage}:/backup:ro" alpine sh -c $rm
+if ($LASTEXITCODE -ne 0) { Write-Error "Data volume restore failed (exit $LASTEXITCODE)."; exit 1 }
 
 # 2. Restore Postgres if the snapshot has a dump
 if (Test-Path "$stage\postgres.sql.gz") {
     Write-Host "Starting Postgres..."
-    docker compose up -d postgres
+    docker compose -p $PROJ up -d postgres
     for ($i = 0; $i -lt 30; $i++) {
-        docker exec $PG pg_isready -U tradingbot -d tradingbot 2>$null | Out-Null
-        if ($?) { break }
+        docker exec $PG pg_isready -U tradingbot -d tradingbot | Out-Null
+        if ($LASTEXITCODE -eq 0) { break }
         Start-Sleep 2
     }
     Write-Host "Restoring Postgres dump..."
     docker cp "$stage\postgres.sql.gz" "${PG}:/tmp/dr.sql.gz"
     docker exec $PG sh -c "gunzip -c /tmp/dr.sql.gz | psql -U tradingbot -d tradingbot -q"
-    if (-not $?) { Write-Host "WARN: Postgres restore reported errors (bot still runs without full DB)." -ForegroundColor Yellow }
+    if ($LASTEXITCODE -ne 0) { Write-Host "WARN: Postgres restore reported errors (bot still runs without full DB)." -ForegroundColor Yellow }
 } else {
     Write-Host "No Postgres dump in snapshot - skipping DB restore."
 }
 
 # 3. Rebuild + start everything from current code
 Write-Host "Rebuilding and starting containers..."
-docker compose up --build -d
+docker compose -p $PROJ up --build -d
+if ($LASTEXITCODE -ne 0) { Write-Error "docker compose up failed (exit $LASTEXITCODE)."; exit 1 }
 
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
 Write-Host ""
