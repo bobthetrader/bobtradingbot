@@ -390,6 +390,11 @@ class TradingBot:
         self._monthly_start_balance: float = 0.0
         self._monthly_start_month: int = 0   # calendar month number
         self._monthly_target_hit_notified: bool = False
+        self._last_portfolio_value: float = 0.0   # updated each loop; monthly return is measured on this
+        # Gain-protection throttle: cut position sizing after hitting the monthly
+        # target. Off in paper by default so it doesn't suppress testing/growth.
+        self.enable_monthly_gain_throttle: bool = bool(
+            self.config.get('risk_management', {}).get('enable_monthly_gain_throttle', True))
 
         # â”€â”€ Sharpe + scientific-method optimizer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _opt_cfg = self.config.get('optimizer', {})
@@ -862,7 +867,11 @@ class TradingBot:
           >= 0%  â†' 1.0Ã— (normal)
           <  0%  â†' 1.2Ã— (behind â€” slight aggression, within risk limits)
         """
-        pct = self._monthly_return_pct(current_balance)
+        if not self.enable_monthly_gain_throttle:
+            return 1.0
+        # Measure monthly return on portfolio value (not cash) to match the
+        # notification and dashboard; cash swings with how much is deployed.
+        pct = self._monthly_return_pct(self._last_portfolio_value or current_balance)
         if pct >= 8.0:
             return 0.3
         if pct >= 3.0:
@@ -1354,6 +1363,7 @@ class TradingBot:
                 self.fees_maker_frac = getattr(self, 'fees_maker_frac', 0.0)
                 self.fees_taker_frac = getattr(self, 'fees_taker_frac', 0.0)
             self.enable_sentiment_guard = bool(self.config.get('risk_management', {}).get('enable_sentiment_guard', self.enable_sentiment_guard))
+            self.enable_monthly_gain_throttle = bool(self.config.get('risk_management', {}).get('enable_monthly_gain_throttle', self.enable_monthly_gain_throttle))
             # Signal engine mode reload
             self.enable_mr_signals = bool(self.config.get('risk_management', {}).get('enable_mean_reversion_signals', self.enable_mr_signals))
             self.enable_trend_signals = bool(self.config.get('risk_management', {}).get('enable_trend_breakout_signals', self.enable_trend_signals))
@@ -3425,6 +3435,7 @@ class TradingBot:
                 self.logger.debug("Scalper portfolio calc error: %s", _sce)
         reserve = float(self._estimate_open_buy_reserve_eur() or 0)
         portfolio_value = float(current_balance or 0) + holdings_value + reserve
+        self._last_portfolio_value = portfolio_value   # for the monthly-return calc
 
         if now.month != self._monthly_start_month or self._monthly_start_balance <= 0:
             self._monthly_start_balance = portfolio_value
@@ -3442,8 +3453,8 @@ class TradingBot:
                 _notifier.send(
                     f"ðŸŽ¯ <b>Monthly target reached!</b>\n"
                     f"Return this month: <b>+{_monthly_pct:.2f}%</b>\n"
-                    f"Start: â‚¬{self._monthly_start_balance:.2f} â†' Now: â‚¬{current_balance:.2f}\n"
-                    f"Position sizing reduced to protect gains."
+                    f"Start: â‚¬{self._monthly_start_balance:.2f} â†' Now: â‚¬{portfolio_value:.2f}\n"
+                    f"{'Position sizing reduced to protect gains.' if self.enable_monthly_gain_throttle else 'Position sizing unchanged (gain-protection off).'}"
                 )
             except Exception:
                 pass

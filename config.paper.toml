@@ -32,6 +32,9 @@ min_auto_scale_notional = 0.1
 min_buy_score = 10.0                 # Needs strong RSI or trend signal
 take_profit_percent = 2.0            # 2.0% TP vs 0.8% SL = 2.5:1 ratio
 min_net_sell_profit_pct = 0.5
+# Gain-protection throttle off for paper: don't cut position sizing after hitting
+# the +3%/month target — we want full-size trading to test the wider universe.
+enable_monthly_gain_throttle = false
 fees_maker_percent = 0.25
 fees_taker_percent = 0.40
 sell_fee_buffer_percent = 0.40
