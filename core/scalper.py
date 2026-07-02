@@ -708,9 +708,20 @@ class ScalperEngine:
         if not pos:
             return
 
-        pnl_eur  = (price - pos["entry"]) * pos["qty"]
+        pnl_eur_gross = (price - pos["entry"]) * pos["qty"]
         held_min = (time.time() - pos["ts"]) / 60
         sig      = exit_signals or {}
+
+        # ── Fee accounting ────────────────────────────────────────────────────
+        # Record pnl NET of the round-trip taker fee so the dashboard, the AI
+        # tuner and the backtester all optimise the real post-fee result rather
+        # than a gross price move. Use the fee tier as it stood when this trade
+        # executed (BEFORE this trade's volume is accumulated further below).
+        # taker / round_trip are in percent units (e.g. 0.35 / 0.70).
+        taker, round_trip, _ = _fee_tier(self._volume_usd, str(self._data_dir))
+        fee_eur      = (pos["entry"] + price) * pos["qty"] * (taker / 100.0)
+        pnl_eur      = pnl_eur_gross - fee_eur
+        pnl_pct_net  = pct - round_trip
         trade = {
             # ── Timestamps ───────────────────────────────────────────────────
             "open_ts":        datetime.fromtimestamp(pos["ts"], tz=timezone.utc).isoformat(),
@@ -720,8 +731,12 @@ class ScalperEngine:
             "entry":          round(pos["entry"], 6),
             "exit":           round(price, 6),
             "qty":            pos["qty"],
-            "pnl_eur":        round(pnl_eur, 4),
-            "pnl_pct":        round(pct, 3),
+            "pnl_eur":        round(pnl_eur, 4),          # NET of round-trip fee
+            "pnl_pct":        round(pnl_pct_net, 3),      # NET of round-trip fee
+            "pnl_eur_gross":  round(pnl_eur_gross, 4),    # raw price move (pre-fee)
+            "pnl_pct_gross":  round(pct, 3),              # raw price move % (pre-fee)
+            "fee_eur":        round(fee_eur, 4),          # round-trip taker fee paid
+            "fee_pct":        round(round_trip, 3),       # round-trip fee % at execution
             "reason":         reason,
             "held_min":       round(held_min, 1),
             # ── Entry signals ─────────────────────────────────────────────────
@@ -747,7 +762,9 @@ class ScalperEngine:
             "param_vol_mult":       pos.get("active_vol_mult"),
             "param_score_thresh":   pos.get("active_score_thresh"),
         }
-        # Return allocation + P&L to paper balance (allocation was deducted on buy).
+        # Return allocation + NET P&L to paper balance (allocation was deducted on
+        # buy). pnl_eur is already net of the round-trip fee, so the paper balance
+        # now reflects fees — the whole round-trip is charged once here at close.
         # Use the allocation stored at open so changing _ALLOCATION_EUR mid-flight
         # refunds exactly what was deducted. Positions with no "alloc" key predate
         # this field — they were all opened at the old €10 size, so default to that.
@@ -780,8 +797,9 @@ class ScalperEngine:
         if trigger_ai:
             self._run_ai_review()
         logger.info(
-            "[SCALP] SELL %s @ %.6f  pnl=%.4f EUR (%.3f%%)  reason=%s  held=%.1fm  (paper)",
-            pair, price, pnl_eur, pct, reason, held_min,
+            "[SCALP] SELL %s @ %.6f  pnl=%.4f EUR net (%.3f%% net, %.3f%% gross, fee=%.4f)  "
+            "reason=%s  held=%.1fm  (paper)",
+            pair, price, pnl_eur, pnl_pct_net, pct, fee_eur, reason, held_min,
         )
 
     # ── Helpers ───────────────────────────────────────────────────────────────

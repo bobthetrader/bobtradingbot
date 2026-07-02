@@ -48,6 +48,11 @@ _MAX_FAILED        = 10    # sliding window of remembered failed changes
 _FAILED_EXPIRY_H   = 24    # hours before a failed change can be retried
 _MAX_BLACKLIST     = 5     # never blacklist more than this many pairs at once
 
+# Round-trip taker fee (%) used to net-normalize legacy trades recorded before the
+# fee-accounting fix (they lack a fee_pct field). Newer trades already store NET
+# pnl + their own fee_pct and are left untouched. Keeps win-rate windows honest.
+_DEFAULT_ROUND_TRIP_PCT = 0.70
+
 
 class ScalperAI:
     def __init__(self, data_dir: str = "data"):
@@ -595,6 +600,16 @@ Respond ONLY with valid JSON (no markdown, no extra text):
                             pass
         except Exception:
             pass
+        # Net-normalize legacy (gross) trades so win rates are comparable with new
+        # net trades. New trades carry fee_pct and are already net — skip them.
+        for t in trades:
+            if "fee_pct" in t:
+                continue
+            if t.get("pnl_pct") is not None:
+                t["pnl_pct"] = round(t["pnl_pct"] - _DEFAULT_ROUND_TRIP_PCT, 4)
+            if t.get("pnl_eur") is not None:
+                notional = abs(float(t.get("entry", 0) or 0) * float(t.get("qty", 0) or 0))
+                t["pnl_eur"] = round(t["pnl_eur"] - notional * (_DEFAULT_ROUND_TRIP_PCT / 100.0), 4)
         return trades
 
     def _win_rate(self, trades: list) -> float:

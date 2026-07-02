@@ -52,6 +52,11 @@ MIN_TRADES_GRID = 5     # minimum trades in a grid cell to show a result
 BH_ALPHA        = 0.05  # false discovery rate for Benjamini-Hochberg
 RECS_FILENAME   = "backtest_recommendations.json"
 
+# Round-trip taker fee (%) used to net-normalize legacy trades that were recorded
+# before the fee-accounting fix (they lack a fee_pct field). ~0.35% taker × 2.
+# Newer trades already store NET pnl + their own fee_pct and are left untouched.
+DEFAULT_ROUND_TRIP_PCT = 0.70
+
 # New-signal grid (VWAP Reclaim + Momentum — trades after signal redesign)
 RSI_RECOVERY_GRID = [30, 35, 40, 45, 50]
 VOL_MULT_GRID     = [1.1, 1.25, 1.5, 2.0, 2.5]
@@ -126,11 +131,9 @@ def load_trades(path: Path) -> pd.DataFrame:
         df["entry_hour_utc"] = (df["ts"] - pd.to_timedelta(df.get("held_min", 0), unit="m")).dt.hour
         df["entry_weekday"]  = (df["ts"] - pd.to_timedelta(df.get("held_min", 0), unit="m")).dt.weekday
 
-    df["win"] = df["pnl_eur"] > 0
-
     for col in ["entry_rsi", "entry_vwap_dev", "entry_score", "entry_ob_imbalance",
                 "exit_rsi", "exit_vwap_dev", "exit_ob_imbalance",
-                "pnl_pct", "pnl_eur", "held_min",
+                "pnl_pct", "pnl_eur", "held_min", "entry", "qty", "fee_pct",
                 "entry_volume_ratio", "entry_rsi_delta",
                 "param_rsi_buy", "param_rsi_sell", "param_score_thresh", "param_vwap_thresh",
                 "param_rsi_recovery_thresh", "param_vol_mult",
@@ -138,6 +141,24 @@ def load_trades(path: Path) -> pd.DataFrame:
                 "btc_bear_at_entry"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # ── Fee normalization ──────────────────────────────────────────────────────
+    # Trades recorded before the fee-accounting fix stored GROSS pnl (no fee
+    # deducted); newer trades store NET pnl and carry a fee_pct field. Bring the
+    # legacy rows onto the same net basis so win rates and P&L are comparable
+    # across the whole set (and the recommendations reflect the real post-fee edge).
+    if "fee_pct" not in df.columns:
+        df["fee_pct"] = np.nan
+    legacy = df["fee_pct"].isna()
+    if legacy.any():
+        if "pnl_pct" in df.columns:
+            df.loc[legacy, "pnl_pct"] = df.loc[legacy, "pnl_pct"] - DEFAULT_ROUND_TRIP_PCT
+        if "pnl_eur" in df.columns and "entry" in df.columns and "qty" in df.columns:
+            notional = (df["entry"].abs() * df["qty"].abs())
+            df.loc[legacy, "pnl_eur"] = (df.loc[legacy, "pnl_eur"]
+                                         - notional[legacy] * (DEFAULT_ROUND_TRIP_PCT / 100.0))
+
+    df["win"] = df["pnl_eur"] > 0
 
     return df
 

@@ -173,9 +173,14 @@ if __name__ == "__main__":
     # silently drift to live config.toml settings after the first reload.
     trading_bot = TradingBot(kraken, config, config_path=CONFIG_PATH)
 
-    # Start scalping engine (paper mode only for now, runs concurrently)
+    # Start scalping engine (paper mode only for now, runs concurrently).
+    # Gated by [scalper] enabled (default true). Paused when the strategy is
+    # net-of-fee EV-negative — flip enabled=true in the config to resume.
     _scalper = None
-    if args.paper:
+    _scalper_enabled = bool(config.get('scalper', {}).get('enabled', True))
+    if args.paper and not _scalper_enabled:
+        logger.info("[SCALP] Scalper disabled via [scalper] enabled=false — not starting")
+    elif args.paper:
         try:
             from core.scalper import ScalperEngine
             _ws_feed = getattr(trading_bot, 'ws_feed', None)
