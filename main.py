@@ -196,6 +196,21 @@ if __name__ == "__main__":
         except Exception as _se:
             logger.warning("Scalper failed to start: %s", _se)
 
+    # Signal-excursion observer (measurement only — no positions, balance or fees).
+    # Gated by [scalper] probe_enabled (default false). Runs even when the trader
+    # is paused, to gather excursion data for redesigning exit geometry.
+    _probe = None
+    if args.paper and bool(config.get('scalper', {}).get('probe_enabled', False)):
+        try:
+            from core.scalper_probe import ScalperProbe
+            _ws_feed = getattr(trading_bot, 'ws_feed', None)
+            _data_dir = os.path.join(os.path.dirname(__file__), 'data')
+            _probe = ScalperProbe(kraken_api=kraken, ws_feed=_ws_feed, data_dir=_data_dir)
+            _probe.start()
+            trading_bot._scalper_probe = _probe  # expose for status writes
+        except Exception as _pe:
+            logger.warning("Scalper probe failed to start: %s", _pe)
+
     if args.test:
         logger.info("Running test mode...")
         print("Testing Kraken API connection...")

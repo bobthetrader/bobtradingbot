@@ -98,3 +98,8 @@ short_hard_stop_percent = 1.5
 # is redesigned for larger moves or a lower fee tier. Open positions are held on
 # disk and will resume management if re-enabled.
 enabled = false
+# Signal-excursion observer: takes NO trades — for each scalp signal it records
+# how far price moves over the next 3h (MFE/MAE + full path) to data/
+# scalper_observations.jsonl. Feeds backtest/analyze_observations.py so exit
+# geometry can be designed from real data. Safe to run while enabled=false.
+probe_enabled = true
