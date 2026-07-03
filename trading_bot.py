@@ -1020,17 +1020,23 @@ class TradingBot:
         return 0.5       # stale breakout â†' halve allocation
 
     def _get_dynamic_trade_amount_eur(self, pair, available_eur):
-        """Dynamic sizing: adjusted by ATR volatility and available EUR."""
+        """Dynamic sizing: % of PORTFOLIO value (so buys stay a consistent size as
+        the book fills), adjusted by ATR volatility, then capped at available cash."""
         base_amount = self._get_trade_amount_eur()
-        
-        # 1. Start with percentage-based sizing
-        allocation_pct = float(self.config.get('risk_management', {}).get('allocation_per_trade_percent', 10.0))
-        amount = available_eur * (allocation_pct / 100.0)
 
-        # small-account override: for tiny accounts prefer a fixed trade amount
+        # 1. Percentage-based sizing off portfolio value (cash + open positions), not
+        #    free cash — otherwise each buy shrinks as slots fill. Fall back to
+        #    available cash before the first portfolio snapshot exists.
+        sizing_base = float(getattr(self, '_last_portfolio_value', 0.0) or 0.0) or available_eur
+        allocation_pct = float(self.config.get('risk_management', {}).get('allocation_per_trade_percent', 10.0))
+        amount = sizing_base * (allocation_pct / 100.0)
+
+        # small-account override: for tiny accounts prefer a fixed trade amount.
+        # Gate on portfolio size, not free cash, so a normal account with a partly
+        # deployed book isn't mistaken for a small one and clamped.
         small_account_floor = float(self.config.get('risk_management', {}).get('small_account_fixed_trade_eur', 25.0))
         small_account_threshold = float(self.config.get('risk_management', {}).get('small_account_threshold_eur', 200.0))
-        if available_eur <= small_account_threshold:
+        if sizing_base <= small_account_threshold:
             amount = min(amount, small_account_floor)
         
         # 2. ATR adjustment (Vol Targeting)
