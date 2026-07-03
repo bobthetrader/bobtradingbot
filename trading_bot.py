@@ -2753,7 +2753,12 @@ class TradingBot:
                     # RSI-based Exit: if hourly RSI has recovered above overbought threshold, take profit
                     try:
                         rsi_cached = self._rsi_1h.get(pair)
-                        if rsi_cached is not None and float(rsi_cached) >= float(self.mr_rsi_overbought):
+                        # Only take RSI profit when actually in profit — otherwise a
+                        # momentum buy on an already-overbought pair gets force-sold
+                        # at a fee loss on the very next tick (instant churn).
+                        if (rsi_cached is not None
+                                and float(rsi_cached) >= float(self.mr_rsi_overbought)
+                                and change_percent > 0):
                             return pair, "TAKE_PROFIT_RSI", change_percent
                     except Exception:
                         pass
@@ -4232,7 +4237,7 @@ class TradingBot:
                             # break-even are risk exits and MUST close even at a loss —
                             # otherwise execute_sell_order blocks them and the long parks
                             # indefinitely, hogging a position slot (per its own docstring).
-                            _require_tp = (risk_type == "TAKE_PROFIT")
+                            _require_tp = risk_type in ("TAKE_PROFIT", "TAKE_PROFIT_RSI")
                             self.execute_sell_order(risk_pair, _price,
                                                     require_profit_target=_require_tp, reason=risk_type)
 
