@@ -389,6 +389,7 @@ class TradingBot:
         # â”€â”€ Monthly return target (3-8% per month) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self._monthly_start_balance: float = 0.0
         self._monthly_start_month: int = 0   # calendar month number
+        self._monthly_start_year: int = 0    # calendar year (guards Jan-vs-Jan across years)
         self._monthly_target_hit_notified: bool = False
         self._last_portfolio_value: float = 0.0   # updated each loop; monthly return is measured on this
         # Gain-protection throttle: cut position sizing after hitting the monthly
@@ -2326,6 +2327,11 @@ class TradingBot:
                 "initial_balance_eur":       round(float(getattr(self, "initial_balance_eur", portfolio_value)), 4),
                 "circuit_breaker_triggered": bool(getattr(self, "_circuit_breaker_triggered", False)),
                 "trading_paused_until_ts":   int(getattr(self, "trading_paused_until_ts", 0)),
+                # Persist the monthly-return tracker so it survives restarts instead
+                # of resetting (and re-capturing a transient balance) on every deploy.
+                "monthly_start_balance":     round(float(getattr(self, "_monthly_start_balance", 0.0)), 4),
+                "monthly_start_month":       int(getattr(self, "_monthly_start_month", 0)),
+                "monthly_start_year":        int(getattr(self, "_monthly_start_year", 0)),
             }
             # Persist the live paper EUR cash so it survives restarts
             _is_paper = getattr(self.api_client, 'paper_mode', False)
@@ -2381,6 +2387,16 @@ class TradingBot:
                         self.peak_balance, self.initial_balance_eur,
                         self._circuit_breaker_triggered, self.trading_paused_until_ts or "no",
                     )
+                # Restore the monthly-return tracker if persisted. If absent (first
+                # run of this version), leave it unset — the main loop seeds it from
+                # portfolio_value once prices load, so it never captures a transient
+                # (holdings-not-yet-valued) startup balance.
+                if state.get("monthly_start_balance") and state.get("monthly_start_month"):
+                    self._monthly_start_balance = float(state["monthly_start_balance"])
+                    self._monthly_start_month   = int(state.get("monthly_start_month", 0))
+                    self._monthly_start_year    = int(state.get("monthly_start_year", 0))
+                    self.logger.info("Monthly tracker restored: start=%.2f EUR (%d/%d)",
+                                     self._monthly_start_balance, self._monthly_start_month, self._monthly_start_year)
             else:
                 self.peak_balance        = fallback_balance
                 self.initial_balance_eur = fallback_balance
@@ -3437,9 +3453,13 @@ class TradingBot:
         portfolio_value = float(current_balance or 0) + holdings_value + reserve
         self._last_portfolio_value = portfolio_value   # for the monthly-return calc
 
-        if now.month != self._monthly_start_month or self._monthly_start_balance <= 0:
+        # Seed/reset only when prices are loaded, so portfolio_value reflects
+        # holdings (not a transient cash-only value on the first startup ticks).
+        if ((now.month != self._monthly_start_month or now.year != self._monthly_start_year
+                or self._monthly_start_balance <= 0) and self.pair_prices):
             self._monthly_start_balance = portfolio_value
             self._monthly_start_month = now.month
+            self._monthly_start_year = now.year
             self._monthly_target_hit_notified = False
             self.logger.info(
                 f"Monthly tracker reset: start={portfolio_value:.2f} EUR portfolio (target +3-8%)"
