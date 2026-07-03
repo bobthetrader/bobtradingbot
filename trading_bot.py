@@ -4664,6 +4664,13 @@ class TradingBot:
         self.last_global_trade_at = now_ts
         self._save_cooldown_state()
 
+        # Report P&L NET of the round-trip fee so Telegram/journal match the paper
+        # balance. est_profit is the gross price move; the paper fill already
+        # deducts ~0.26%/leg (kraken_interface), i.e. ~0.52% round-trip of notional.
+        notional = volume * price
+        if pnl_eur and ttype in ('SELL', 'SHORT_CLOSE'):
+            pnl_eur = round(pnl_eur - notional * 0.0052, 4)
+
         # Journal (CSV + JSONL + history DB)
         self._journal_trade(
             ttype, pair, volume, price, pnl_eur,
@@ -4672,7 +4679,6 @@ class TradingBot:
         )
 
         # Console summary
-        notional  = volume * price
         pnl_str   = f" | P&L: {pnl_eur:+.2f} EUR" if pnl_eur != 0 else ""
         print(f"\n[{ttype}] {volume:.6f} {pair} (~{notional:.2f} EUR){pnl_str} - Trade #{self.trade_count}")
         self.logger.info("%s FINALISED: %s %.6f @ %.4f EUR%s (trade #%d)",

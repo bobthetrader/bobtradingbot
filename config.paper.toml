@@ -16,11 +16,13 @@ allocation_per_trade_percent = 12.0
 # floor qualify (maker fills need depth); core pairs + held positions are always
 # kept. Quality gates + min_buy_score still filter every entry. Paper test — watch
 # the long win rate; set dynamic_pairs = false to revert to the 7 core pairs.
-# €250k/day floor => ~27 liquid EUR pairs (a ~4x expansion). Lower the floor for
-# more breadth (€100k ~= 42 pairs) at the cost of thinner/meme coins.
+# Pulled back 2026-07-03: €750k/day floor => only the ~10 most-liquid EUR pairs
+# qualify (BTC/ETH/SOL/XRP/ADA/HYPE/LTC/VVV/M/ZEC). Total universe ~12 (7 core +
+# most-liquid additions). Dropped the whippy €250k-band mid-caps (WLD/TAO/SUI…)
+# that were churning net-negative on fees. Lower the floor again to re-widen.
 dynamic_pairs = true
-dynamic_pairs_min_vol_eur = 250000
-dynamic_pairs_max = 30
+dynamic_pairs_min_vol_eur = 750000
+dynamic_pairs_max = 10
 dynamic_pairs_refresh_min = 15
 
 [risk_management]
