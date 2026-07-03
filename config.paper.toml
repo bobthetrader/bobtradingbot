@@ -9,7 +9,7 @@ base_currency = "EUR"
 auto_select_pair = true
 loop_interval_seconds = 60
 trade_pairs = [ "XXBTZEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR", "ADAEUR", "DOTEUR", "LINKEUR",]
-allocation_per_trade_percent = 5.0
+allocation_per_trade_percent = 12.0
 
 # Dynamic universe (added 2026-07-02): widen longs beyond the 7 core pairs to any
 # liquid EUR pair, refreshed from Kraken every 15 min. Only pairs above the volume
@@ -26,7 +26,7 @@ dynamic_pairs_refresh_min = 15
 [risk_management]
 max_drawdown_percent = 25.0
 stop_loss_percent = 1.5              # Wider SL — volatile market needs more room
-allocation_per_trade_percent = 5.0  # 5% = ~5 EUR per trade, 4 positions max
+allocation_per_trade_percent = 12.0 # ~12% of free cash/trade -> ~EUR50-60 buys (was 5% = tiny ~EUR15-25 buys leaving most of the balance idle)
 min_trade_eur = 4.0
 min_auto_scale_notional = 0.1
 min_buy_score = 10.0                 # Needs strong RSI or trend signal
@@ -93,7 +93,7 @@ bot_token = ""
 chat_id = ""
 
 [bot_settings.trade_amounts]
-trade_amount_eur = 25.0
+trade_amount_eur = 35.0   # base; hard cap on any single buy = 2x this = EUR70
 initial_balance = 500.0
 
 [shorting]
