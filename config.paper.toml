@@ -63,9 +63,16 @@ score_weight = 0.5
 signal_refresh_interval_seconds = 300   # 5 min — let signals develop
 regime_cache_ttl_seconds = 300
 
+# Trend/momentum confirmation for BUYs (re-enabled 2026-07-03). The entry trigger
+# is RSI mean-reversion (counter-trend), so without these the bot bought oversold
+# dips inside downtrends that kept falling (fee churn). Both are lenient blockers:
+#  - EMA crossover: blocks a BUY only when EMA9 < EMA21 on 1h (confirmed bearish).
+#  - MTF MACD: blocks only when BOTH 1h hist < -0.05% AND 15m hist < 0 (both bearish);
+#    passes during consolidation / on missing data. Regime + volume filters stay OFF
+#    to keep enough trade flow to judge the quality change.
 [technical]
-enable_ema_crossover_filter = false
-enable_mtf_macd_filter = false
+enable_ema_crossover_filter = true
+enable_mtf_macd_filter = true
 ema_fast_period = 9
 ema_slow_period = 21
 
