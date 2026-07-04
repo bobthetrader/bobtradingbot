@@ -28,7 +28,12 @@ dynamic_pairs_refresh_min = 15
 [risk_management]
 max_drawdown_percent = 25.0
 stop_loss_percent = 1.5              # Wider SL — volatile market needs more room
-allocation_per_trade_percent = 12.0 # ~12% of free cash/trade -> ~EUR50-60 buys (was 5% = tiny ~EUR15-25 buys leaving most of the balance idle)
+allocation_per_trade_percent = 12.0 # ~12% of portfolio/trade -> ~EUR58 target
+# Floor so the 7 stacked risk multipliers (Kelly ~0.5x, ATR vol-targeting,
+# correlation, regime) can't shrink every buy into the EUR20s (added 2026-07-06).
+# Buys now land ~EUR50-70 (floor 50, cap = 2x trade_amount_eur = 70), still
+# capped by available cash. Set 0 to restore pure multiplier-based sizing.
+min_target_trade_eur = 50.0
 min_trade_eur = 4.0
 min_auto_scale_notional = 0.1
 min_buy_score = 10.0                 # Needs strong RSI or trend signal

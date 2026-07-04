@@ -1080,6 +1080,18 @@ class TradingBot:
         # 6. Monthly return multiplier — protect gains, slight aggression when behind
         amount *= self._monthly_size_multiplier(available_eur)
 
+        # Floor near the target size. The 7 stacked risk multipliers above (Kelly
+        # ~0.5x by default, ATR vol-targeting, correlation, regime) compound and
+        # were shrinking every buy into the EUR20s despite 12% of a ~EUR490
+        # portfolio being ~EUR58. This floor lets them size UP toward the cap but
+        # not collapse the size; still capped by available cash below. Only for
+        # normal accounts (small accounts keep the fixed small-account amount).
+        # NOTE: this deliberately overrides the DOWNSIDE of Kelly/ATR scaling —
+        # intended for paper testing where we want a consistent EUR50-60 buy.
+        min_target = float(self.config.get('risk_management', {}).get('min_target_trade_eur', 0.0))
+        if min_target > 0 and sizing_base > small_account_threshold:
+            amount = max(amount, min_target)
+
         # Cap at configured max base amount and available funds
         return min(base_amount * 2.0, amount, available_eur * 0.95)
 
