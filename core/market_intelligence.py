@@ -76,7 +76,14 @@ logger = logging.getLogger(__name__)
 _INTEL_LOG = os.path.join(os.path.dirname(__file__), "..", "data", "intelligence_log.jsonl")
 _INTEL_LOG_KEEP = 200   # max entries to retain
 _intel_call_count = 0   # incremented each panel run; expensive models skip odd calls
-_sonar_call_count = 0   # sonar has its own counter — runs every 6th call (≈hourly)
+_sonar_call_count = 0   # sonar has its own counter
+
+# Cost control — how often (in panel runs) the pricier models fire. Env-tunable
+# so cadence can be changed without a code edit; 0 disables that model entirely.
+# Effective interval = this value × [intelligence] refresh_seconds. At the default
+# 30-min refresh: expensive=2 → every 60 min, sonar=12 → every 6 h (0 → sonar off).
+_EXPENSIVE_EVERY = int(os.getenv("INTEL_EXPENSIVE_EVERY", "2"))
+_SONAR_EVERY     = int(os.getenv("INTEL_SONAR_EVERY", "12"))
 
 
 def _load_recent_intel(n: int = 5) -> list:
@@ -517,9 +524,10 @@ def get_market_intelligence(pairs: list, bot_context: dict = None) -> dict:
     # Launch models in parallel — tiered cadence to control cost
     global _intel_call_count, _sonar_call_count
     _intel_call_count += 1
-    run_expensive = (_intel_call_count % 2 == 1)   # every 20 min
     _sonar_call_count += 1
-    run_sonar     = (_sonar_call_count % 6 == 1)   # every 60 min
+    # (count-1) % N == 0 → fires on the 1st run then every Nth; N=0 disables.
+    run_expensive = (_EXPENSIVE_EVERY > 0 and (_intel_call_count - 1) % _EXPENSIVE_EVERY == 0)
+    run_sonar     = (_SONAR_EVERY > 0     and (_sonar_call_count - 1) % _SONAR_EVERY == 0)
     logger.info("AI panel call #%d — expensive: %s  sonar: %s",
                 _intel_call_count, run_expensive, run_sonar)
 

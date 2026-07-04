@@ -56,7 +56,13 @@ max_open_positions = 6               # was 3 — 3 slots stayed full of parked l
 time_stop_hours = 24                 # was default 72 — recycle flat/dead-money longs faster so slots free up
 
 [intelligence]
-refresh_seconds = 600
+# AI panel cadence. Raised 600->1800 (2026-07-04) to cut OpenRouter cost ~3x:
+# the panel is slow-moving macro sentiment, 10-min refresh was wasteful on a
+# <2h-hold bot and cost ~$1/day (≈ all the profit). Because sonar/hermes fire
+# every Nth panel run, this stretches ALL of them. Per-model cadence is further
+# tuned by env INTEL_EXPENSIVE_EVERY (default 2) and INTEL_SONAR_EVERY (default
+# 12; set 0 to disable the pricey Perplexity sonar web-search model entirely).
+refresh_seconds = 1800
 score_weight = 0.5
 
 [execution]
