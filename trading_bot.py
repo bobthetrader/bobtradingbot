@@ -351,6 +351,9 @@ class TradingBot:
         self._sharpe_insider_scores: dict = {}
         self._lunarcrush_combined: float = 0.0   # -3..+3 from lunarcrush
         self._onchain_combined: float = 0.0       # -3..+3 from on-chain data
+        # Per-pair Ichimoku snapshot stashed by the BUY gate so the entry-feature
+        # snapshot (_entry_signal_snapshot) can record it without a second API call.
+        self._entry_ichi_cache: dict = {}
         self._last_balance_eur: float = 0.0
         # Lock protecting all _intelligence_* and _sharpe_* fields so the
         # background intel-refresh thread doesn't race with main-loop reads.
@@ -3645,6 +3648,16 @@ class TradingBot:
                 _ichi = _ichi_get_signal(pair, self.api_client)
                 _vs_cloud = _ichi.get("price_vs_cloud", "unknown")
                 _trend    = _ichi.get("trend", "neutral")
+                # Stash for the entry-feature snapshot (avoids a second API call in
+                # execute_buy_order). Purely for logging/analysis — no logic impact.
+                try:
+                    self._entry_ichi_cache[pair] = {
+                        "vs_cloud": _vs_cloud,
+                        "trend": _trend,
+                        "score_boost": float(_ichi.get("score_boost", 0) or 0),
+                    }
+                except Exception:
+                    pass
                 # Only hard-block when price is confirmed below the cloud.
                 # Inside + neutral = consolidation, still tradeable on strong signals.
                 if _vs_cloud == "below":
@@ -4860,6 +4873,64 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"Error writing JSON trade log: {e}")
 
+    def _entry_signal_snapshot(self, pair: str) -> dict:
+        """Capture the signal/feature context that triggered an entry, for
+        offline backtest / walk-forward analysis.
+
+        Every value here already lives in instance state at entry time; this
+        just records it so a closed trade can be reasoned about after the fact
+        (which signal combos, sentiment, regime, time-of-day predict wins).
+        Purely additive to the trade journal ``extra`` field — never influences
+        trade logic and is fully guarded so a snapshot failure can't block a trade.
+        """
+        snap = {}
+        try:
+            _now = datetime.utcnow()
+            _prof = {}
+            try:
+                _prof = self._pair_profile(pair) or {}
+            except Exception:
+                _prof = {}
+            _ichi = {}
+            try:
+                _ichi = (getattr(self, '_entry_ichi_cache', {}) or {}).get(pair, {}) or {}
+            except Exception:
+                _ichi = {}
+
+            def _num(v):
+                try:
+                    return None if v is None else round(float(v), 6)
+                except Exception:
+                    return None
+
+            snap = {
+                'score':               _num(self.pair_scores.get(pair)),
+                'signal':              self.pair_signals.get(pair),
+                'rsi_1h':              _num(self._rsi_1h.get(pair)),
+                'sma200_1h':           _num(self._sma200_1h.get(pair)),
+                'ema_bullish':         self._ema_bullish.get(pair),
+                'macd_1h_hist':        _num(self._macd_1h_hist.get(pair)),
+                'macd_15m_hist':       _num(self._macd_15m_hist.get(pair)),
+                'macd_15m_hist_prev':  _num(self._macd_15m_hist_prev.get(pair)),
+                'intelligence_score':  _num(getattr(self, '_intelligence_score', 0.0)),
+                'lunarcrush':          _num(getattr(self, '_lunarcrush_combined', 0.0)),
+                'onchain':             _num(getattr(self, '_onchain_combined', 0.0)),
+                'regime_risk_on':      bool(self._regime_cache.get('risk_on', True)),
+                'ichi_vs_cloud':       _ichi.get('vs_cloud'),
+                'ichi_trend':          _ichi.get('trend'),
+                'ichi_score_boost':    _num(_ichi.get('score_boost')),
+                'strategy':            _prof.get('strategy'),
+                'profile_min_score':   _num(_prof.get('min_score', self.min_buy_score)),
+                'hour_utc':            _now.hour,
+                'dow_utc':             _now.weekday(),   # 0=Mon .. 6=Sun
+            }
+        except Exception as exc:
+            try:
+                self.logger.debug("entry snapshot failed for %s: %s", pair, exc)
+            except Exception:
+                pass
+        return snap
+
     def execute_buy_order(self, pair, price):
         """Place a post-only (maker) spot BUY order for *pair* at *price*.
 
@@ -4998,9 +5069,13 @@ class TradingBot:
                     'entry_ts': int(now_ts),
                 })
                 self.logger.info("BUY ORDER SUCCESS: %s", result)
+                _buy_extra = {'fill_price': fill_price, 'expected_price': price}
+                try:
+                    _buy_extra['features'] = self._entry_signal_snapshot(pair)
+                except Exception:
+                    pass
                 self._finalise_trade('BUY', pair, volume, fill_price or price, 0.0,
-                                     'BUY_EXECUTED',
-                                     extra={'fill_price': fill_price, 'expected_price': price})
+                                     'BUY_EXECUTED', extra=_buy_extra)
             else:
                 self.logger.error(f"BUY ORDER FAILED for {pair}")
         except Exception as e:
@@ -5040,6 +5115,9 @@ class TradingBot:
             avg_entry = self.purchase_prices.get(pair, 0.0)
             est_profit_pct = self._profit_percent_from_entry(pair, price)
             est_profit_eur = (price - avg_entry) * volume if avg_entry > 0 else 0.0
+            # Capture entry timing NOW, before the state clear below nulls it, so
+            # the exit row can carry hold duration for trade reconstruction / WFA.
+            _entry_ts_snap = self.entry_timestamps.get(pair)
 
             self.logger.info(f"Placing SELL order (MAKER/POST-ONLY): {volume:.6f} {pair} at {price:.2f} EUR")
             prev_qty = self.holdings.get(pair, 0.0)
@@ -5093,9 +5171,19 @@ class TradingBot:
                 self.logger.info("SELL PNL %s: %.2f EUR (%.2f%%)",
                                  pair, est_profit_eur,
                                  est_profit_pct if est_profit_pct is not None else 0)
+                _sell_extra = {'fill_price': fill_price, 'expected_price': price}
+                try:
+                    _sell_extra['entry_price'] = round(float(avg_entry), 6) if avg_entry else None
+                    _sell_extra['pnl_pct'] = round(float(est_profit_pct), 4) if est_profit_pct is not None else None
+                    if _entry_ts_snap:
+                        _sell_extra['entry_ts'] = int(_entry_ts_snap)
+                        _sell_extra['hold_minutes'] = round((time.time() - float(_entry_ts_snap)) / 60.0, 2)
+                    _sell_extra['exit_hour_utc'] = datetime.utcnow().hour
+                except Exception:
+                    pass
                 self._finalise_trade('SELL', pair, volume, fill_price or price,
                                      est_profit_eur, reason or 'SELL_EXECUTED',
-                                     extra={'fill_price': fill_price, 'expected_price': price})
+                                     extra=_sell_extra)
             else:
                 self.logger.error(f"SELL ORDER FAILED for {pair}")
         except Exception as e:
