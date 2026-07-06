@@ -178,13 +178,21 @@ def _refresh_bias(cfg: dict) -> Dict[str, dict]:
     return out
 
 
-def get_bias(coin: str, cfg: dict = None) -> dict:
-    """Per-coin smart-trader bias; TTL-cached; neutral on failure/unmapped."""
+def get_bias(coin: str, cfg: dict = None, refresh: bool = False) -> dict:
+    """Per-coin smart-trader bias; TTL-cached; neutral on failure/unmapped.
+
+    refresh=False (the buy-gate path) NEVER fetches: cached bias — stale is
+    fine — or neutral before the first refresh. Only the background warmer
+    passes refresh=True (33MB leaderboard + 20 position polls must never run
+    inside the trading loop).
+    """
     neutral = {"bias": 0.0, "n_long": 0, "n_short": 0}
     if not coin:
         return neutral
     cfg = cfg or {}
     with _lock:
+        if not refresh:
+            return _pos_cache["bias"].get(coin, neutral)
         fresh = time.time() - _pos_cache["ts"] < _POS_TTL
         if fresh:
             return _pos_cache["bias"].get(coin, neutral)

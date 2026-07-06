@@ -3412,7 +3412,16 @@ class TradingBot:
                     while True:
                         try:
                             from core import smart_money as _smart
-                            _smart.evaluate("XXBTZEUR", self.config.get('smart_money', {}))
+                            _sm_cfg = self.config.get('smart_money', {})
+                            # refresh=True = the ONLY place the slow, paced
+                            # network sweeps run (gate calls are cache-only)
+                            _smart.evaluate("XXBTZEUR", _sm_cfg, refresh=True)
+                            # then score every core pair from the warm caches
+                            # (instant) so the dashboard card shows the full
+                            # pair table right away, not one pair at a time
+                            for _sp in ("XETHZEUR", "SOLEUR", "XXRPZEUR",
+                                        "ADAEUR", "DOTEUR", "LINKEUR"):
+                                _smart.evaluate(_sp, _sm_cfg)
                         except Exception as _sm_exc:
                             self.logger.debug("smart-money refresh failed: %s", _sm_exc)
                         time.sleep(1200)

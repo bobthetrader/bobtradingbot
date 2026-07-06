@@ -231,9 +231,17 @@ def _daily_score() -> Optional[float]:
         return None
 
 
-def get_whale_score(cfg: dict = None) -> float:
-    """Blended whale score in [-5, +5]; TTL-cached; 0.0 on any total failure."""
+def get_whale_score(cfg: dict = None, refresh: bool = False) -> float:
+    """Blended whale score in [-5, +5]; TTL-cached; 0.0 on any total failure.
+
+    refresh=False (the buy-gate path) NEVER touches the network: it returns
+    the cached score — even a stale one — or 0.0 before the first sweep.
+    Only the background warmer thread passes refresh=True; the paced sweep
+    (45s-minutes with 429 backoff) must never run inside the trading loop.
+    """
     with _lock:
+        if not refresh:
+            return _cache["score"] if _cache["ts"] > 0 else 0.0
         if time.time() - _cache["ts"] < _CACHE_TTL:
             return _cache["score"]
     try:

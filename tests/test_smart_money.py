@@ -108,6 +108,38 @@ def test_pair_mapping():
     print("test_pair_mapping OK")
 
 
+def test_gate_path_never_fetches():
+    """refresh=False (the buy-gate path) must return instantly from cache
+    without any network call — even when caches are cold."""
+    import core.whale_flows as wf
+    import core.hyperliquid_smart as hl
+
+    # Poison the network layer: any attempted fetch would blow up loudly
+    def _boom(*a, **k):
+        raise AssertionError("gate path attempted a network call")
+    orig_rpc, orig_req = wf._alchemy_rpc, hl.requests.post
+    wf._alchemy_rpc = _boom
+    try:
+        # cold whale cache -> 0.0, no fetch
+        wf._cache["ts"] = 0.0
+        wf._cache["score"] = 0.0
+        assert wf.get_whale_score({}, refresh=False) == 0.0
+        # warm-but-stale cache -> stale value served, still no fetch
+        wf._cache["ts"] = 1.0          # ancient
+        wf._cache["score"] = -1.75
+        assert wf.get_whale_score({}, refresh=False) == -1.75
+        # HL cold cache -> neutral, no fetch (refresh path never reached)
+        hl._pos_cache["bias"] = {}
+        hl._pos_cache["ts"] = 0.0
+        r = hl.get_bias("BTC", {}, refresh=False)
+        assert r == {"bias": 0.0, "n_long": 0, "n_short": 0}, r
+    finally:
+        wf._alchemy_rpc = orig_rpc
+        wf._cache["ts"] = 0.0
+        wf._cache["score"] = 0.0
+    print("test_gate_path_never_fetches OK")
+
+
 def test_decide():
     from core.smart_money import decide
 
@@ -177,4 +209,5 @@ if __name__ == "__main__":
     test_pair_mapping()
     test_decide()
     test_evaluate_never_raises()
+    test_gate_path_never_fetches()
     print("ALL OK")

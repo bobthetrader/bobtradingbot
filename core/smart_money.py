@@ -57,20 +57,25 @@ def decide(whale_score: float, hl_bias: float, cfg: dict
     return "neutral", "", 1.0, 0.0
 
 
-def evaluate(pair: str, cfg: dict = None) -> dict:
-    """Fetch both component scores for `pair` and decide. Never raises."""
+def evaluate(pair: str, cfg: dict = None, refresh: bool = False) -> dict:
+    """Score `pair` and decide. Never raises.
+
+    refresh=False (default — the buy-gate path) reads cached component scores
+    only and NEVER touches the network. Only the background warmer thread
+    passes refresh=True to trigger the actual (slow, paced) data refreshes.
+    """
     cfg = cfg or {}
     whale_score, hl = 0.0, {"bias": 0.0, "n_long": 0, "n_short": 0}
     try:
         from core.whale_flows import get_whale_score
-        whale_score = float(get_whale_score(cfg))
+        whale_score = float(get_whale_score(cfg, refresh=refresh))
     except Exception as exc:
         logger.debug("whale score unavailable: %s", exc)
     try:
         from core.hyperliquid_smart import get_bias, coin_for_pair
         coin = coin_for_pair(pair)
         if coin:
-            hl = get_bias(coin, cfg)
+            hl = get_bias(coin, cfg, refresh=refresh)
     except Exception as exc:
         logger.debug("HL bias unavailable: %s", exc)
 
