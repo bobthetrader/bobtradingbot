@@ -77,6 +77,24 @@ score_weight = 0.5
 # every entry taken at panel <= -1.5 lost (DOT/LINK bought at -2.95). 0 = off.
 buy_veto_score = -1.5
 
+[smart_money]
+# Whale exchange flows (Alchemy wallet watch + CoinMetrics daily) + Hyperliquid
+# top-trader positioning. Veto blocks buys; boost = size x mult + lower entry
+# bar. Missing data always neutral. Journal fields: whale_score / hl_bias /
+# smart_action -> re-tune after ~2 weeks of entries.
+enabled = true
+whale_veto_score = -2.5     # whale_score <= this -> block ALL buys
+whale_boost_score = 2.5     # whale_score >= this -> boost
+hl_veto_score = -2.5        # hl_bias[pair] <= this -> block buys on that pair
+hl_boost_score = 2.5        # hl_bias[pair] >= this -> boost
+boost_size_mult = 1.3       # position size x1.3 (still inside EUR70/cash caps)
+boost_min_score_delta = -2.0 # entry bar lowered while boosted
+min_whale_eth = 250.0       # ignore transfers below this (ETH)
+min_whale_stable_usd = 500000.0
+hl_roster_size = 20         # top traders followed
+hl_min_traders = 3          # min positioned traders before a coin bias counts
+hl_min_volume_usd = 50000000.0  # 30d volume floor for roster eligibility
+
 [execution]
 signal_refresh_interval_seconds = 300   # 5 min — let signals develop
 regime_cache_ttl_seconds = 300

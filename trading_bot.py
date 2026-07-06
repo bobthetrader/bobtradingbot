@@ -1092,6 +1092,10 @@ class TradingBot:
         if min_target > 0 and sizing_base > small_account_threshold:
             amount = max(amount, min_target)
 
+        # Smart-money boost: scale up when whales/top traders are bullish.
+        # Set by _execute_buy_gate this loop; stays inside the final cap below.
+        amount *= float(getattr(self, '_smart_boost', {}).get(pair, 1.0))
+
         # Cap at configured max base amount and available funds
         return min(base_amount * 2.0, amount, available_eur * 0.95)
 
@@ -3658,6 +3662,27 @@ class TradingBot:
                     pair, float(_rsi1h), _rsi_ceiling)
                 return
 
+        # Smart-money layer: whale exchange flows (market) + Hyperliquid
+        # top-trader bias (per-coin). Veto blocks; boost lowers the entry bar
+        # here and scales size in _get_dynamic_trade_amount_eur. Missing data
+        # is neutral. See docs/superpowers/specs/2026-07-06-smart-money-layer-design.md
+        _smart_mult, _smart_delta = 1.0, 0.0
+        try:
+            from core import smart_money as _smart
+            _sm = _smart.evaluate(pair, self.config.get('smart_money', {}))
+            if _sm["action"] == "veto":
+                self.logger.info("BUY skipped for %s: %s", pair, _sm["reason"])
+                return
+            if _sm["action"] == "boost":
+                _smart_mult, _smart_delta = _sm["size_mult"], _sm["min_score_delta"]
+                self.logger.info("BUY boosted for %s: %s (size x%.2f, min %+0.1f)",
+                                 pair, _sm["reason"], _smart_mult, _smart_delta)
+        except Exception as _sme:
+            self.logger.debug("smart_money evaluate failed for %s: %s", pair, _sme)
+        if not hasattr(self, '_smart_boost'):
+            self._smart_boost = {}
+        self._smart_boost[pair] = _smart_mult
+
         # Sentiment adjustments: LunarCrush and on-chain scores shift effective min
         # Positive combined score = bullish sentiment = lower the bar to enter
         # Negative combined score = bearish sentiment = raise the bar
@@ -3666,7 +3691,7 @@ class TradingBot:
 
         # Use pair-specific min_score if defined, otherwise global setting
         _pair_min_score = self._pair_profile(pair).get('min_score', self.min_buy_score)
-        _effective_min  = _pair_min_score + _intel_adj + _lunar_adj + _onchain_adj
+        _effective_min  = _pair_min_score + _intel_adj + _lunar_adj + _onchain_adj + _smart_delta
         if score < _effective_min:
             self.logger.info(
                 "BUY skipped for %s: score %.2f < effective_min %.2f "
@@ -4364,6 +4389,11 @@ class TradingBot:
 
                     # â”€â”€ Dashboard status.json â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                     try:
+                        try:
+                            from core import smart_money as _smart
+                            _smart_status = _smart.status_snapshot()
+                        except Exception:
+                            _smart_status = {}
                         _status = {
                             "ts":             datetime.utcnow().isoformat(),
                             "loop":           iteration,
@@ -4380,6 +4410,7 @@ class TradingBot:
                             "best_signal":    str(best_signal) if best_signal else None,
                             "regime":         str(regime_state),
                             "intelligence_score":  round(float(self._intelligence_score), 2),
+                            "smart_money":         _smart_status,
                             "model_scores":        {k: round(float(v), 2) for k, v in self._intelligence_model_scores.items()},
                             "model_outputs":       {k: str(v)[:120] for k, v in self._intelligence_model_outputs.items()},
                             "sharpe_funding":      self._sharpe_funding_scores,
@@ -4990,6 +5021,19 @@ class TradingBot:
                 'hour_utc':            _now.hour,
                 'dow_utc':             _now.weekday(),   # 0=Mon .. 6=Sun
             }
+
+            # Smart-money layer (whale flows + HL trader bias) — journaled for
+            # the 2-week evidence review of veto/boost thresholds
+            try:
+                from core import smart_money as _smart
+                _smf = _smart.last_for(pair)
+                snap["whale_score"] = _smf.get("whale_score")
+                snap["hl_bias"] = _smf.get("hl_bias")
+                snap["hl_n_long"] = _smf.get("hl_n_long")
+                snap["hl_n_short"] = _smf.get("hl_n_short")
+                snap["smart_action"] = _smf.get("action")
+            except Exception:
+                pass
         except Exception as exc:
             try:
                 self.logger.debug("entry snapshot failed for %s: %s", pair, exc)
