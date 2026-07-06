@@ -324,6 +324,9 @@ def fetch_all_onchain() -> dict:
         signals.append(eth["gas_signal"])
     if btc_flows.get("flow_signal") is not None:
         signals.append(btc_flows["flow_signal"])
+    # eth_flows was fetched but never scored — include it (bug fix 2026-07-06)
+    if eth_flows.get("flow_signal") is not None:
+        signals.append(eth_flows["flow_signal"])
 
     combined = round(sum(signals) / len(signals), 2) if signals else 0.0
 
