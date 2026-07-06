@@ -229,14 +229,19 @@ def _build_market_context(pairs: list, bot_context: dict, sharpe_data: dict = No
         vals = [f"{d.get('value')}/100 ({d.get('value_classification')})" for d in fg["data"][:3]]
         lines.append(f"Fear & Greed (today→2d ago): {' | '.join(vals)}")
 
-    # CoinGecko global
-    cg = _cached_get(_COINGECKO_URL)
-    if cg and cg.get("data"):
-        d = cg["data"]
-        btc_dom = round(d.get("market_cap_percentage", {}).get("btc", 0), 1)
-        chg_24h = round(d.get("market_cap_change_percentage_24h_usd", 0), 2)
-        active  = d.get("active_cryptocurrencies", "?")
-        lines.append(f"BTC dominance: {btc_dom}% | Global 24h change: {chg_24h}% | Active coins: {active}")
+    # Global metrics — provider failover (CoinGecko -> CoinMarketCap) with
+    # latency/cost scoreboard; see core/api_providers.py.
+    try:
+        from core import api_providers as _prov
+        gm = _prov.get_global_metrics()
+    except Exception:
+        gm = None
+    if gm:
+        lines.append(
+            f"BTC dominance: {gm['btc_dominance_pct']}% | "
+            f"Global 24h change: {gm['mcap_change_24h_pct']}% | "
+            f"Active coins: {gm['active_cryptos']}"
+        )
 
     # News headlines
     news = _cached_get(_NEWS_URL)

@@ -158,16 +158,16 @@ def get_fear_greed() -> Optional[int]:
 
 
 def get_coin_price_change(cg_id: str) -> dict:
-    """24h price change from CoinGecko simple/price — ~100 bytes vs 30KB for /coins/{id}."""
-    data = _cached_get(
-        "https://api.coingecko.com/api/v3/simple/price",
-        params={"ids": cg_id, "vs_currencies": "eur",
-                "include_24hr_change": "true"},
-    )
-    if not data or cg_id not in data:
+    """24h price change via the provider router (CoinGecko -> CMC failover)."""
+    try:
+        from core import api_providers as _prov
+        changes = _prov.get_24h_changes([cg_id], vs="eur")
+    except Exception:
+        changes = {}
+    if cg_id not in changes:
         return {}
     return {
-        "change_24h": float(data[cg_id].get("eur_24h_change") or 0),
+        "change_24h": changes[cg_id],
         "change_7d":  0.0,
     }
 
@@ -227,15 +227,13 @@ def get_coin_sentiment(pair: str) -> dict:
 
 
 def _batch_price_changes(cg_ids: list) -> dict:
-    """Fetch 24h price changes for all coins in ONE request (~200 bytes vs 30KB×N)."""
-    ids_str = ",".join(set(cg_ids))
-    data = _cached_get(
-        "https://api.coingecko.com/api/v3/simple/price",
-        params={"ids": ids_str, "vs_currencies": "eur", "include_24hr_change": "true"},
-    )
-    if not data:
+    """Fetch 24h price changes for all coins in ONE request via the provider
+    router (CoinGecko -> CMC failover, latency scoreboard)."""
+    try:
+        from core import api_providers as _prov
+        return _prov.get_24h_changes(list(cg_ids), vs="eur")
+    except Exception:
         return {}
-    return {cg_id: float(data.get(cg_id, {}).get("eur_24h_change") or 0) for cg_id in cg_ids}
 
 
 def fetch_all_sentiment(pairs: list) -> dict:
