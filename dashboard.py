@@ -214,6 +214,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       </div>
 
       <div class="card">
+        <h2>Smart Money &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Whale flows · Hyperliquid top-20 traders</span></h2>
+        {smart_money_html}
+      </div>
+
+      <div class="card">
         <h2>New Listings Monitor &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">15 min wait → buy if +0.8% → smart exit</span></h2>
         {listings_html}
       </div>
@@ -468,6 +473,49 @@ def _build_page() -> str:
         )
     else:
         onchain_html = '<div class="grey" style="padding:8px 0">On-chain data loading — updates every 5 loops.</div>'
+
+    # ── Smart money (whale flows + Hyperliquid top-trader bias) ───────────────
+    sm = status.get("smart_money", {}) or {}
+    if sm:
+        # whale score is market-wide (identical across pairs) — read any entry
+        _sm_any = next(iter(sm.values()), {}) or {}
+        _whale  = float(_sm_any.get("whale_score") or 0.0)
+        _w_col  = ("#00c851" if _whale >= 2.5
+                   else "#ff4444" if _whale <= -2.5 else "#ffbb33")
+
+        def _sm_badge(action):
+            if action == "boost":
+                return '<span style="background:#12261a;color:#00c851;font-size:10px;padding:2px 6px;border-radius:6px;font-weight:bold">BOOST</span>'
+            if action == "veto":
+                return '<span style="background:#2d1417;color:#ff4444;font-size:10px;padding:2px 6px;border-radius:6px;font-weight:bold">VETO</span>'
+            return '<span class="grey" style="font-size:11px">neutral</span>'
+
+        _sm_rows = ""
+        for _p, _v in sorted(sm.items(), key=lambda kv: float(kv[1].get("hl_bias") or 0), reverse=True):
+            _b = float(_v.get("hl_bias") or 0.0)
+            _b_col = ("#00c851" if _b >= 2.5
+                      else "#ff4444" if _b <= -2.5
+                      else "#ffbb33" if abs(_b) >= 1.0 else "#8b949e")
+            _sm_rows += (
+                f'<tr><td>{_p}</td>'
+                f'<td style="color:{_b_col};font-weight:bold">{_b:+.2f}</td>'
+                f'<td>{_sm_badge(_v.get("action"))}</td></tr>'
+            )
+        smart_money_html = (
+            f'<div style="margin-bottom:10px">Whale flow signal (market-wide): '
+            f'<span style="color:{_w_col};font-size:20px;font-weight:bold">{_whale:+.2f}</span>'
+            f'<span class="grey" style="margin-left:8px;font-size:11px">'
+            f'exchange in/outflows + stablecoin dry powder | &le;-2.5 blocks ALL buys</span></div>'
+            f'<table><tr><th>Pair</th><th>HL trader bias</th><th>Last action</th></tr>{_sm_rows}</table>'
+            f'<div class="grey" style="font-size:11px;margin-top:6px">'
+            f'HL bias = net positioning of the top-20 proven Hyperliquid perp traders '
+            f'(30d+all-time profitable, &ge;$50M vol) &nbsp;&#x2022;&nbsp; '
+            f'&le;-2.5 blocks that pair &nbsp;&#x2022;&nbsp; &ge;+2.5 boosts size &times;1.3 + lowers entry bar</div>'
+        )
+    else:
+        smart_money_html = ('<div class="grey" style="padding:8px 0">Smart-money layer warming up — '
+                            'whale flows + Hyperliquid roster load within ~2 min of start; pairs appear '
+                            'as the buy gate evaluates them.</div>')
 
     # ── Alpaca ────────────────────────────────────────────────────────────────
     alpaca_data = status.get("alpaca", {})
@@ -1235,6 +1283,7 @@ def _build_page() -> str:
         monthly_html  = monthly_html,
         lunar_html       = lunar_html,
         onchain_html     = onchain_html,
+        smart_money_html = smart_money_html,
         alpaca_html      = alpaca_html,
         kraken_news_html = kraken_news_html,
         optimizer_html = optimizer_html,
