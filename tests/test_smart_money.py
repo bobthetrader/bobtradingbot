@@ -127,7 +127,40 @@ def test_decide():
     # disabled -> neutral always
     a, _, mult, _ = decide(-5.0, -5.0, {**cfg, "enabled": False})
     assert a == "neutral" and mult == 1.0, (a, mult)
+    # whale boost disabled (whale_boost_score <= 0) -> boost reason must credit HL, not whale
+    a, reason, mult, delta = decide(0.0, 3.0, {**cfg, "whale_boost_score": -1})
+    assert a == "boost", (a, reason)
+    assert reason.lower().startswith("hl") or "trader" in reason.lower().split("(")[0], reason
+    assert "whale accumulation" not in reason.lower(), reason
     print("test_decide OK")
+
+
+def test_evaluate_never_raises():
+    import core.whale_flows as wf
+    import core.hyperliquid_smart as hl
+    from core.smart_money import evaluate
+
+    # Stay OFFLINE: stub out the component fetchers.
+    orig_whale, orig_bias = wf.get_whale_score, hl.get_bias
+    wf.get_whale_score = lambda cfg=None: 0.0
+    hl.get_bias = lambda coin, cfg=None: {"bias": 0.0, "n_long": 0, "n_short": 0}
+    try:
+        # Malformed config value would make decide()'s float() raise ValueError;
+        # evaluate() must swallow it and return a neutral fallback with all keys.
+        r = evaluate("XBTEUR", {"whale_veto_score": "oops"})
+        assert r["action"] == "neutral", r
+        assert r["size_mult"] == 1.0, r
+        assert r["min_score_delta"] == 0.0, r
+        assert r["whale_score"] == 0.0 and r["hl_bias"] == 0.0, r
+        assert r["hl_n_long"] == 0 and r["hl_n_short"] == 0, r
+        assert "reason" in r
+        # Normal path still works after the failure.
+        r2 = evaluate("XBTEUR", {})
+        assert r2["action"] == "neutral", r2
+    finally:
+        wf.get_whale_score = orig_whale
+        hl.get_bias = orig_bias
+    print("test_evaluate_never_raises OK")
 
 
 if __name__ == "__main__":
@@ -137,4 +170,5 @@ if __name__ == "__main__":
     test_hl_coin_bias()
     test_pair_mapping()
     test_decide()
+    test_evaluate_never_raises()
     print("ALL OK")

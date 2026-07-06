@@ -48,8 +48,9 @@ def decide(whale_score: float, hl_bias: float, cfg: dict
         return ("veto", f"Hyperliquid top traders net short ({hl_bias:+.1f} <= {hv})", 1.0, 0.0)
 
     # One boost max (no stacking)
-    if (wb > 0 and whale_score >= wb) or (hb > 0 and hl_bias >= hb):
-        src = "whale accumulation" if whale_score >= wb else "HL smart traders long"
+    whale_fired = wb > 0 and whale_score >= wb
+    if whale_fired or (hb > 0 and hl_bias >= hb):
+        src = "whale accumulation" if whale_fired else "HL smart traders long"
         return ("boost", f"{src} (whale {whale_score:+.1f} / HL {hl_bias:+.1f})",
                 float(c["boost_size_mult"]), float(c["boost_min_score_delta"]))
 
@@ -73,13 +74,22 @@ def evaluate(pair: str, cfg: dict = None) -> dict:
     except Exception as exc:
         logger.debug("HL bias unavailable: %s", exc)
 
-    action, reason, size_mult, min_delta = decide(whale_score, hl["bias"], cfg)
-    out = {
-        "action": action, "reason": reason,
-        "size_mult": size_mult, "min_score_delta": min_delta,
-        "whale_score": round(whale_score, 2), "hl_bias": round(hl["bias"], 2),
-        "hl_n_long": hl["n_long"], "hl_n_short": hl["n_short"],
-    }
+    try:
+        action, reason, size_mult, min_delta = decide(whale_score, hl["bias"], cfg)
+        out = {
+            "action": action, "reason": reason,
+            "size_mult": size_mult, "min_score_delta": min_delta,
+            "whale_score": round(whale_score, 2), "hl_bias": round(hl["bias"], 2),
+            "hl_n_long": hl["n_long"], "hl_n_short": hl["n_short"],
+        }
+    except Exception as exc:
+        logger.debug("smart_money decide failed: %s", exc)
+        out = {
+            "action": "neutral", "reason": "smart_money error",
+            "size_mult": 1.0, "min_score_delta": 0.0,
+            "whale_score": 0.0, "hl_bias": 0.0,
+            "hl_n_long": 0, "hl_n_short": 0,
+        }
     with _lock:
         _last[pair] = out
     return out
