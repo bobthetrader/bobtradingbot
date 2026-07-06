@@ -71,6 +71,8 @@ def select_roster(rows: List[dict], size: int, min_volume_usd: float) -> List[di
             continue
         if m_pnl <= 0 or a_pnl <= 0 or m_vlm < min_volume_usd:
             continue
+        if not r.get("ethAddress"):
+            continue
         cands.append({"address": r.get("ethAddress"), "month_pnl": m_pnl})
     cands.sort(key=lambda c: c["month_pnl"], reverse=True)
     top = cands[:size]
@@ -112,7 +114,7 @@ def _refresh_roster(cfg: dict) -> Optional[List[dict]]:
         r.raise_for_status()
         rows = r.json().get("leaderboardRows") or []
     except Exception as exc:
-        logger.debug("HL leaderboard fetch failed: %s", exc)
+        logger.warning("HL leaderboard fetch failed: %s", exc)
         return None
     roster = select_roster(rows, size=size, min_volume_usd=min_vlm)
     if roster:
@@ -144,7 +146,7 @@ def _fetch_positions(address: str) -> Optional[list]:
         r.raise_for_status()
         return r.json().get("assetPositions") or []
     except Exception as exc:
-        logger.debug("HL positions fetch failed %s: %s", address[:10], exc)
+        logger.debug("HL positions fetch failed %s: %s", str(address)[:10], exc)
         return None
 
 

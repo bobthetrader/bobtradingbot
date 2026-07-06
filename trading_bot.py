@@ -1093,8 +1093,11 @@ class TradingBot:
             amount = max(amount, min_target)
 
         # Smart-money boost: scale up when whales/top traders are bullish.
-        # Set by _execute_buy_gate this loop; stays inside the final cap below.
-        amount *= float(getattr(self, '_smart_boost', {}).get(pair, 1.0))
+        # Set by _execute_buy_gate this loop; consumed once so a stale boost
+        # from hours earlier can't leak into a later non-gate buy path
+        # (new-listing, FORCE_BUY). The gate sets it immediately before
+        # execute_buy_order, so the legit flow still sees it.
+        amount *= float(getattr(self, '_smart_boost', {}).pop(pair, 1.0))
 
         # Cap at configured max base amount and available funds
         return min(base_amount * 2.0, amount, available_eur * 0.95)
@@ -3390,6 +3393,34 @@ class TradingBot:
                 self.logger.info(f"Startup position: {pair} qty={qty:.8f} avg_entry={avg:.4f} EUR")
             else:
                 self.logger.info(f"Startup position: {pair} â€” no holdings (qty={qty:.8f})")
+
+        # Keep the smart-money caches (whale flows + Hyperliquid roster/bias)
+        # permanently warm from a background daemon thread. Without this, a
+        # cold cache forces the inline evaluate() call inside
+        # _execute_buy_gate to block the ~60s trading loop on ~21 Alchemy
+        # calls + a 33MB Hyperliquid leaderboard download + 20 position
+        # polls (1-8 min) — stalling stop-loss checks. One call for a single
+        # mapped pair warms BOTH module caches: the whale score is
+        # pair-independent, and the Hyperliquid refresh populates ALL coins'
+        # bias in one sweep. 20-min sleep stays comfortably inside both
+        # 30-min TTLs.
+        try:
+            if self.config.get('smart_money', {}).get('enabled', True):
+                import threading as _sm_threading
+
+                def _smart_money_refresh_loop():
+                    while True:
+                        try:
+                            from core import smart_money as _smart
+                            _smart.evaluate("XXBTZEUR", self.config.get('smart_money', {}))
+                        except Exception as _sm_exc:
+                            self.logger.debug("smart-money refresh failed: %s", _sm_exc)
+                        time.sleep(1200)
+
+                _sm_threading.Thread(target=_smart_money_refresh_loop,
+                                     name='smart-money-refresh', daemon=True).start()
+        except Exception:
+            pass
 
         return initial_balance
 

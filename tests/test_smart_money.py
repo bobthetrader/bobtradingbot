@@ -63,10 +63,12 @@ def test_hl_roster_filter():
         _lb_row("0xC", 800_000, -100_000, 300e6),    # negative all-time -> OUT (lottery)
         _lb_row("0xD", 700_000, 1_000_000, 1e6),     # volume too small -> OUT
         _lb_row("0xE", 1_200_000, 3_000_000, 400e6), # good, higher month pnl
+        _lb_row(None, 950_000, 2_500_000, 250e6),    # otherwise qualifies, no address -> OUT
     ]
     roster = select_roster(rows, size=20, min_volume_usd=50e6)
     addrs = [r["address"] for r in roster]
     assert addrs == ["0xE", "0xA"], addrs           # sorted by month pnl desc
+    assert None not in addrs, addrs                 # missing ethAddress must be skipped
     assert all(r["weight"] > 0 for r in roster)
     print("test_hl_roster_filter OK")
 

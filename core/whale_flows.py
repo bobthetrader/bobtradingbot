@@ -122,6 +122,14 @@ def _fetch_transfers(wallets: List[str], direction: str,
         }])
         if res is None:
             return None  # any failure -> whole fresh component neutral
+        if "pageKey" in res:
+            # Response was truncated at maxCount (1000) and Alchemy returned a
+            # pageKey for the next page. We deliberately don't paginate: the
+            # newest transfers within the window would be silently dropped
+            # from `out`, biasing the in/out ratio the score is built on.
+            # Treat as unavailable so this fetch makes the fresh component
+            # neutral rather than wrong.
+            return None
         out.extend(res.get("transfers", []))
     return out
 
@@ -191,7 +199,13 @@ def get_whale_score(cfg: dict = None) -> float:
         if time.time() - _cache["ts"] < _CACHE_TTL:
             return _cache["score"]
     try:
-        score = blend_scores(_fresh_score(cfg or {}), _daily_score())
+        fresh, daily = _fresh_score(cfg or {}), _daily_score()
+        if fresh is None and daily is None:
+            # Rate-limited naturally: this branch only runs once per
+            # _CACHE_TTL (the fresh-cache check above short-circuits
+            # otherwise), so this fires at most once per 30 min.
+            logger.warning("whale flows: no data from any source")
+        score = blend_scores(fresh, daily)
     except Exception as exc:
         logger.debug("whale score failed: %s", exc)
         score = 0.0
