@@ -95,55 +95,69 @@ def blend_scores(fresh: Optional[float], daily: Optional[float]) -> float:
 
 # ── network fetchers (thin, failure = None) ───────────────────────────────────
 
-def _alchemy_rpc(method: str, params: list) -> Optional[dict]:
+# getAssetTransfers costs ~150 CU; Alchemy free tier allows ~330 CU/s. Pacing
+# calls ~2/s keeps a full sweep under the throughput ceiling (found live
+# 2026-07-07: unpaced bursts 429'd EVERY call and killed the component).
+_CALL_GAP_S = 0.5
+_MAX_PAGES = 2
+_MIN_WALLET_COVERAGE = 0.6   # need >=60% of wallets sampled, else unavailable
+
+
+def _alchemy_rpc(method: str, params: list, retries: int = 3) -> Optional[dict]:
     key = os.getenv("ALCHEMY_API_KEY", "")
     if not key:
         return None
-    try:
-        r = requests.post(_ALCHEMY_URL.format(key=key),
-                          json={"jsonrpc": "2.0", "id": 1,
-                                "method": method, "params": params},
-                          timeout=10)
-        r.raise_for_status()
-        return r.json().get("result")
-    except Exception as exc:
-        logger.debug("alchemy rpc %s failed: %s", method, exc)
-        return None
+    for attempt in range(retries):
+        try:
+            r = requests.post(_ALCHEMY_URL.format(key=key),
+                              json={"jsonrpc": "2.0", "id": 1,
+                                    "method": method, "params": params},
+                              timeout=10)
+            if r.status_code == 429:
+                # throughput throttle — back off and retry
+                time.sleep(2.0 * (attempt + 1))
+                continue
+            r.raise_for_status()
+            body = r.json()
+            if "error" in body and body.get("error", {}).get("code") == 429:
+                time.sleep(2.0 * (attempt + 1))
+                continue
+            return body.get("result")
+        except Exception as exc:
+            logger.debug("alchemy rpc %s failed (attempt %d): %s",
+                         method, attempt + 1, exc)
+            time.sleep(0.5)
+    return None
 
 
-def _fetch_transfers(wallets: List[str], direction: str,
-                     from_block_hex: str) -> Optional[list]:
-    """direction 'in' = toAddress (into exchange), 'out' = fromAddress.
+def _fetch_wallet_transfers(wallet: str, from_block_hex: str) -> Optional[dict]:
+    """All four queries for ONE wallet: in/out x (native ETH | USDT+USDC).
 
-    Two queries per wallet: native ETH ("external") and ONLY the two stables
-    we score ("erc20" filtered by contractAddresses). Requesting unfiltered
-    erc20 was fatal on busy exchange wallets (thousands of token deposits/hr
-    -> every response truncated at maxCount -> fresh component permanently
-    None, found live 2026-07-07). Follows pageKey up to 3 pages; a query
-    still truncated after that returns None (unavailable beats biased).
+    Returns {"in": [...], "out": [...]} or None if ANY of the wallet's
+    queries fail/stay truncated — a wallet enters the score with BOTH
+    directions or not at all (asymmetric inclusion would bias the ratio).
     """
-    out = []
-    addr_key = "toAddress" if direction == "in" else "fromAddress"
-    for w in wallets:
+    result = {"in": [], "out": []}
+    for direction, addr_key in (("in", "toAddress"), ("out", "fromAddress")):
         for extra in ({"category": ["external"]},
                       {"category": ["erc20"],
                        "contractAddresses": [_USDT, _USDC]}):
             params = {"fromBlock": from_block_hex, "toBlock": "latest",
-                      addr_key: w, "maxCount": "0x3e8",
+                      addr_key: wallet, "maxCount": "0x3e8",
                       "excludeZeroValue": True, **extra}
-            for _page in range(3):
+            for _page in range(_MAX_PAGES):
+                time.sleep(_CALL_GAP_S)   # stay under free-tier CU/s
                 res = _alchemy_rpc("alchemy_getAssetTransfers", [params])
                 if res is None:
-                    return None  # any failure -> whole fresh component neutral
-                out.extend(res.get("transfers", []))
+                    return None
+                result[direction].extend(res.get("transfers", []))
                 page_key = res.get("pageKey")
                 if not page_key:
                     break
                 params = {**params, "pageKey": page_key}
             else:
-                # still truncated after 3 pages -> data incomplete -> neutral
-                return None
-    return out
+                return None   # still truncated -> incomplete -> drop wallet
+    return result
 
 
 def _sum_flows(transfers: list, min_whale_eth: float,
@@ -174,9 +188,20 @@ def _fresh_score(cfg: dict) -> Optional[float]:
         return None
     from_block = hex(max(0, int(blk_hex, 16) - 300))  # ~60 min of blocks
 
-    t_in = _fetch_transfers(wallets, "in", from_block)
-    t_out = _fetch_transfers(wallets, "out", from_block)
-    if t_in is None or t_out is None:
+    # Partial-tolerant sweep: a failing wallet is skipped (both directions),
+    # not fatal. Score only if enough of the wallet set was actually sampled.
+    t_in, t_out, ok = [], [], 0
+    for w in wallets:
+        wt = _fetch_wallet_transfers(w, from_block)
+        if wt is None:
+            logger.debug("whale flows: wallet %s skipped (fetch failed)", w[:10])
+            continue
+        ok += 1
+        t_in.extend(wt["in"])
+        t_out.extend(wt["out"])
+    if not wallets or ok / len(wallets) < _MIN_WALLET_COVERAGE:
+        logger.debug("whale flows: only %d/%d wallets sampled — below coverage floor",
+                     ok, len(wallets))
         return None
 
     fin = _sum_flows(t_in, min_eth, min_stable)
@@ -184,8 +209,9 @@ def _fresh_score(cfg: dict) -> Optional[float]:
     score = score_fresh_flows(eth_in=fin["eth"], eth_out=fout["eth"],
                               stable_in_usd=fin["stable_usd"],
                               min_activity_eth=2 * min_eth)
-    logger.info("Whale flows fresh: in=%.0f ETH out=%.0f ETH stable_in=$%.0f -> %.2f",
-                fin["eth"], fout["eth"], fin["stable_usd"], score)
+    logger.info("Whale flows fresh (%d/%d wallets): in=%.0f ETH out=%.0f ETH "
+                "stable_in=$%.0f -> %.2f",
+                ok, len(wallets), fin["eth"], fout["eth"], fin["stable_usd"], score)
     return score
 
 
