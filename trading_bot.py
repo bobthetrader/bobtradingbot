@@ -2645,7 +2645,7 @@ class TradingBot:
         min_net = float(self.config.get('risk_management', {}).get('min_net_sell_profit_pct', self.min_net_sell_profit_pct))
         return net_profit_pct >= max(0.0, min_net)
 
-    def _update_trade_metrics(self, pair, pnl_eur):
+    def _update_trade_metrics(self, pair, pnl_eur, notional=0.0):
         """Update per-pair win/loss counters and trigger loss-streak pause if needed.
 
         A winning trade (pnl_eur â‰¥ 0) resets the consecutive-loss counter and
@@ -2653,8 +2653,13 @@ class TradingBot:
         ``max_consecutive_losses`` losses the bot pauses new buys for
         ``pause_after_loss_streak_minutes`` minutes and recalculates the Kelly
         fraction for position sizing.
+
+        Pass ``notional`` (exit price x volume) so the win/loss decision is made
+        NET of the ~0.52% round-trip fee, matching the journal (_finalise_trade).
+        During the 13-loss streak of 2026-07-05/06 the pause never engaged
+        because gross-flat trailing/break-even exits kept resetting the counter.
         """
-        pnl_eur = float(pnl_eur)
+        pnl_eur = float(pnl_eur) - float(notional or 0.0) * 0.0052
         m = self.trade_metrics.setdefault(pair, {"closed": 0, "wins": 0, "losses": 0, "sum_pnl": 0.0})
         m["closed"] += 1
         m["sum_pnl"] += pnl_eur
@@ -2796,14 +2801,22 @@ class TradingBot:
                         if self.take_profit_percent > 0 and change_percent >= req_tp:
                             return pair, "TAKE_PROFIT", change_percent
 
-                    # Break-Even Stop-Loss logic (Manual activation if preferred)
+                    # Break-Even Stop-Loss — fee-aware. A stop at raw entry price
+                    # locks in the ~0.52% round-trip fee as a guaranteed net loss
+                    # (5 of the 13-loss streak 2026-07-05/06 were such exits), so
+                    # park the stop a fee-covering offset ABOVE entry instead.
+                    # Config [risk_management] break_even_offset_pct (default 0.7
+                    # = 0.52% fees + margin), clamped below the trigger level.
                     if self.enable_break_even and change_percent >= self.break_even_trigger_pct:
                         entry_price = self.purchase_prices.get(pair, 0)
                         if entry_price > 0:
+                            _be_off = float(self.config.get('risk_management', {}).get('break_even_offset_pct', 0.7))
+                            _be_off = max(0.0, min(_be_off, self.break_even_trigger_pct - 0.1))
+                            be_stop = entry_price * (1.0 + _be_off / 100.0)
                             current_stop = self.stop_info.get(pair, {}).get('stop_price', 0)
-                            if current_stop < entry_price:
-                                self.stop_info[pair] = {'stop_price': entry_price, 'type': 'BREAK_EVEN'}
-                                self.logger.info(f"BREAK-EVEN activated for {pair}: SL moved to entry ({entry_price:.4f})")
+                            if current_stop < be_stop:
+                                self.stop_info[pair] = {'stop_price': be_stop, 'type': 'BREAK_EVEN'}
+                                self.logger.info(f"BREAK-EVEN activated for {pair}: SL set to entry+{_be_off:.2f}% ({be_stop:.4f})")
 
                     # Fixed dynamic stop-loss (regime-aware: 0.6% bearish / 0.8% ranging / 1.2% bullish)
                     _dsl = self._dynamic_stop_loss_percent()
@@ -2818,8 +2831,13 @@ class TradingBot:
                         if opened_at and (time.time() - opened_at) >= (self.time_stop_hours * 3600):
                             return pair, "TIME_STOP", change_percent
 
-                    # Legacy simple Trailing Stop-Loss
-                    if not self.enable_atr_stop and self.trailing_stop_percent > 0 and change_percent > 0:
+                    # Legacy simple Trailing Stop-Loss — fee-aware: only lock a
+                    # gain that still nets positive after the ~0.52% round-trip
+                    # fee. Was `change_percent > 0`, which sold at gross-flat
+                    # (+0.0006%..+0.47% in the 2026-07-05/06 streak) = net fee
+                    # loss. Config [risk_management] trailing_stop_min_gain_pct.
+                    _trail_min = float(self.config.get('risk_management', {}).get('trailing_stop_min_gain_pct', 0.8))
+                    if not self.enable_atr_stop and self.trailing_stop_percent > 0 and change_percent >= _trail_min:
                         drop_from_peak = ((self.peak_prices[pair] - current_price) / self.peak_prices[pair]) * 100.0
                         if drop_from_peak >= self.trailing_stop_percent:
                             return pair, "TRAILING_STOP", change_percent
@@ -3127,7 +3145,7 @@ class TradingBot:
                     f"PARTIAL SELL SUMMARY: {pair} {sell_volume:.6f} (~{sell_volume * price:.2f} EUR)"
                 )
                 self.logger.info(f"PARTIAL PNL ESTIMATE {pair}: {est_profit_eur:.2f} EUR ({pp_str})")
-                self._update_trade_metrics(pair, est_profit_eur)
+                self._update_trade_metrics(pair, est_profit_eur, notional=sell_volume * price)
                 fill_price = None
                 try:
                     if isinstance(result, dict) and 'fill_price' in result:
@@ -3603,6 +3621,32 @@ class TradingBot:
             _iscore  = self._intelligence_score
             _iweight = self._intelligence_score_weight
         _intel_adj = -(_iscore * _iweight)
+
+        # HARD veto: a clearly-bearish AI panel blocks entries outright. The
+        # additive adjustment (max ~±weight×3 pts) can never beat entry scores
+        # of 8-36, so at score_weight 0.5 the panel could not act — 2026-07-05
+        # DOT/LINK were bought at panel -2.95 and every panel<=-1.5 entry that
+        # weekend lost. Config [intelligence] buy_veto_score, 0 = disabled.
+        _veto_at = float(self.config.get('intelligence', {}).get('buy_veto_score', -1.5))
+        if _veto_at < 0 and _iscore <= _veto_at:
+            self.logger.info(
+                "BUY skipped for %s: AI panel %.2f <= veto %.2f (risk-off)",
+                pair, _iscore, _veto_at)
+            return
+
+        # 1h-RSI ceiling: the tick-level dip trigger must not buy when the
+        # HOURLY chart is overbought — 2026-07-05/06 streak: all 7 entries with
+        # 1h RSI >= 60 lost (micro-dips at local tops). Mean-reversion profiles
+        # only; trend/breakout pairs may run hot. Config [technical]
+        # max_entry_rsi_1h, 0 = disabled.
+        _rsi_ceiling = float(self.config.get('technical', {}).get('max_entry_rsi_1h', 60.0))
+        if _rsi_ceiling > 0 and self._pair_profile(pair).get('strategy') == 'mean_reversion':
+            _rsi1h = self._rsi_1h.get(pair)
+            if _rsi1h is not None and float(_rsi1h) >= _rsi_ceiling:
+                self.logger.info(
+                    "BUY skipped for %s: 1h RSI %.1f >= ceiling %.1f (no mean-reversion buys into overbought)",
+                    pair, float(_rsi1h), _rsi_ceiling)
+                return
 
         # Sentiment adjustments: LunarCrush and on-chain scores shift effective min
         # Positive combined score = bullish sentiment = lower the bar to enter
@@ -5177,7 +5221,7 @@ class TradingBot:
                 self.entry_timestamps[pair] = None
                 self._partial_exit_done[pair] = False
                 self.stop_info.pop(pair, None)
-                self._update_trade_metrics(pair, est_profit_eur)
+                self._update_trade_metrics(pair, est_profit_eur, notional=volume * price)
                 self._remove_position_meta(pair)
                 self.logger.info("SELL ORDER SUCCESS: %s", result)
                 self.logger.info("SELL PNL %s: %.2f EUR (%.2f%%)",
@@ -5288,7 +5332,7 @@ class TradingBot:
                 self.short_entry_prices[pair] = 0.0
                 self.entry_timestamps[pair] = None
                 self._remove_position_meta(pair)
-                self._update_trade_metrics(pair, pnl_eur)
+                self._update_trade_metrics(pair, pnl_eur, notional=qty * price)
                 self.logger.info("SHORT CLOSE SUCCESS: %s | PNL: %.2f EUR (%.2f%%)",
                                  result, pnl_eur, pnl_pct)
                 self._finalise_trade('SHORT_CLOSE', pair, qty, price, pnl_eur,

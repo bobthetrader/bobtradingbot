@@ -54,9 +54,11 @@ enable_atr_dynamic_tp = false
 enable_mean_reversion_signals = true
 mr_rsi_oversold_threshold = 30       # Only buy genuine oversold (RSI < 30)
 mr_rsi_overbought_threshold = 70     # Only sell genuine overbought (RSI > 70)
-break_even_trigger_percent = 1.0     # Move SL to entry only after +1.0% gain
+break_even_trigger_percent = 1.0     # Arm the break-even stop only after +1.0% gain
+break_even_offset_pct = 0.7          # BE stop parked at entry+0.7% (covers 0.52% fees + margin), NOT raw entry
+trailing_stop_min_gain_pct = 0.8     # Trailing stop can only fire while still >= +0.8% gross (nets positive after fees)
 max_consecutive_losses = 5
-pause_after_loss_streak_minutes = 0
+pause_after_loss_streak_minutes = 60 # was 0 = pause disabled; streak counter is now NET of fees (2026-07-06)
 max_open_positions = 6               # was 3 — 3 slots stayed full of parked longs, blocking new long entries
 time_stop_hours = 24                 # was default 72 — recycle flat/dead-money longs faster so slots free up
 
@@ -69,6 +71,11 @@ time_stop_hours = 24                 # was default 72 — recycle flat/dead-mone
 # 12; set 0 to disable the pricey Perplexity sonar web-search model entirely).
 refresh_seconds = 1800
 score_weight = 0.5
+# Hard veto: block ALL buys while the combined panel score is <= this value.
+# The additive score_weight adjustment (max ~1.5 pts at 0.5) can never outvote
+# entry scores of 8-36, so a clearly-bearish panel could not act — 2026-07-05/06
+# every entry taken at panel <= -1.5 lost (DOT/LINK bought at -2.95). 0 = off.
+buy_veto_score = -1.5
 
 [execution]
 signal_refresh_interval_seconds = 300   # 5 min — let signals develop
@@ -86,6 +93,11 @@ enable_ema_crossover_filter = true
 enable_mtf_macd_filter = true
 ema_fast_period = 9
 ema_slow_period = 21
+# 1h-RSI ceiling for mean-reversion buys: the entry trigger is a TICK-level dip
+# (1-min RSI <= 33), which fired at 1h RSI 60-70 all Saturday 2026-07-05 (buying
+# micro-dips at local tops before the dump — all 7 such entries lost). Blocks
+# BUY when 1h RSI >= this value on mean_reversion-profile pairs. 0 = off.
+max_entry_rsi_1h = 60
 
 [optimizer]
 enabled = true
