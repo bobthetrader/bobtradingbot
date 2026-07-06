@@ -102,10 +102,39 @@ def test_pair_mapping():
     print("test_pair_mapping OK")
 
 
+def test_decide():
+    from core.smart_money import decide
+
+    cfg = {"enabled": True, "whale_veto_score": -2.5, "whale_boost_score": 2.5,
+           "hl_veto_score": -2.5, "hl_boost_score": 2.5,
+           "boost_size_mult": 1.3, "boost_min_score_delta": -2.0}
+
+    # whale veto
+    a, reason, mult, delta = decide(-3.0, 0.0, cfg)
+    assert a == "veto" and "whale" in reason.lower(), (a, reason)
+    # HL per-pair veto
+    a, reason, mult, delta = decide(0.0, -3.0, cfg)
+    assert a == "veto" and "hyperliquid" in reason.lower() or "trader" in reason.lower(), (a, reason)
+    # boost (either component) — no stacking, one boost
+    a, reason, mult, delta = decide(3.0, 3.0, cfg)
+    assert a == "boost" and mult == 1.3 and delta == -2.0, (a, mult, delta)
+    # dead zone -> neutral, no effect
+    a, reason, mult, delta = decide(1.0, -1.0, cfg)
+    assert a == "neutral" and mult == 1.0 and delta == 0.0, (a, mult, delta)
+    # veto wins over boost when components disagree
+    a, _, _, _ = decide(-3.0, 4.0, cfg)
+    assert a == "veto", a
+    # disabled -> neutral always
+    a, _, mult, _ = decide(-5.0, -5.0, {**cfg, "enabled": False})
+    assert a == "neutral" and mult == 1.0, (a, mult)
+    print("test_decide OK")
+
+
 if __name__ == "__main__":
     test_whale_fresh_score()
     test_whale_blend()
     test_hl_roster_filter()
     test_hl_coin_bias()
     test_pair_mapping()
+    test_decide()
     print("ALL OK")

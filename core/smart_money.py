@@ -1,0 +1,96 @@
+"""Smart-money decision facade — the ONLY thing trading_bot imports.
+
+Combines the market-level whale-flow score and the per-coin Hyperliquid
+top-trader bias into one action for the buy gate:
+  veto    : block the buy (either component strongly bearish)
+  boost   : size x boost_size_mult + entry bar lowered by boost_min_score_delta
+  neutral : no effect
+Missing data is neutral by construction (both sources return 0.0 on failure).
+"""
+from __future__ import annotations
+import logging
+import threading
+from typing import Dict, Tuple
+
+logger = logging.getLogger(__name__)
+
+_lock = threading.Lock()
+_last: Dict[str, dict] = {}   # pair -> last evaluate() result (for status/journal)
+
+_DEFAULTS = {
+    "enabled": True,
+    "whale_veto_score": -2.5, "whale_boost_score": 2.5,
+    "hl_veto_score": -2.5, "hl_boost_score": 2.5,
+    "boost_size_mult": 1.3, "boost_min_score_delta": -2.0,
+}
+
+
+def _cfg(cfg: dict) -> dict:
+    out = dict(_DEFAULTS)
+    out.update(cfg or {})
+    return out
+
+
+def decide(whale_score: float, hl_bias: float, cfg: dict
+           ) -> Tuple[str, str, float, float]:
+    """Pure decision: (action, reason, size_mult, min_score_delta)."""
+    c = _cfg(cfg)
+    if not c.get("enabled", True):
+        return "neutral", "smart_money disabled", 1.0, 0.0
+
+    wv, wb = float(c["whale_veto_score"]), float(c["whale_boost_score"])
+    hv, hb = float(c["hl_veto_score"]), float(c["hl_boost_score"])
+
+    # Vetoes first — either component can block, veto beats boost
+    if wv < 0 and whale_score <= wv:
+        return ("veto", f"whale flows bearish ({whale_score:+.1f} <= {wv})", 1.0, 0.0)
+    if hv < 0 and hl_bias <= hv:
+        return ("veto", f"Hyperliquid top traders net short ({hl_bias:+.1f} <= {hv})", 1.0, 0.0)
+
+    # One boost max (no stacking)
+    if (wb > 0 and whale_score >= wb) or (hb > 0 and hl_bias >= hb):
+        src = "whale accumulation" if whale_score >= wb else "HL smart traders long"
+        return ("boost", f"{src} (whale {whale_score:+.1f} / HL {hl_bias:+.1f})",
+                float(c["boost_size_mult"]), float(c["boost_min_score_delta"]))
+
+    return "neutral", "", 1.0, 0.0
+
+
+def evaluate(pair: str, cfg: dict = None) -> dict:
+    """Fetch both component scores for `pair` and decide. Never raises."""
+    cfg = cfg or {}
+    whale_score, hl = 0.0, {"bias": 0.0, "n_long": 0, "n_short": 0}
+    try:
+        from core.whale_flows import get_whale_score
+        whale_score = float(get_whale_score(cfg))
+    except Exception as exc:
+        logger.debug("whale score unavailable: %s", exc)
+    try:
+        from core.hyperliquid_smart import get_bias, coin_for_pair
+        coin = coin_for_pair(pair)
+        if coin:
+            hl = get_bias(coin, cfg)
+    except Exception as exc:
+        logger.debug("HL bias unavailable: %s", exc)
+
+    action, reason, size_mult, min_delta = decide(whale_score, hl["bias"], cfg)
+    out = {
+        "action": action, "reason": reason,
+        "size_mult": size_mult, "min_score_delta": min_delta,
+        "whale_score": round(whale_score, 2), "hl_bias": round(hl["bias"], 2),
+        "hl_n_long": hl["n_long"], "hl_n_short": hl["n_short"],
+    }
+    with _lock:
+        _last[pair] = out
+    return out
+
+
+def last_for(pair: str) -> dict:
+    with _lock:
+        return dict(_last.get(pair) or {})
+
+
+def status_snapshot() -> dict:
+    with _lock:
+        return {p: {k: v[k] for k in ("action", "whale_score", "hl_bias")}
+                for p, v in _last.items()}
