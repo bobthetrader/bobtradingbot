@@ -1205,10 +1205,20 @@ class TradingBot:
         except Exception:
             return 0.0001
 
-    def _calculate_volume(self, pair, price, available_eur=None):
-        trade_amount_eur = self._get_trade_amount_eur()
-        if available_eur is not None:
-            trade_amount_eur = min(trade_amount_eur, max(0.0, available_eur))
+    def _calculate_volume(self, pair, price, notional_eur=None):
+        """Convert a EUR notional into pair volume.
+
+        When ``notional_eur`` is given it is AUTHORITATIVE — it comes from
+        `_get_dynamic_trade_amount_eur`, which already applies the sizing
+        floor/cap and the available-cash cap. The old behaviour took
+        ``min(base trade_amount_eur, notional)``, which silently capped every
+        buy at the €35 base and discarded the dynamic sizing — the real reason
+        buys never reached the €50-70 target (found 2026-07-06).
+        """
+        if notional_eur is not None:
+            trade_amount_eur = max(0.0, notional_eur)
+        else:
+            trade_amount_eur = self._get_trade_amount_eur()
         min_volume = self._get_min_volume(pair)
         if price <= 0:
             return 0.0
@@ -5013,7 +5023,7 @@ class TradingBot:
                 self.logger.info(f"BUY skipped for {pair}: insufficient free EUR ({available_eur:.2f})")
                 return
 
-            volume = self._calculate_volume(pair, price, available_eur=planned_eur)
+            volume = self._calculate_volume(pair, price, notional_eur=planned_eur)
             self.logger.info(f"Placing BUY order (MAKER/POST-ONLY): {volume:.6f} {pair} at {price:.2f} EUR")
 
             # --- Preflight: spread and depth checks (fail-closed) ---
