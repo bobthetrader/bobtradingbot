@@ -37,10 +37,14 @@ def test_whale_blend():
     # fresh 0.6 / daily 0.4 weighting
     assert abs(blend_scores(fresh=5.0, daily=0.0) - 3.0) < 1e-9
     assert abs(blend_scores(fresh=0.0, daily=-5.0) - (-2.0)) < 1e-9
-    # missing components (None) drop out
-    assert blend_scores(fresh=None, daily=-5.0) == -5.0
-    assert blend_scores(fresh=4.0, daily=None) == 4.0
+    # FIXED weights: a missing component contributes 0 — the survivor keeps
+    # its own weight and can NEVER reach the +/-2.5 veto/boost band alone
+    # when it's the 0.4-weighted daily (regression: 2026-07-07 blackout).
+    assert abs(blend_scores(fresh=None, daily=-5.0) - (-2.0)) < 1e-9
+    assert abs(blend_scores(fresh=4.0, daily=None) - 2.4) < 1e-9
     assert blend_scores(fresh=None, daily=None) == 0.0
+    # daily alone at its most bearish stays above the -2.5 veto line
+    assert blend_scores(fresh=None, daily=-5.0) > -2.5
     print("test_whale_blend OK")
 
 

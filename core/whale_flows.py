@@ -84,11 +84,13 @@ def blend_scores(fresh: Optional[float], daily: Optional[float]) -> float:
     """0.6 x fresh + 0.4 x daily; missing components drop out; none -> 0.0."""
     if fresh is None and daily is None:
         return 0.0
-    if fresh is None:
-        return max(-5.0, min(5.0, daily))
-    if daily is None:
-        return max(-5.0, min(5.0, fresh))
-    return max(-5.0, min(5.0, 0.6 * fresh + 0.4 * daily))
+    # Fixed weights — a missing component contributes 0, it does NOT hand its
+    # weight to the survivor. Before 2026-07-07 a missing fresh component let
+    # the slow CoinMetrics daily (x2.5 scaled) act at FULL weight: a moderately
+    # bearish day-old datapoint scored exactly -2.50 and market-wide-vetoed
+    # every buy. With fixed weights, daily alone caps at +/-2.0 (< 2.5 veto)
+    # and fresh alone at +/-3.0 — a lone source can lean but never blackout.
+    return max(-5.0, min(5.0, 0.6 * (fresh or 0.0) + 0.4 * (daily or 0.0)))
 
 
 # ── network fetchers (thin, failure = None) ───────────────────────────────────
@@ -111,26 +113,36 @@ def _alchemy_rpc(method: str, params: list) -> Optional[dict]:
 
 def _fetch_transfers(wallets: List[str], direction: str,
                      from_block_hex: str) -> Optional[list]:
-    """direction 'in' = toAddress (into exchange), 'out' = fromAddress."""
+    """direction 'in' = toAddress (into exchange), 'out' = fromAddress.
+
+    Two queries per wallet: native ETH ("external") and ONLY the two stables
+    we score ("erc20" filtered by contractAddresses). Requesting unfiltered
+    erc20 was fatal on busy exchange wallets (thousands of token deposits/hr
+    -> every response truncated at maxCount -> fresh component permanently
+    None, found live 2026-07-07). Follows pageKey up to 3 pages; a query
+    still truncated after that returns None (unavailable beats biased).
+    """
     out = []
     addr_key = "toAddress" if direction == "in" else "fromAddress"
     for w in wallets:
-        res = _alchemy_rpc("alchemy_getAssetTransfers", [{
-            "fromBlock": from_block_hex, "toBlock": "latest",
-            addr_key: w, "category": ["external", "erc20"],
-            "maxCount": "0x3e8", "excludeZeroValue": True,
-        }])
-        if res is None:
-            return None  # any failure -> whole fresh component neutral
-        if "pageKey" in res:
-            # Response was truncated at maxCount (1000) and Alchemy returned a
-            # pageKey for the next page. We deliberately don't paginate: the
-            # newest transfers within the window would be silently dropped
-            # from `out`, biasing the in/out ratio the score is built on.
-            # Treat as unavailable so this fetch makes the fresh component
-            # neutral rather than wrong.
-            return None
-        out.extend(res.get("transfers", []))
+        for extra in ({"category": ["external"]},
+                      {"category": ["erc20"],
+                       "contractAddresses": [_USDT, _USDC]}):
+            params = {"fromBlock": from_block_hex, "toBlock": "latest",
+                      addr_key: w, "maxCount": "0x3e8",
+                      "excludeZeroValue": True, **extra}
+            for _page in range(3):
+                res = _alchemy_rpc("alchemy_getAssetTransfers", [params])
+                if res is None:
+                    return None  # any failure -> whole fresh component neutral
+                out.extend(res.get("transfers", []))
+                page_key = res.get("pageKey")
+                if not page_key:
+                    break
+                params = {**params, "pageKey": page_key}
+            else:
+                # still truncated after 3 pages -> data incomplete -> neutral
+                return None
     return out
 
 
@@ -205,6 +217,13 @@ def get_whale_score(cfg: dict = None) -> float:
             # _CACHE_TTL (the fresh-cache check above short-circuits
             # otherwise), so this fires at most once per 30 min.
             logger.warning("whale flows: no data from any source")
+        elif fresh is None:
+            # Daily-only mode: capped at 0.4 weight so it can lean but never
+            # veto alone. Warn (TTL-limited) — a permanently absent fresh
+            # component means Alchemy key/pagination trouble worth fixing.
+            logger.warning(
+                "whale flows: fresh (Alchemy) component unavailable — "
+                "scoring from CoinMetrics daily only at 0.4 weight")
         score = blend_scores(fresh, daily)
     except Exception as exc:
         logger.debug("whale score failed: %s", exc)
