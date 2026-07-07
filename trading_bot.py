@@ -4190,7 +4190,18 @@ class TradingBot:
                             self.logger.info("NEW LISTING: added %s to trade_pairs for monitoring", pair)
                         self._breakout_timestamps[pair] = time.time()
                         self.execute_buy_order(pair, current_price)
-                        _mark_bought(self._listing_watchlist, symbol, current_price)
+                        # Only mark bought if the buy actually landed —
+                        # execute_buy_order can skip without raising
+                        # (insufficient free EUR, preflight, min size). An
+                        # unconditional mark left phantom qty-0 "HOLDING"
+                        # entries that never retried (WEMIX 2026-07-07).
+                        _new_qty = self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)
+                        if _new_qty > 0:
+                            _mark_bought(self._listing_watchlist, symbol, current_price)
+                        else:
+                            self.logger.warning(
+                                "NEW LISTING BUY did not fill for %s — will retry while trend holds",
+                                symbol)
 
         for symbol in to_remove:
             _remove_listing(self._listing_watchlist, symbol)
