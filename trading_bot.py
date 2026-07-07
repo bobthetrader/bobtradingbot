@@ -2537,6 +2537,13 @@ class TradingBot:
         Bearish → cut losses faster (0.6%).
         Bullish → give position room to breathe (1.2%).
         Fine-tuned by AI intelligence score.
+
+        FLOORED at [risk_management] min_stop_loss_percent (default 1.2):
+        the 0.6% bearish stop is SMALLER than the 0.52% round-trip fee, so
+        overnight wiggles were exiting at fee-dominated net losses (BTC
+        stopped at -0.63% gross = -1.15% net on 2026-07-07 while the market
+        chopped sideways). A stop below ~1.2% guarantees fees eat any exit.
+        Set min_stop_loss_percent = 0 to restore the old behaviour.
         """
         regime = getattr(self, '_current_market_regime', 'RANGING')
         intel  = getattr(self, '_intelligence_score', 0.0)
@@ -2553,6 +2560,9 @@ class TradingBot:
             sl = max(sl - 0.1, 0.5)   # extra bearish → tighter SL
         elif intel > 2:
             sl = min(sl + 0.1, 1.5)   # extra bullish → more room
+
+        _floor = float(self.config.get('risk_management', {}).get('min_stop_loss_percent', 1.2))
+        sl = max(sl, _floor)
 
         return round(sl, 2)
 

@@ -28,6 +28,10 @@ dynamic_pairs_refresh_min = 15
 [risk_management]
 max_drawdown_percent = 25.0
 stop_loss_percent = 1.5              # Wider SL — volatile market needs more room
+min_stop_loss_percent = 1.2          # FLOOR under the regime-aware dynamic SL: the 0.6%
+                                     # bearish stop was below the 0.52% round-trip fee, so
+                                     # wiggles exited at guaranteed fee-dominated net losses
+                                     # (added 2026-07-07). 0 = restore old behaviour.
 allocation_per_trade_percent = 12.0 # ~12% of portfolio/trade -> ~EUR58 target
 # Floor so the 7 stacked risk multipliers (Kelly ~0.5x, ATR vol-targeting,
 # correlation, regime) can't shrink every buy into the EUR20s (added 2026-07-06).
