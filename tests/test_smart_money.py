@@ -201,6 +201,37 @@ def test_evaluate_never_raises():
     print("test_evaluate_never_raises OK")
 
 
+def test_event_short_gate():
+    from core.smart_money import event_short_ok
+
+    cfg = {"event_shorts_enabled": True, "event_panel_max": -2.0,
+           "event_hl_max": -2.5, "event_whale_max": -1.5,
+           "event_max_concurrent": 2}
+
+    # All four conditions met -> fire
+    ok, why = event_short_ok(panel=-2.5, hl_bias=-3.0, whale=-2.0,
+                             ema_bullish=False, n_open_event=0, cfg=cfg)
+    assert ok, why
+    # Each condition individually failing -> closed
+    assert not event_short_ok(-1.9, -3.0, -2.0, False, 0, cfg)[0]  # panel too mild
+    assert not event_short_ok(-2.5, -2.4, -2.0, False, 0, cfg)[0]  # HL not short enough
+    assert not event_short_ok(-2.5, -3.0, -1.4, False, 0, cfg)[0]  # whale too mild
+    assert not event_short_ok(-2.5, -3.0, -2.0, True, 0, cfg)[0]   # trend bullish
+    # Missing data (None) -> closed, every slot
+    assert not event_short_ok(None, -3.0, -2.0, False, 0, cfg)[0]
+    assert not event_short_ok(-2.5, None, -2.0, False, 0, cfg)[0]
+    assert not event_short_ok(-2.5, -3.0, None, False, 0, cfg)[0]
+    assert not event_short_ok(-2.5, -3.0, -2.0, None, 0, cfg)[0]   # EMA unknown
+    # Concurrency cap
+    assert not event_short_ok(-2.5, -3.0, -2.0, False, 2, cfg)[0]
+    # Feature disabled -> closed even on perfect signals
+    assert not event_short_ok(-5.0, -5.0, -5.0, False, 0,
+                              {**cfg, "event_shorts_enabled": False})[0]
+    # Absent config -> disabled by default
+    assert not event_short_ok(-5.0, -5.0, -5.0, False, 0, {})[0]
+    print("test_event_short_gate OK")
+
+
 if __name__ == "__main__":
     test_whale_fresh_score()
     test_whale_blend()
@@ -210,4 +241,5 @@ if __name__ == "__main__":
     test_decide()
     test_evaluate_never_raises()
     test_gate_path_never_fetches()
+    test_event_short_gate()
     print("ALL OK")

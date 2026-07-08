@@ -109,3 +109,37 @@ def status_snapshot() -> dict:
     with _lock:
         return {p: {k: v[k] for k in ("action", "whale_score", "hl_bias")}
                 for p, v in _last.items()}
+
+
+# ── event-driven shorts gate (pure, unit-tested) ─────────────────────────────
+
+def event_short_ok(panel, hl_bias, whale, ema_bullish, n_open_event, cfg
+                   ) -> Tuple[bool, str]:
+    """Conviction-stacked short gate: ALL of news-panel, per-coin HL trader
+    bias, whale flows and confirmed bearish 1h trend must align. Any missing
+    datum (None) closes the gate — no short on missing data. Old technical
+    shorts ([shorting] enabled) are a separate, still-disabled path.
+    """
+    c = cfg or {}
+    if not c.get("event_shorts_enabled", False):
+        return False, "event shorts disabled"
+    try:
+        panel_max = float(c.get("event_panel_max", -2.0))
+        hl_max = float(c.get("event_hl_max", -2.5))
+        whale_max = float(c.get("event_whale_max", -1.5))
+        max_conc = int(c.get("event_max_concurrent", 2))
+    except Exception:
+        return False, "bad event-short config"
+
+    if n_open_event >= max_conc:
+        return False, f"event-short cap reached ({n_open_event}/{max_conc})"
+    if panel is None or panel > panel_max:
+        return False, f"panel {panel} > {panel_max} (no risk-off event)"
+    if hl_bias is None or hl_bias > hl_max:
+        return False, f"HL bias {hl_bias} > {hl_max} (top traders not short)"
+    if whale is None or whale > whale_max:
+        return False, f"whale {whale} > {whale_max} (flows not bearish)"
+    if ema_bullish is not False:   # True or None both close the gate
+        return False, "1h trend not confirmed bearish"
+    return True, (f"EVENT SHORT: panel {panel:+.2f} | HL {hl_bias:+.2f} | "
+                  f"whale {whale:+.2f} | trend bearish")
