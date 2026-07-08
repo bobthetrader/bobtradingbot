@@ -24,6 +24,10 @@ dynamic_pairs = true
 dynamic_pairs_min_vol_eur = 750000
 dynamic_pairs_max = 10
 dynamic_pairs_refresh_min = 15
+# New-listing buys are capped at this notional — brand-new coins are the most
+# whipsaw-prone class and must not get full core-pair sizing (added 2026-07-08
+# after WLD listing bought at ~EUR70 full dynamic size).
+listing_trade_eur = 30.0
 
 [risk_management]
 max_drawdown_percent = 25.0

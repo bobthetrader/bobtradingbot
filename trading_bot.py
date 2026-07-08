@@ -4219,6 +4219,18 @@ class TradingBot:
                 if minutes_since_detection < 15:
                     continue
 
+                # Reconcile: a prior buy whose fill confirmed AFTER the qty
+                # check left the entry un-marked (WATCHING while holding —
+                # WLD 2026-07-08). If we hold it now, mark it bought so the
+                # listing-specific exits (12h window, trailing) engage.
+                _held_now = self.position_qty.get(pair, self.holdings.get(pair, 0))
+                if _held_now > 0 and not entry.get("buy_ts"):
+                    _recon_px = self.purchase_prices.get(pair) or current_price
+                    _mark_bought(self._listing_watchlist, symbol, _recon_px)
+                    self.logger.info("NEW LISTING: reconciled %s as bought @ %.6f (fill confirmed late)",
+                                     symbol, _recon_px)
+                    continue
+
                 # Check trend — buy if up 2%+ from detection price
                 if _listing_trending_up(entry, current_price, self._listing_trend_pct):
                     existing = self.position_qty.get(pair, self.holdings.get(pair, 0))
@@ -4234,7 +4246,10 @@ class TradingBot:
                             self.pair_prices[pair] = current_price
                             self.logger.info("NEW LISTING: added %s to trade_pairs for monitoring", pair)
                         self._breakout_timestamps[pair] = time.time()
-                        self.execute_buy_order(pair, current_price)
+                        # Listings are the most whipsaw-prone class — cap the
+                        # size well below core-pair dynamic sizing.
+                        _listing_cap = float(self.config.get('bot_settings', {}).get('listing_trade_eur', 30.0))
+                        self.execute_buy_order(pair, current_price, max_notional_eur=_listing_cap)
                         # Only mark bought if the buy actually landed —
                         # execute_buy_order can skip without raising
                         # (insufficient free EUR, preflight, min size). An
@@ -5148,11 +5163,14 @@ class TradingBot:
                 pass
         return snap
 
-    def execute_buy_order(self, pair, price):
+    def execute_buy_order(self, pair, price, max_notional_eur=None):
         """Place a post-only (maker) spot BUY order for *pair* at *price*.
 
         Position size is determined by ``_get_dynamic_trade_amount_eur()``
         (allocation % of available EUR, ATR-scaled, regime-adjusted).
+        ``max_notional_eur`` optionally caps the planned size below that —
+        used by the listings path so brand-new (whipsaw-prone) coins never
+        get full core-pair sizing (2026-07-08: WLD listing bought at ~EUR70).
         After a successful fill the ATR stop level is initialised and the
         trade is journalled to CSV and JSONL.  Rejects if available EUR is
         below ``min_trade_eur``.
@@ -5161,6 +5179,8 @@ class TradingBot:
             available_eur = self._available_eur_for_buy()
             min_trade_eur = float(self.config.get('risk_management', {}).get('min_trade_eur', 10.0))
             planned_eur = self._get_dynamic_trade_amount_eur(pair, available_eur)
+            if max_notional_eur is not None and max_notional_eur > 0:
+                planned_eur = min(planned_eur, float(max_notional_eur))
             # Early Notional-Guard: avoid attempting orders below the configured
             # min_auto_scale_notional which the execution layer may reject/scale.
             min_auto_notional = float(self.config.get('risk_management', {}).get('min_auto_scale_notional', 1.0))
