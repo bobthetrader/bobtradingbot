@@ -284,6 +284,7 @@ class TradingBot:
         self.position_qty = {}
         self.short_qty = {}
         self.short_entry_prices = {}
+        self._short_type: dict = {}   # pair -> "EVENT" | "BEAR" | "HEDGE" (in-memory; lost on restart)
         self.realized_pnl = {}
         self.fees_paid = {}
         self.trade_metrics = {}
@@ -2733,6 +2734,42 @@ class TradingBot:
         except Exception:
             return 0.1
 
+    def _check_event_short_entries(self):
+        """Conviction-stacked event shorts: panel + HL bias + whale flows +
+        bearish 1h trend must ALL align (see core.smart_money.event_short_ok).
+        All inputs are in-memory caches — zero network calls, never raises."""
+        try:
+            _scfg = self.config.get('shorting', {})
+            if not _scfg.get('event_shorts_enabled', False):
+                return
+            from core import smart_money as _smart
+            n_open_event = sum(1 for p, t in self._short_type.items()
+                               if t == "EVENT" and self.short_qty.get(p, 0) > 0)
+            for pair in list(self._core_trade_pairs):
+                if self.short_qty.get(pair, 0) > 0:
+                    continue
+                if (self.position_qty.get(pair, 0) or self.holdings.get(pair, 0)) > 0:
+                    continue   # never short against an open long
+                price = self.pair_prices.get(pair, 0)
+                if price <= 0:
+                    continue
+                _smf = _smart.last_for(pair)
+                ok, why = _smart.event_short_ok(
+                    panel=getattr(self, '_intelligence_score', None),
+                    hl_bias=_smf.get('hl_bias'),
+                    whale=_smf.get('whale_score'),
+                    ema_bullish=self._ema_bullish.get(pair),
+                    n_open_event=n_open_event,
+                    cfg=_scfg,
+                )
+                if ok:
+                    self.logger.warning("%s -> opening EVENT short on %s @ %.4f",
+                                        why, pair, price)
+                    self.execute_open_short_order(pair, price, short_type="EVENT")
+                    n_open_event += 1
+        except Exception as exc:
+            self.logger.debug("event-short scan failed: %s", exc)
+
     def _enforce_short_hard_stops(self):
         """Force-close EVERY open short past the hard backstop, in one pass.
 
@@ -2879,6 +2916,14 @@ class TradingBot:
                 # Stop loss: price moved against short by short_stop_loss_percent
                 if self.short_stop_loss_percent > 0 and short_change_percent <= -self.short_stop_loss_percent:
                     return pair, "SHORT_STOP_LOSS", short_change_percent
+                # EVENT shorts: unconditional time-stop — an event thesis that
+                # hasn't paid within N hours is dead; close regardless of P&L.
+                if self._short_type.get(pair) == "EVENT":
+                    _evt_hours = float(self.config.get('shorting', {}).get('event_time_stop_hours', 12))
+                    open_ts_evt = self.entry_timestamps.get(pair) or 0
+                    if open_ts_evt and (time.time() - open_ts_evt) / 3600 >= _evt_hours:
+                        return pair, "EVENT_SHORT_TIME_STOP", short_change_percent
+
                 # Time review: after 12h close if net P&L (after accrued position fees)
                 # won't survive the cost of another 4h rollover (0.02%)
                 open_ts = self.entry_timestamps.get(pair) or 0
@@ -4396,11 +4441,12 @@ class TradingBot:
                     # Backstop sweep first: cap any runaway shorts the single-exit
                     # check below can only close one-per-loop.
                     self._enforce_short_hard_stops()
+                    self._check_event_short_entries()
                     risk_pair, risk_type, change = self.check_take_profit_or_stop_loss()
                     if risk_pair:
                         _price = self.pair_prices.get(risk_pair, 0)
                         print(f"\n[{risk_type}] {risk_pair} at {change:.2f}%")
-                        if risk_type in ("SHORT_TAKE_PROFIT", "SHORT_STOP_LOSS", "SHORT_TIME_REVIEW"):
+                        if risk_type in ("SHORT_TAKE_PROFIT", "SHORT_STOP_LOSS", "SHORT_TIME_REVIEW", "EVENT_SHORT_TIME_STOP"):
                             self.execute_close_short_order(risk_pair, _price)
                         else:
                             # Only a genuine take-profit keeps the profit-target guard.
@@ -5360,16 +5406,19 @@ class TradingBot:
         except Exception as e:
             self.logger.error(f"Error executing sell order: {e}", exc_info=True)
 
-    def execute_open_short_order(self, pair, price):
+    def execute_open_short_order(self, pair, price, short_type=None):
         """Open a leveraged short position on *pair* at *price*.
 
         Uses the configured ``short_leverage`` (default 2Ã—) via Kraken margin.
         Position notional is capped at ``max_short_notional_eur``.  Only placed
         when no short is already open for this pair.  Blocked when
-        ``enable_live_shorts`` is False in config.
+        ``enable_live_shorts`` is False in config — EXCEPT short_type="EVENT",
+        which is gated by _check_event_short_entries via its own config flag.
         """
         try:
-            if not self.enable_live_shorts:
+            # EVENT shorts are gated by _check_event_short_entries (their own
+            # config flag); everything else still requires enable_live_shorts.
+            if short_type != "EVENT" and not self.enable_live_shorts:
                 return
             if self.short_qty.get(pair, 0.0) > 0:
                 return
@@ -5382,12 +5431,15 @@ class TradingBot:
                 for p in self.trade_pairs
             )
             _nav = max(_balance, self.get_eur_balance() or _balance)
-            if self._btc_downtrend:
+            if short_type == "EVENT":
+                # Fixed small size for event shorts — cap only, no NAV scaling
+                notional = float(self.max_short_notional_eur)
+            elif self._btc_downtrend:
                 short_type = "BEAR"
-                notional = _nav * 0.05   # 5% of NAV â€” BTC regime confirms downtrend
+                notional = _nav * 0.05   # 5% of NAV — BTC regime confirms downtrend
             else:
                 short_type = "HEDGE"
-                notional = _nav * 0.03   # 3% of NAV â€” defensive hedge short
+                notional = _nav * 0.03   # 3% of NAV — defensive hedge short
             notional = min(self.max_short_notional_eur, max(notional, self._get_trade_amount_eur() * 0.3))
             if notional <= 0 or price <= 0:
                 return
@@ -5402,6 +5454,7 @@ class TradingBot:
                 self.short_qty[pair] = volume
                 self.short_entry_prices[pair] = price
                 self.entry_timestamps[pair] = int(now_ts)
+                self._short_type[pair] = short_type
                 self._persist_position_meta({
                     'pair': pair, 'side': 'short',
                     'qty': float(volume),
@@ -5411,9 +5464,24 @@ class TradingBot:
                     'entry_ts': int(now_ts),
                 })
                 self.logger.info("SHORT OPEN SUCCESS: %s", result)
+                # EVENT shorts journal their full gate stack for the review
+                _evt_features = {}
+                if short_type == "EVENT":
+                    try:
+                        from core import smart_money as _smart
+                        _smf = _smart.last_for(pair)
+                        _evt_features = {
+                            "intelligence_score": round(float(self._intelligence_score), 2),
+                            "hl_bias": _smf.get("hl_bias"),
+                            "whale_score": _smf.get("whale_score"),
+                            "hour_utc": datetime.utcnow().hour,
+                        }
+                    except Exception:
+                        _evt_features = {}
                 self._finalise_trade('SHORT_OPEN', pair, volume, price, 0.0,
                                      'SHORT_OPEN_EXECUTED',
-                                     extra={'notional': notional, 'short_type': short_type})
+                                     extra={'notional': notional, 'short_type': short_type,
+                                            'features': _evt_features})
             else:
                 self.logger.error(f"SHORT OPEN FAILED for {pair}")
         except Exception as e:
@@ -5445,6 +5513,7 @@ class TradingBot:
             if result:
                 self.short_qty[pair] = 0.0
                 self.short_entry_prices[pair] = 0.0
+                self._short_type.pop(pair, None)
                 self.entry_timestamps[pair] = None
                 self._remove_position_meta(pair)
                 self._update_trade_metrics(pair, pnl_eur, notional=qty * price)

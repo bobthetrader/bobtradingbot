@@ -156,6 +156,16 @@ initial_balance = 500.0
 # are the profit engine (+EUR6.76, 56% WR). Removing shorts recovers the drag.
 # Existing open shorts are still managed/closed (entry gate only); set true to resume.
 enabled = false
+# EVENT-driven shorts (2026-07-08): a separate, far stricter entry path that
+# does NOT depend on `enabled` above. Fires only when news panel + Hyperliquid
+# top-trader bias + whale flows + bearish 1h trend ALL align (see
+# docs/superpowers/specs/2026-07-08-event-shorts-design.md). Max 2 x EUR30.
+event_shorts_enabled = true
+event_panel_max = -2.0        # AI panel must be <= this (news risk-off)
+event_hl_max = -2.5           # HL top traders net short the pair
+event_whale_max = -1.5        # whale flows bearish
+event_max_concurrent = 2
+event_time_stop_hours = 12    # force-close EVENT shorts after this, any P&L
 leverage = "2"
 max_short_notional_eur = 30.0
 short_take_profit_percent = 1.4
