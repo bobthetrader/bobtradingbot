@@ -112,7 +112,7 @@ autonomy_monitor.out
 
 # Temp/scratch scripts
 tmp_*.py
-test_*.py
+/test_*.py
 force_test_*.py
 debug*.py
 
