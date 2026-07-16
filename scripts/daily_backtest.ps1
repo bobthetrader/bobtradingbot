@@ -66,5 +66,10 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# Keep a dated copy so view_backtest.bat can list report history
+$REPORTS_DIR = "$BOT_DIR\backtest\reports"
+New-Item -ItemType Directory -Force -Path $REPORTS_DIR | Out-Null
+Copy-Item "$BOT_DIR\backtest\journal_report.html" "$REPORTS_DIR\journal_$(Get-Date -Format 'yyyy-MM-dd').html" -Force
+
 Log "Report: $BOT_DIR\backtest\journal_report.html"
 Log "=== Done ==="

@@ -4,12 +4,12 @@ setlocal enabledelayedexpansion
 set REPORT_DIR=D:\Tradingbot\backtest\reports
 
 echo.
-echo  Backtest Reports
-echo  ================
+echo  Journal / Backtest Reports
+echo  ==========================
 echo.
 
 set count=0
-for /f "delims=" %%f in ('dir /b /o-d "%REPORT_DIR%\scalper_*.html" 2^>nul') do (
+for /f "delims=" %%f in ('dir /b /o-d "%REPORT_DIR%\journal_*.html" "%REPORT_DIR%\scalper_*.html" 2^>nul') do (
     set /a count+=1
     set "file!count!=%%f"
     echo  [!count!] %%f
