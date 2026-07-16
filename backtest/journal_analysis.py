@@ -33,7 +33,9 @@ def load_trades(path: str):
     open_buys = defaultdict(list)     # pair -> [features dicts] FIFO
     open_shorts = {}                  # pair -> {short_type, features}
     out, bad = [], 0
-    with open(path, "r", encoding="utf-8") as f:
+    # utf-8-sig: the PS 5.1 pull script writes a BOM, which would otherwise
+    # make json.loads reject the first journal record
+    with open(path, "r", encoding="utf-8-sig") as f:
         for line in f:
             line = line.strip()
             if not line:
