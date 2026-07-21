@@ -4,8 +4,10 @@ Combines the market-level whale-flow score and the per-coin Hyperliquid
 top-trader bias into one action for the buy gate:
   veto    : block the buy (either component strongly bearish)
   boost   : size x boost_size_mult + entry bar lowered by boost_min_score_delta
-  neutral : no effect
-Missing data is neutral by construction (both sources return 0.0 on failure).
+  neutral : squeezed — size x neutral_size_mult + entry bar raised by
+            neutral_min_score_delta (weight shifted toward boosted entries)
+Missing data is neutral by construction (both sources return 0.0 on failure),
+so a data outage trades smaller and pickier, never blind at full size.
 """
 from __future__ import annotations
 import logging
@@ -22,6 +24,11 @@ _DEFAULTS = {
     "whale_veto_score": -2.5, "whale_boost_score": 2.5,
     "hl_veto_score": -2.5, "hl_boost_score": 2.5,
     "boost_size_mult": 1.3, "boost_min_score_delta": -2.0,
+    # Un-boosted entries are squeezed (smaller size, higher bar) so boosted
+    # trades carry more of the book — journal evidence 2026-07-21: boost WR
+    # 66.7% vs neutral 44.6%. Data outages read as neutral, so an outage
+    # means smaller/pickier entries by design. Set 1.0/0.0 to opt out.
+    "neutral_size_mult": 0.75, "neutral_min_score_delta": 1.5,
 }
 
 
@@ -54,7 +61,8 @@ def decide(whale_score: float, hl_bias: float, cfg: dict
         return ("boost", f"{src} (whale {whale_score:+.1f} / HL {hl_bias:+.1f})",
                 float(c["boost_size_mult"]), float(c["boost_min_score_delta"]))
 
-    return "neutral", "", 1.0, 0.0
+    return ("neutral", "no smart-money boost",
+            float(c["neutral_size_mult"]), float(c["neutral_min_score_delta"]))
 
 
 def evaluate(pair: str, cfg: dict = None, refresh: bool = False) -> dict:

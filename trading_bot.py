@@ -1094,8 +1094,8 @@ class TradingBot:
             amount = max(amount, min_target)
 
         # Smart-money boost: scale up when whales/top traders are bullish.
-        # Set by _execute_buy_gate this loop; consumed once so a stale boost
-        # from hours earlier can't leak into a later non-gate buy path
+        # Set by _execute_buy_gate this loop; consumed once so a stale
+        # boost/squeeze multiplier from hours earlier can't leak into a later non-gate buy path
         # (new-listing, FORCE_BUY). The gate sets it immediately before
         # execute_buy_order, so the legit flow still sees it.
         amount *= float(getattr(self, '_smart_boost', {}).pop(pair, 1.0))
@@ -3759,8 +3759,9 @@ class TradingBot:
 
         # Smart-money layer: whale exchange flows (market) + Hyperliquid
         # top-trader bias (per-coin). Veto blocks; boost lowers the entry bar
-        # here and scales size in _get_dynamic_trade_amount_eur. Missing data
-        # is neutral. See docs/superpowers/specs/2026-07-06-smart-money-layer-design.md
+        # and scales size up; neutral (incl. missing data) is SQUEEZED — bar
+        # raised + size cut — so boosted entries carry more of the book.
+        # See docs/superpowers/specs/2026-07-21-smart-money-neutral-squeeze-design.md
         _smart_mult, _smart_delta = 1.0, 0.0
         try:
             from core import smart_money as _smart
@@ -3768,9 +3769,12 @@ class TradingBot:
             if _sm["action"] == "veto":
                 self.logger.info("BUY skipped for %s: %s", pair, _sm["reason"])
                 return
+            _smart_mult, _smart_delta = _sm["size_mult"], _sm["min_score_delta"]
             if _sm["action"] == "boost":
-                _smart_mult, _smart_delta = _sm["size_mult"], _sm["min_score_delta"]
                 self.logger.info("BUY boosted for %s: %s (size x%.2f, min %+0.1f)",
+                                 pair, _sm["reason"], _smart_mult, _smart_delta)
+            elif _smart_mult != 1.0 or _smart_delta != 0.0:
+                self.logger.info("BUY squeezed for %s: %s (size x%.2f, min %+0.1f)",
                                  pair, _sm["reason"], _smart_mult, _smart_delta)
         except Exception as _sme:
             self.logger.debug("smart_money evaluate failed for %s: %s", pair, _sme)
@@ -3790,9 +3794,9 @@ class TradingBot:
         if score < _effective_min:
             self.logger.info(
                 "BUY skipped for %s: score %.2f < effective_min %.2f "
-                "(pair_base=%.2f intel_adj=%+.2f lunar_adj=%+.2f onchain_adj=%+.2f profile=%s)",
+                "(pair_base=%.2f intel_adj=%+.2f lunar_adj=%+.2f onchain_adj=%+.2f smart_adj=%+.2f profile=%s)",
                 pair, score, _effective_min, _pair_min_score, _intel_adj,
-                _lunar_adj, _onchain_adj,
+                _lunar_adj, _onchain_adj, _smart_delta,
                 self._pair_profile(pair).get('strategy', '?')
             )
             return

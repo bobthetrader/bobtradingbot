@@ -156,8 +156,16 @@ def test_decide():
     # boost (either component) — no stacking, one boost
     a, reason, mult, delta = decide(3.0, 3.0, cfg)
     assert a == "boost" and mult == 1.3 and delta == -2.0, (a, mult, delta)
-    # dead zone -> neutral, no effect
+    # dead zone -> neutral, squeezed by defaults (weight shifted to boost)
     a, reason, mult, delta = decide(1.0, -1.0, cfg)
+    assert a == "neutral" and mult == 0.75 and delta == 1.5, (a, mult, delta)
+    # neutral squeeze follows explicit config
+    a, _, mult, delta = decide(1.0, -1.0, {**cfg, "neutral_size_mult": 0.5,
+                                           "neutral_min_score_delta": 2.0})
+    assert a == "neutral" and mult == 0.5 and delta == 2.0, (a, mult, delta)
+    # squeeze opt-out restores the old no-effect neutral
+    a, _, mult, delta = decide(1.0, -1.0, {**cfg, "neutral_size_mult": 1.0,
+                                           "neutral_min_score_delta": 0.0})
     assert a == "neutral" and mult == 1.0 and delta == 0.0, (a, mult, delta)
     # veto wins over boost when components disagree
     a, _, _, _ = decide(-3.0, 4.0, cfg)

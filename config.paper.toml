@@ -97,6 +97,8 @@ hl_veto_score = -2.5        # hl_bias[pair] <= this -> block buys on that pair
 hl_boost_score = 2.5        # hl_bias[pair] >= this -> boost
 boost_size_mult = 1.3       # position size x1.3 (still inside EUR70/cash caps)
 boost_min_score_delta = -2.0 # entry bar lowered while boosted
+neutral_size_mult = 0.75    # un-boosted entries sized DOWN (weight -> boost; 2026-07-21)
+neutral_min_score_delta = 1.5 # entry bar RAISED for un-boosted entries (1.0/0.0 = opt out)
 min_whale_eth = 250.0       # ignore transfers below this (ETH)
 min_whale_stable_usd = 500000.0
 hl_roster_size = 20         # top traders followed
