@@ -754,18 +754,25 @@ def _build_page() -> str:
         model_html = '<div class="grey" style="padding:8px 0">Waiting for first AI panel refresh (up to 10 min)…</div>'
 
     # ── AI Trade Desk ─────────────────────────────────────────────────────────
-    _td_decisions = _read_jsonl_tail("agent_decisions.jsonl", n=8)
+    # Live decision window. Costs ZERO extra tokens: the agent's reasoning is
+    # part of every decision it already returns; this just renders the journal.
+    _td_decisions = _read_jsonl_tail("agent_decisions.jsonl", n=30)
     _td_policy    = _read_json("agent_policy.json") or {}
     _td_tunes     = _read_jsonl_tail("agent_tuner_log.jsonl", n=1)
 
     # time.gmtime, not datetime: a later local `from datetime import ...`
     # (line ~545) shadows the module import inside this function scope
     _td_today = time.strftime("%Y-%m-%d", time.gmtime())
-    _td_calls_today = sum(1 for d in _td_decisions
-                          if str(d.get("ts", "")).startswith(_td_today) and d.get("source") == "agent")
+    _td_t = [d for d in _td_decisions if str(d.get("ts", "")).startswith(_td_today)]
+    _td_buys      = sum(1 for d in _td_t if d.get("source") == "agent" and d.get("decision") == "buy")
+    _td_skips     = sum(1 for d in _td_t if d.get("source") == "agent" and d.get("decision") == "skip")
+    _td_fallbacks = sum(1 for d in _td_t if d.get("source") != "agent")
     if _td_decisions:
-        trade_desk_badge = (f'<span class="badge" style="background:#21262d;color:#58a6ff">'
-                            f'{_td_calls_today} decisions today (of last {len(_td_decisions)} shown)</span>')
+        trade_desk_badge = (
+            f'<span class="badge" style="background:#00c85122;color:#00c851">today: {_td_buys} buy</span> &nbsp;'
+            f'<span class="badge" style="background:#ffbb3322;color:#ffbb33">{_td_skips} skip</span> &nbsp;'
+            f'<span class="badge" style="background:#21262d;color:#8b949e">{_td_fallbacks} fallback</span>'
+        )
         _td_rows = ""
         for d in reversed(_td_decisions):
             _src = d.get("source", "?")
@@ -774,16 +781,26 @@ def _build_page() -> str:
                 _col  = "#00c851" if _dec == "buy" else "#ffbb33"
                 _what = (f'<span style="color:{_col};font-weight:bold">{_dec.upper()}</span>'
                          f' <span style="color:#8b949e">x{d.get("size_mult", "–")}'
-                         f' conf {d.get("confidence", "–")}</span>')
+                         f' conf {d.get("confidence", "–")}'
+                         f' &bull; {d.get("latency_ms", 0) // 1000}s</span>')
             else:
                 _what = f'<span style="color:#8b949e">fallback ({_src})</span>'
+            _ctx = d.get("ctx") or {}
+            _ctx_bits = " ".join(
+                f'{k}={_ctx.get(k)}' for k in ("score", "rsi_1h", "smart_action", "panel_score")
+                if _ctx.get(k) is not None)
             _td_rows += (
-                f'<tr><td class="grey" style="font-size:11px;white-space:nowrap">{str(d.get("ts", ""))[:16].replace("T", " ")}</td>'
-                f'<td>{d.get("pair", "?")}</td><td>{_what}</td>'
-                f'<td style="font-size:11px;color:#8b949e">{str(d.get("reason", ""))[:120]}</td></tr>'
+                f'<tr><td class="grey" style="font-size:11px;white-space:nowrap;vertical-align:top">'
+                f'{str(d.get("ts", ""))[:16].replace("T", " ")}</td>'
+                f'<td style="vertical-align:top">{d.get("pair", "?")}'
+                f'<div style="font-size:10px;color:#8b949e">{_ctx_bits}</div></td>'
+                f'<td style="vertical-align:top;white-space:nowrap">{_what}</td>'
+                f'<td style="font-size:12px;color:#c9d1d9">{str(d.get("reason", ""))[:300]}</td></tr>'
             )
-        trade_desk_html = ('<table><tr><th>Time</th><th>Pair</th><th>Decision</th><th>Reason</th></tr>'
-                           + _td_rows + '</table>')
+        trade_desk_html = (
+            '<div style="max-height:320px;overflow-y:auto">'
+            '<table style="width:100%"><tr><th>Time</th><th>Pair</th><th>Decision</th><th>Agent reasoning</th></tr>'
+            + _td_rows + '</table></div>')
     else:
         trade_desk_badge = '<span class="badge" style="background:#21262d;color:#8b949e">no decisions yet</span>'
         trade_desk_html  = ('<div class="grey" style="padding:8px 0">Waiting for the first gate-surviving '

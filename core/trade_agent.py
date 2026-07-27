@@ -47,7 +47,7 @@ PORTFOLIO STATE:
 {portfolio}
 
 Respond with ONLY a single JSON object on one line, no markdown fences, no other text:
-{{"decision": "buy" or "skip", "size_mult": number 0.5-1.3, "confidence": number 0.0-1.0, "reason": "max 200 chars"}}
+{{"decision": "buy" or "skip", "size_mult": number 0.5-1.3, "confidence": number 0.0-1.0, "reason": "max 300 chars — name the specific signals that drove the call, this is shown on the trading dashboard"}}
 
 Guidance: size_mult above 1.0 only with real confluence (multiple independent bullish signals); below 1.0 when taking a defensible but weaker setup; skip beats a low-conviction buy. Do not use any tools."""
 
@@ -226,7 +226,7 @@ class TradeAgent:
             size = max(SIZE_MULT_MIN, min(SIZE_MULT_MAX, size))
             conf = float(obj.get("confidence", 0.5))
             conf = max(0.0, min(1.0, conf))
-            reason = str(obj.get("reason", ""))[:200]
+            reason = str(obj.get("reason", ""))[:300]
             return {"decision": decision, "size_mult": round(size, 2),
                     "confidence": round(conf, 2), "reason": reason}
         except Exception:
