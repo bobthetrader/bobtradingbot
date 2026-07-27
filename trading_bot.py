@@ -390,6 +390,21 @@ class TradingBot:
         self._kraken_headlines: list = []
         # CoinGecko pre-watchlist — monitors new CoinGecko coins against Kraken
         self._coingecko_prewatchlist: dict = _load_prewatchlist() if _LISTINGS_AVAILABLE else {}
+
+        # AI Trade Desk (core/trade_agent.py): final buy/skip + sizing decision
+        # via the Claude Code CLI on the Max subscription (no metered API bill).
+        # Gated by [trade_agent] enabled; every failure falls back to rules.
+        self._trade_agent = None
+        self._agent_last_decision: dict = {}   # pair -> decision meta for the entry snapshot
+        self._agent_tune_last_date = None
+        try:
+            from core.trade_agent import TradeAgent as _TradeAgent
+            self._trade_agent = _TradeAgent(
+                data_dir=os.path.join(os.path.dirname(__file__), 'data'),
+                config_getter=lambda: self.config.get('trade_agent', {}),
+            )
+        except Exception as _tae:
+            self.logger.warning("TradeAgent init failed (rules-only mode): %s", _tae)
         self._coingecko_last_check: float = 0.0
         self._coingecko_check_interval: int = 1800   # poll CoinGecko every 30 min
         self._prewatchlist_kraken_check: float = 0.0
@@ -1101,6 +1116,11 @@ class TradingBot:
         # (new-listing, FORCE_BUY). The gate sets it immediately before
         # execute_buy_order, so the legit flow still sees it.
         amount *= float(getattr(self, '_smart_boost', {}).pop(pair, 1.0))
+
+        # AI Trade Desk sizing: set by _execute_buy_gate immediately before
+        # execute_buy_order; consumed once (same stale-multiplier guard as
+        # the smart-money boost above). Hard-clamped to 0.5-1.3 at the source.
+        amount *= float(getattr(self, '_agent_boost', {}).pop(pair, 1.0))
 
         # Cap at configured max base amount and available funds
         return min(base_amount * 2.0, amount, available_eur * 0.95)
@@ -2235,6 +2255,41 @@ class TradingBot:
             except Exception as exc:
                 self.logger.error("Daily report save failed: %s", exc)
         _thr.Thread(target=_worker, daemon=True, name="DailyReport").start()
+
+    def _maybe_run_agent_tuner(self):
+        """Nightly AI trade-desk self-tune (core/agent_tuner.py) once per UTC
+        day at [trade_agent] tune_time_utc (default 21:15, after the trading
+        window closes). Runs in a background thread; a failed tune leaves the
+        previous policy untouched."""
+        _ta_cfg = self.config.get('trade_agent', {})
+        if not bool(_ta_cfg.get('enabled', False)):
+            return
+        from datetime import datetime as _dt, timezone as _tz
+        now_utc = _dt.now(tz=_tz.utc)
+        today = now_utc.strftime("%Y-%m-%d")
+        if self._agent_tune_last_date == today:
+            return
+        try:
+            target_h, target_m = (int(x) for x in str(_ta_cfg.get('tune_time_utc', '21:15')).split(':'))
+        except Exception:
+            target_h, target_m = 21, 15
+        if now_utc.hour != target_h or now_utc.minute > target_m + 10:
+            return
+        self._agent_tune_last_date = today
+        import threading as _thr
+
+        def _worker():
+            try:
+                from core.agent_tuner import run_nightly_tune
+                run_nightly_tune(
+                    data_dir=os.path.join(os.path.dirname(__file__), 'data'),
+                    config=_ta_cfg,
+                    paper_mode=getattr(self.api_client, 'paper_mode', True),
+                    price_lookup=lambda p: self.pair_prices.get(p),
+                )
+            except Exception as exc:
+                self.logger.error("Agent tuner run failed: %s", exc)
+        _thr.Thread(target=_worker, daemon=True, name="AgentTuner").start()
 
     def _refresh_cashflows_from_ledger(self, force=False):
         now_ts = int(time.time())
@@ -3580,6 +3635,7 @@ class TradingBot:
 
         # Daily email report
         self._maybe_send_daily_report()
+        self._maybe_run_agent_tuner()
 
         # Refresh Kraken fee schedule once per 24h
         self._maybe_refresh_fees()
@@ -3771,6 +3827,7 @@ class TradingBot:
         # raised + size cut — so boosted entries carry more of the book.
         # See docs/superpowers/specs/2026-07-21-smart-money-neutral-squeeze-design.md
         _smart_mult, _smart_delta = 1.0, 0.0
+        _sm = {}   # smart-money evaluation, also passed to the AI trade desk below
         try:
             from core import smart_money as _smart
             _sm = _smart.evaluate(pair, self.config.get('smart_money', {}))
@@ -3896,6 +3953,45 @@ class TradingBot:
         if float(getattr(self, 'short_qty', {}).get(pair, 0)) > 0:
             self.logger.info("BUY blocked for %s: open short exists â€” close short first", pair)
             return
+
+        # AI Trade Desk: final decision on the gate-surviving candidate.
+        # decide() returns None on ANY failure (CLI missing, timeout, cap,
+        # malformed output) -> the buy proceeds exactly as the rules decided.
+        if self._trade_agent is not None and self._trade_agent.enabled():
+            try:
+                _held_pairs = [p for p in self.trade_pairs
+                               if (self.position_qty.get(p, 0) or self.holdings.get(p, 0)) > 0]
+                _verdict = self._trade_agent.decide({
+                    "pair": pair,
+                    "price": price,
+                    "score": round(float(score), 2),
+                    "strategy": self._pair_profile(pair).get('strategy'),
+                    "rsi_1h": self._rsi_1h.get(pair),
+                    "smart_action": _sm.get("action"),
+                    "whale_score": _sm.get("whale_score"),
+                    "hl_bias": _sm.get("hl_bias"),
+                    "panel_score": round(float(_iscore), 2),
+                    "hour_utc": datetime.utcnow().hour,
+                    "open_positions": _held_pairs,
+                    "open_count": _open_pos,
+                    "max_positions": self.max_open_positions,
+                    "portfolio_eur": round(float(getattr(self, '_last_portfolio_value', 0) or 0), 2),
+                    "consecutive_losses": int(getattr(self, 'consecutive_losses', 0) or 0),
+                })
+            except Exception as _tde:
+                self.logger.warning("TradeAgent decide error for %s: %s", pair, _tde)
+                _verdict = None
+            if _verdict is not None:
+                if _verdict["decision"] == "skip":
+                    self.logger.info("BUY skipped for %s by AI trade desk (conf %.2f): %s",
+                                     pair, _verdict["confidence"], _verdict["reason"])
+                    return
+                self.logger.info("BUY approved for %s by AI trade desk (size x%.2f, conf %.2f): %s",
+                                 pair, _verdict["size_mult"], _verdict["confidence"], _verdict["reason"])
+                if not hasattr(self, '_agent_boost'):
+                    self._agent_boost = {}
+                self._agent_boost[pair] = float(_verdict["size_mult"])
+                self._agent_last_decision[pair] = _verdict
 
         self._breakout_timestamps[pair] = time.time()
         self.execute_buy_order(pair, price)
@@ -5166,6 +5262,17 @@ class TradingBot:
                 snap["hl_n_long"] = _smf.get("hl_n_long")
                 snap["hl_n_short"] = _smf.get("hl_n_short")
                 snap["smart_action"] = _smf.get("action")
+            except Exception:
+                pass
+
+            # AI trade desk meta (set by _execute_buy_gate; consumed once) so
+            # closed trades can be split agent-decided vs rules in analysis
+            try:
+                _ad = self._agent_last_decision.pop(pair, None)
+                if _ad:
+                    snap["agent_decided"] = True
+                    snap["agent_confidence"] = _num(_ad.get("confidence"))
+                    snap["agent_size_mult"] = _num(_ad.get("size_mult"))
             except Exception:
                 pass
         except Exception as exc:

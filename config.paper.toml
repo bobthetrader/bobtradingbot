@@ -151,6 +151,19 @@ min_entry_rsi_1h = 50
 enabled = true
 eval_every_n_trades = 10
 
+[trade_agent]
+# AI Trade Desk (2026-07-27): a real-time Claude agent makes the FINAL buy/skip
+# + sizing call on every candidate that survives the rule gates, and self-tunes
+# nightly from the trade journal (playbook + bounded knobs in data/agent_policy.json).
+# Runs via the Claude Code CLI on the Max subscription (CLAUDE_CODE_OAUTH_TOKEN
+# in .env, from `claude setup-token`) — NO metered API billing; worst case is a
+# rate limit and every failure falls back to pure rule behaviour.
+enabled = true
+max_calls_per_day = 40      # hard stop, then rules-only for the rest of the day
+timeout_seconds = 25        # per decision; CLI failure -> rules
+tune_time_utc = "21:15"     # nightly self-tune, after the 08-20 trading window
+tune_timeout_seconds = 120
+
 [logging]
 log_level = "INFO"
 log_to_file = true

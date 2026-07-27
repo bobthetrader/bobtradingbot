@@ -251,6 +251,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {model_html}
     </div>
 
+    <!-- AI Trade Desk card -->
+    <div class="card full">
+      <h2>AI Trade Desk &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Claude Max plan &bull; final buy/skip + sizing &bull; nightly self-tune</span> &nbsp; {trade_desk_badge}</h2>
+      {trade_desk_html}
+    </div>
+
     <!-- Recent trades card -->
     <div class="card full">
       <h2>Recent Trades</h2>
@@ -747,6 +753,57 @@ def _build_page() -> str:
     else:
         model_html = '<div class="grey" style="padding:8px 0">Waiting for first AI panel refresh (up to 10 min)…</div>'
 
+    # ── AI Trade Desk ─────────────────────────────────────────────────────────
+    _td_decisions = _read_jsonl_tail("agent_decisions.jsonl", n=8)
+    _td_policy    = _read_json("agent_policy.json") or {}
+    _td_tunes     = _read_jsonl_tail("agent_tuner_log.jsonl", n=1)
+
+    # time.gmtime, not datetime: a later local `from datetime import ...`
+    # (line ~545) shadows the module import inside this function scope
+    _td_today = time.strftime("%Y-%m-%d", time.gmtime())
+    _td_calls_today = sum(1 for d in _td_decisions
+                          if str(d.get("ts", "")).startswith(_td_today) and d.get("source") == "agent")
+    if _td_decisions:
+        trade_desk_badge = (f'<span class="badge" style="background:#21262d;color:#58a6ff">'
+                            f'{_td_calls_today} decisions today (of last {len(_td_decisions)} shown)</span>')
+        _td_rows = ""
+        for d in reversed(_td_decisions):
+            _src = d.get("source", "?")
+            if _src == "agent":
+                _dec  = d.get("decision", "?")
+                _col  = "#00c851" if _dec == "buy" else "#ffbb33"
+                _what = (f'<span style="color:{_col};font-weight:bold">{_dec.upper()}</span>'
+                         f' <span style="color:#8b949e">x{d.get("size_mult", "–")}'
+                         f' conf {d.get("confidence", "–")}</span>')
+            else:
+                _what = f'<span style="color:#8b949e">fallback ({_src})</span>'
+            _td_rows += (
+                f'<tr><td class="grey" style="font-size:11px;white-space:nowrap">{str(d.get("ts", ""))[:16].replace("T", " ")}</td>'
+                f'<td>{d.get("pair", "?")}</td><td>{_what}</td>'
+                f'<td style="font-size:11px;color:#8b949e">{str(d.get("reason", ""))[:120]}</td></tr>'
+            )
+        trade_desk_html = ('<table><tr><th>Time</th><th>Pair</th><th>Decision</th><th>Reason</th></tr>'
+                           + _td_rows + '</table>')
+    else:
+        trade_desk_badge = '<span class="badge" style="background:#21262d;color:#8b949e">no decisions yet</span>'
+        trade_desk_html  = ('<div class="grey" style="padding:8px 0">Waiting for the first gate-surviving '
+                            'buy candidate — the agent then makes the final call and it appears here.</div>')
+
+    _td_playbook = (_td_policy.get("playbook") or "").strip()
+    if _td_playbook:
+        _td_tuned = str(_td_policy.get("updated_at", ""))[:16].replace("T", " ")
+        _td_knobs = _td_policy.get("knobs", {})
+        _td_reasoning = ""
+        if _td_tunes and _td_tunes[-1].get("status") == "ok":
+            _td_reasoning = str(_td_tunes[-1].get("reasoning", ""))[:300]
+        trade_desk_html += (
+            f'<div style="margin-top:10px"><b style="color:#8b949e;font-size:11px">PLAYBOOK '
+            f'(nightly self-tune, {_td_tuned} UTC &bull; knobs {_td_knobs})</b>'
+            f'<div style="font-size:12px;color:#e6edf3;white-space:pre-wrap;padding:6px 0">{_td_playbook[:800]}</div>'
+            + (f'<div style="font-size:11px;color:#8b949e">tuner: {_td_reasoning}</div>' if _td_reasoning else "")
+            + '</div>'
+        )
+
     # ── Open positions ────────────────────────────────────────────────────────
     positions = {**status.get("open_positions", {})}
     shorts    = status.get("open_shorts", {})
@@ -992,6 +1049,8 @@ def _build_page() -> str:
         listings_html = listings_html,
         sharpe_html   = sharpe_html,
         model_html    = model_html,
+        trade_desk_badge = trade_desk_badge,
+        trade_desk_html  = trade_desk_html,
         positions_html= positions_html,
         trades_html    = trades_html,
         intel_log_html          = intel_log_html,
