@@ -4355,6 +4355,47 @@ class TradingBot:
                             symbol, current_price,
                             ((current_price - entry["initial_price"]) / entry["initial_price"]) * 100
                         )
+                        # AI Trade Desk gate — FAIL-CLOSED on this path, unlike
+                        # the main signal path: rule-only listing buys were a
+                        # proven loser (LISTING_STOP_LOSS 9/9, net -6.15 EUR to
+                        # 2026-07-27), so no agent verdict = no buy. A skip is
+                        # not re-asked for 30 min (trend re-triggers every loop
+                        # and would drain the daily call cap).
+                        _listing_cap = float(self.config.get('bot_settings', {}).get('listing_trade_eur', 30.0))
+                        _ta_cfg = self.config.get('trade_agent', {})
+                        if bool(_ta_cfg.get('listing_decisions', True)):
+                            if entry.get("agent_skip_until", 0) > now:
+                                continue
+                            _lv = None
+                            if self._trade_agent is not None and self._trade_agent.enabled():
+                                try:
+                                    _lv = self._trade_agent.decide({
+                                        "pair": pair,
+                                        "price": current_price,
+                                        "setup": "NEW_LISTING (no trade history; past rule-based listing buys lost 9/9 stop-outs — approve only exceptional setups)",
+                                        "listing_source": entry.get("source"),
+                                        "detected_price": entry.get("initial_price"),
+                                        "move_since_detection_pct": round(
+                                            ((current_price - entry["initial_price"]) / entry["initial_price"]) * 100, 2),
+                                        "minutes_since_detection": round(minutes_since_detection),
+                                        "cap_eur": _listing_cap,
+                                        "panel_score": round(float(getattr(self, '_intelligence_score', 0.0)), 2),
+                                        "hour_utc": datetime.utcnow().hour,
+                                        "open_count": self._count_open_positions(),
+                                        "max_positions": self.max_open_positions,
+                                        "portfolio_eur": round(float(getattr(self, '_last_portfolio_value', 0) or 0), 2),
+                                    })
+                                except Exception as _lde:
+                                    self.logger.warning("TradeAgent listing decide error for %s: %s", symbol, _lde)
+                            if _lv is None or _lv["decision"] != "buy":
+                                _why = _lv["reason"] if _lv else "no agent verdict (fail-closed on listings)"
+                                self.logger.info("NEW LISTING skipped for %s by AI trade desk: %s", symbol, _why)
+                                entry["agent_skip_until"] = now + 1800
+                                continue
+                            self.logger.info("NEW LISTING approved for %s by AI trade desk (size x%.2f, conf %.2f): %s",
+                                             symbol, _lv["size_mult"], _lv["confidence"], _lv["reason"])
+                            _listing_cap = round(_listing_cap * float(_lv["size_mult"]), 2)
+                            self._agent_last_decision[pair] = _lv
                         # Add to trade_pairs so TP/SL and price feeds monitor it
                         if pair not in self.trade_pairs:
                             self.trade_pairs.append(pair)
@@ -4363,7 +4404,6 @@ class TradingBot:
                         self._breakout_timestamps[pair] = time.time()
                         # Listings are the most whipsaw-prone class — cap the
                         # size well below core-pair dynamic sizing.
-                        _listing_cap = float(self.config.get('bot_settings', {}).get('listing_trade_eur', 30.0))
                         self.execute_buy_order(pair, current_price, max_notional_eur=_listing_cap)
                         # Only mark bought if the buy actually landed —
                         # execute_buy_order can skip without raising

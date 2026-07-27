@@ -30,10 +30,13 @@ dynamic_pairs_refresh_min = 15
 # Journal-proven losers the screener must never re-add (2026-07-27):
 # DOT 31.6% WR -6.10 | WLD 20% WR -2.83 | HYPE 40% WR -3.01
 dynamic_pairs_exclude = [ "DOTEUR", "WLDEUR", "HYPEEUR",]
-# New-listing buys OFF (2026-07-27): listing trades net -6.15 EUR — the
-# LISTING_STOP_LOSS exit fired 9/9 times at 0% WR vs only +0.77 EUR across 6
-# profit-takes. Watchlist/exit management still runs; set true to resume buys.
-listings_enabled = false
+# New-listing buys RE-OPENED BEHIND THE AI TRADE DESK (2026-07-27 evening).
+# Rule-only listing buys were a proven loser (LISTING_STOP_LOSS 9/9, net -6.15
+# EUR) so this path is FAIL-CLOSED: every listing buy needs an explicit agent
+# "buy" verdict ([trade_agent] listing_decisions) — no verdict means no buy,
+# and a skip is not re-asked for 30 min. Size = listing_trade_eur x agent
+# size_mult (0.5-1.3). Set false to stop watching new coins entirely.
+listings_enabled = true
 # New-listing buys are capped at this notional — brand-new coins are the most
 # whipsaw-prone class and must not get full core-pair sizing (added 2026-07-08
 # after WLD listing bought at ~EUR70 full dynamic size).
@@ -163,6 +166,9 @@ max_calls_per_day = 40      # hard stop, then rules-only for the rest of the day
 timeout_seconds = 25        # per decision; CLI failure -> rules
 tune_time_utc = "21:15"     # nightly self-tune, after the 08-20 trading window
 tune_timeout_seconds = 120
+# Agent also gates NEW-LISTING buys (fail-closed — no verdict = no buy, since
+# rule-only listing buying was 9/9 stop-outs). false = listings never bought.
+listing_decisions = true
 
 [logging]
 log_level = "INFO"

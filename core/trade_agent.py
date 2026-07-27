@@ -157,6 +157,9 @@ class TradeAgent:
         candidate = {k: ctx.get(k) for k in (
             "pair", "price", "score", "strategy", "rsi_1h", "smart_action",
             "whale_score", "hl_bias", "panel_score", "hour_utc",
+            # new-listing candidates carry these instead of signal features
+            "setup", "listing_source", "detected_price",
+            "move_since_detection_pct", "minutes_since_detection", "cap_eur",
         ) if ctx.get(k) is not None}
         portfolio = {k: ctx.get(k) for k in (
             "open_positions", "open_count", "max_positions",
