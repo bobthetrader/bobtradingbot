@@ -43,8 +43,6 @@ pnl_state       = load_json(DATA / "pnl_state.json")
 bot_status      = load_json(DATA / "bot_status.json")
 purchase_prices = load_json(DATA / "purchase_prices_paper.json")
 main_trades     = load_jsonl(DATA / "trade_events_paper.jsonl")
-scalper_trades  = load_jsonl(DATA / "scalper_trades.jsonl")
-scalper_pos     = load_json(DATA / "scalper_positions.json")
 bal_state_path  = DATA / "balance_state.json"
 
 initial = float(pnl_state.get("start_eur", 500.0))
@@ -52,9 +50,6 @@ initial = float(pnl_state.get("start_eur", 500.0))
 # Closed P&L from main bot
 sell_types = ("SELL","CLOSE","STOP_LOSS","TAKE_PROFIT","SHORT_CLOSE","SELL_SHORT","CLOSE_SHORT")
 main_pnl = sum(float(t.get("pnl_eur", 0)) for t in main_trades if t.get("type") in sell_types)
-
-# Closed P&L from scalper
-scalp_pnl = sum(float(t.get("pnl_eur", 0)) for t in scalper_trades)
 
 # Open long position entry costs
 long_cost = 0.0
@@ -66,12 +61,6 @@ for pair, meta in (purchase_prices or {}).items():
         qty, entry = 0.0, float(meta or 0)
     long_cost += qty * entry
 
-# Open scalper allocation
-scalp_alloc = sum(
-    float(v.get("qty", 0)) * float(v.get("entry", 0))
-    for v in (scalper_pos or {}).values()
-)
-
 # Open short proceeds in cash
 open_shorts = bot_status.get("open_shorts", {})
 short_proceeds = sum(
@@ -79,7 +68,7 @@ short_proceeds = sum(
     for sv in open_shorts.values()
 )
 
-correct_cash = initial + main_pnl + scalp_pnl - long_cost - scalp_alloc + short_proceeds
+correct_cash = initial + main_pnl - long_cost + short_proceeds
 reported_cash = float(bot_status.get("balance_eur", 0))
 ghost_money   = reported_cash - correct_cash
 
@@ -88,9 +77,7 @@ print("BALANCE CORRECTION")
 print("=" * 60)
 print(f"  Initial (pnl_state)    : €{initial:.4f}")
 print(f"  Main closed P&L        : €{main_pnl:+.4f}")
-print(f"  Scalper closed P&L     : €{scalp_pnl:+.4f}")
 print(f"  Open long costs        : €{-long_cost:.4f}")
-print(f"  Scalper open alloc     : €{-scalp_alloc:.4f}")
 print(f"  Short proceeds in cash : €{short_proceeds:+.4f}")
 print(f"  = CORRECT cash         : €{correct_cash:.4f}")
 print(f"  Reported cash now      : €{reported_cash:.4f}")
@@ -106,8 +93,8 @@ except Exception:
 existing["paper_balance_eur"] = round(correct_cash, 4)
 
 # Keep peak_balance and initial_balance_eur as they are, but recalculate a sane peak
-# True portfolio = correct_cash + open_longs_at_entry + scalper_alloc (conservative estimate)
-true_portfolio_est = correct_cash + long_cost + scalp_alloc
+# True portfolio = correct_cash + open_longs_at_entry (conservative estimate)
+true_portfolio_est = correct_cash + long_cost
 existing["peak_balance"] = round(max(
     float(existing.get("peak_balance", initial)),
     true_portfolio_est

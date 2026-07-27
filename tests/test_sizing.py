@@ -11,6 +11,9 @@ def make_bot_stub():
             return {pair: [[0,0,0,0,100,0,0,0]]*30}
         def query_public(self, *a, **k):
             return {}
+        def get_asset_pairs(self):
+            # empty -> _fetch_valid_trade_pairs falls back to configured pairs
+            return {}
     cfg = {
         'bot_settings': {'trade_pairs': ['XBTEUR'], 'trade_amounts': {'trade_amount_eur': 30.0}},
         'risk_management': {

@@ -5,7 +5,7 @@ running**, and stand up an identical bot locally with one command if the server
 dies.
 
 **What's snapshotted:** the live Docker data volume (`bot_status`, paper balance,
-positions, AI params, journals, `scalper_observations`) + the Postgres DB.
+positions, AI params, journals) + the Postgres DB.
 **Not snapshotted (already on the PC):** code (git-mirrored) and `.env`.
 
 Snapshot freshness = last nightly run. Trades between the last snapshot and a

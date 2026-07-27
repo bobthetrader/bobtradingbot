@@ -1,7 +1,7 @@
 """Kraken fee schedule sync — fetches live taker/maker tiers from the public API.
 
-Writes data/kraken_fees.json once per day. Both the main bot and scalper read
-from this file so fee assumptions stay current if Kraken changes their schedule.
+Writes data/kraken_fees.json once per day. The main bot reads from this file
+so fee assumptions stay current if Kraken changes their schedule.
 
 Canonical pair used: XBTEUR. All EUR crypto pairs share the same fee tier table.
 Fee volume currency is ZUSD (30-day rolling USD volume determines tier).
@@ -80,7 +80,7 @@ def _fetch_from_kraken() -> Optional[dict]:
         return None
 
 
-# In-process cache so frequent callers (scalper loop) avoid repeated disk reads
+# In-process cache so frequent callers avoid repeated disk reads
 _mem_cache: dict = {}
 _mem_cache_ts: float = 0.0
 _MEM_CACHE_TTL = 3_600   # re-read file at most once per hour

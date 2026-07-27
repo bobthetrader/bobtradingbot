@@ -5,8 +5,8 @@ ranks by 24h EUR volume, and returns the top-N altnames above a volume floor.
 
 Used by the main bot's dynamic universe (config [bot_settings] dynamic_pairs) so it
 can trade any *sufficiently liquid* pair its signal likes rather than a hardcoded
-list. The volume floor is deliberately high (unlike the scalper's €50k) so only
-liquid large/mid-caps qualify — maker (post-only) fills need real depth.
+list. The volume floor is deliberately high so only liquid large/mid-caps
+qualify — maker (post-only) fills need real depth.
 """
 
 import logging

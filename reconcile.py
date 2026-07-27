@@ -41,8 +41,6 @@ pnl_state       = load_json(DATA / "pnl_state.json")
 bot_status      = load_json(DATA / "bot_status.json")
 purchase_prices = load_json(DATA / "purchase_prices_paper.json")
 main_trades     = load_jsonl(DATA / "trade_events_paper.jsonl")
-scalper_trades  = load_jsonl(DATA / "scalper_trades.jsonl")
-scalper_pos     = load_json(DATA / "scalper_positions.json")
 
 initial_balance = float(pnl_state.get("start_eur", 0.0))
 created_at      = pnl_state.get("created_at", "unknown")[:10]
@@ -96,34 +94,6 @@ for pair, pnl in sorted(pair_pnl.items(), key=lambda x: x[1]):
     print(f"    {pair:15s}: €{pnl:+.4f}")
 print()
 
-# ── Scalper closed trades ──────────────────────────────────────────────────
-
-scalp_pnl  = sum(float(t.get("pnl_eur", 0)) for t in scalper_trades)
-scalp_wins = sum(1 for t in scalper_trades if float(t.get("pnl_eur", 0)) > 0)
-scalp_loss = sum(1 for t in scalper_trades if float(t.get("pnl_eur", 0)) <= 0)
-scalp_to   = sum(1 for t in scalper_trades if t.get("reason") == "TIMEOUT")
-
-scalp_pair: dict = {}
-for t in scalper_trades:
-    p = t.get("pair", "?")
-    if p not in scalp_pair:
-        scalp_pair[p] = {"pnl": 0.0, "w": 0, "l": 0}
-    pnl = float(t.get("pnl_eur", 0))
-    scalp_pair[p]["pnl"] += pnl
-    if pnl > 0:
-        scalp_pair[p]["w"] += 1
-    else:
-        scalp_pair[p]["l"] += 1
-
-print(f"  Scalper trades     : {len(scalper_trades)} total | "
-      f"{scalp_wins}W/{scalp_loss}L | {scalp_to} timeouts")
-print(f"  Scalper closed P&L : €{scalp_pnl:+.4f}")
-for pair, d in sorted(scalp_pair.items(), key=lambda x: x[1]["pnl"]):
-    tot = d["w"] + d["l"]
-    wr  = round(d["w"] / tot * 100) if tot else 0
-    print(f"    {pair:15s}: €{d['pnl']:+.4f}  ({d['w']}W/{d['l']}L  {wr}%)")
-print()
-
 # ── Open long positions (main bot) ─────────────────────────────────────────
 
 long_open_cost = 0.0
@@ -175,42 +145,21 @@ print(f"  Short proceeds in cash : €{short_proceeds:.4f}  (liability — will 
 print(f"  Short unrealised P&L   : €{short_unrealised:+.4f}")
 print()
 
-# ── Scalper open positions ─────────────────────────────────────────────────
-
-scalp_open_alloc = 0.0
-if scalper_pos:
-    print("  Open scalper positions:")
-    for pair, sv in scalper_pos.items():
-        qty   = float(sv.get("qty", 0))
-        entry = float(sv.get("entry", 0))
-        cost  = qty * entry
-        scalp_open_alloc += cost
-        print(f"    {pair:15s}: qty={qty:.8f}  entry=€{entry:.4f}  alloc≈€{10:.2f}")
-    print(f"  Scalper open alloc     : €{scalp_open_alloc:.4f}  "
-          f"(€10 per position × {len(scalper_pos)})")
-else:
-    print("  Open scalper positions : (none)")
-print()
-
 # ── Reconciliation ─────────────────────────────────────────────────────────
 
 # How the paper cash balance is built up:
 #   start
 #   + closed main P&L (buys deduct cash, sells add cash; net = pnl)
-#   + closed scalper P&L (adjust_paper_balance; net = pnl)
 #   - open long position costs (cash spent buying, not yet returned)
-#   - open scalper allocations (€10 × n, not yet returned)
 #   + open short proceeds (cash received from selling short, must repay)
 
 expected_cash = (initial_balance
                  + main_pnl
-                 + scalp_pnl
                  - long_open_cost
-                 - scalp_open_alloc
                  + short_proceeds)
 
 # True portfolio net worth — what you'd have if you closed EVERYTHING now:
-#   cash (net of short liability) + long positions at market + scalper at entry + short unrealised
+#   cash (net of short liability) + long positions at market + short unrealised
 reported_cash      = float(bot_status.get("balance_eur", 0))
 reported_portfolio = float(bot_status.get("portfolio_value", reported_cash))
 reported_pnl       = float(bot_status.get("adjusted_pnl", 0))
@@ -225,7 +174,6 @@ long_market_value = sum(
 true_net_worth = (reported_cash
                   - short_proceeds           # remove short liability from cash
                   + long_market_value        # long positions at current prices
-                  + scalp_open_alloc         # scalper allocations (€10 each)
                   + short_unrealised)        # short unrealised P&L
 
 cash_diff = reported_cash - expected_cash
@@ -235,9 +183,7 @@ print("RECONCILIATION SUMMARY")
 print("=" * 65)
 print(f"  Initial balance          : €{initial_balance:.4f}")
 print(f"  + Closed main P&L        : €{main_pnl:+.4f}  ({len(sell_trades)} trades)")
-print(f"  + Closed scalper P&L     : €{scalp_pnl:+.4f}  ({len(scalper_trades)} trades)")
 print(f"  - Open long costs        : €{-long_open_cost:.4f}")
-print(f"  - Scalper open alloc     : €{-scalp_open_alloc:.4f}")
 print(f"  + Short proceeds in cash : €{short_proceeds:+.4f}  (liability)")
 print(f"  = Expected cash          : €{expected_cash:.4f}")
 print(f"  Reported cash (EUR)      : €{reported_cash:.4f}")
@@ -247,7 +193,6 @@ print()
 print(f"  ── True net worth (close everything now) ──────────────────")
 print(f"  Cash (ex short liability): €{reported_cash - short_proceeds:.4f}")
 print(f"  Long positions @ market  : €{long_market_value:.4f}")
-print(f"  Scalper open @ entry     : €{scalp_open_alloc:.4f}")
 print(f"  Short unrealised P&L     : €{short_unrealised:+.4f}")
 print(f"  = TRUE NET WORTH         : €{true_net_worth:.4f}")
 print()
@@ -257,7 +202,7 @@ print(f"  Reported adjusted_pnl    : €{reported_pnl:+.4f}  ← vs initial cash
 print(f"  (portfolio_value overstates by ~€{short_proceeds:.2f} due to open short proceeds)")
 print()
 print(f"  ── Real performance ───────────────────────────────────────")
-total_closed_pnl = main_pnl + scalp_pnl
+total_closed_pnl = main_pnl
 print(f"  Closed trade P&L only    : €{total_closed_pnl:+.4f}  "
       f"({total_closed_pnl/initial_balance*100:+.3f}% of starting capital)")
 print(f"  Unrealised (longs)       : €{long_market_value - long_open_cost:+.4f}")

@@ -8,7 +8,10 @@ secret = ""
 base_currency = "EUR"
 auto_select_pair = true
 loop_interval_seconds = 60
-trade_pairs = [ "XXBTZEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR", "ADAEUR", "DOTEUR", "LINKEUR",]
+# DOTEUR dropped 2026-07-27: worst core pair in the journal — 19 longs at 31.6%
+# WR / -6.10 EUR plus consistent short losses. Also blocked from re-entry via
+# dynamic_pairs_exclude below.
+trade_pairs = [ "XXBTZEUR", "XETHZEUR", "SOLEUR", "XXRPZEUR", "ADAEUR", "LINKEUR",]
 allocation_per_trade_percent = 12.0
 
 # Dynamic universe (added 2026-07-02): widen longs beyond the 7 core pairs to any
@@ -24,6 +27,13 @@ dynamic_pairs = true
 dynamic_pairs_min_vol_eur = 750000
 dynamic_pairs_max = 10
 dynamic_pairs_refresh_min = 15
+# Journal-proven losers the screener must never re-add (2026-07-27):
+# DOT 31.6% WR -6.10 | WLD 20% WR -2.83 | HYPE 40% WR -3.01
+dynamic_pairs_exclude = [ "DOTEUR", "WLDEUR", "HYPEEUR",]
+# New-listing buys OFF (2026-07-27): listing trades net -6.15 EUR — the
+# LISTING_STOP_LOSS exit fired 9/9 times at 0% WR vs only +0.77 EUR across 6
+# profit-takes. Watchlist/exit management still runs; set true to resume buys.
+listings_enabled = false
 # New-listing buys are capped at this notional — brand-new coins are the most
 # whipsaw-prone class and must not get full core-pair sizing (added 2026-07-08
 # after WLD listing bought at ~EUR70 full dynamic size).
@@ -53,7 +63,13 @@ enable_monthly_gain_throttle = false
 fees_maker_percent = 0.25
 fees_taker_percent = 0.40
 sell_fee_buffer_percent = 0.40
-enable_trading_hours = false
+# Trading-hours window ON (2026-07-27): journal shows entries 20:00-07:59 UTC
+# ran 36% WR / -27.7 EUR over 59 trades (thin overnight books whipsaw the
+# mean-reversion trigger); 08:00-19:59 held the only decent buckets. Blocks NEW
+# buys outside the window — exits always run. Set false to trade around the clock.
+enable_trading_hours = true
+trading_hours_start_utc = 8
+trading_hours_end_utc = 20
 enable_regime_filter = false
 enable_volume_filter = false
 enable_daily_drawdown = false
@@ -126,6 +142,10 @@ ema_slow_period = 21
 # micro-dips at local tops before the dump — all 7 such entries lost). Blocks
 # BUY when 1h RSI >= this value on mean_reversion-profile pairs. 0 = off.
 max_entry_rsi_1h = 60
+# 1h-RSI FLOOR for mean-reversion buys (2026-07-27): entries with 1h RSI < 50
+# ran 33% WR / -14.6 EUR over 33 trades — dips inside weak hourly trends keep
+# falling. Only the 50-60 band held up (54% WR). 0 = off.
+min_entry_rsi_1h = 50
 
 [optimizer]
 enabled = true
@@ -166,7 +186,10 @@ enabled = false
 # does NOT depend on `enabled` above. Fires only when news panel + Hyperliquid
 # top-trader bias + whale flows + bearish 1h trend ALL align (see
 # docs/superpowers/specs/2026-07-08-event-shorts-design.md). Max 2 x EUR30.
-event_shorts_enabled = true
+# OFF 2026-07-27: journal verdict — 3 event shorts, 0 wins, -1.30 EUR, and the
+# whole short book (86 closed) sits at 25.6% WR / -4.89 EUR. Every short entry
+# path is now closed; open shorts are still managed to exit.
+event_shorts_enabled = false
 event_panel_max = -2.0        # AI panel must be <= this (news risk-off)
 event_hl_max = -2.5           # HL top traders net short the pair
 event_whale_max = -1.5        # whale flows bearish
@@ -180,15 +203,3 @@ short_stop_loss_percent = 0.5
 # soft stop above closes only one position per loop, so runaways queue up).
 short_hard_stop_percent = 1.5
 
-[scalper]
-# Paused 2026-07-02: net-of-fee analysis showed the scalper is structurally
-# EV-negative at the 0.35% taker tier (round-trip 0.70% > 0.50% stop → 40% net
-# breakeven WR vs ~13% actual). Set enabled = true to resume once the strategy
-# is redesigned for larger moves or a lower fee tier. Open positions are held on
-# disk and will resume management if re-enabled.
-enabled = false
-# Signal-excursion observer: takes NO trades — for each scalp signal it records
-# how far price moves over the next 3h (MFE/MAE + full path) to data/
-# scalper_observations.jsonl. Feeds backtest/analyze_observations.py so exit
-# geometry can be designed from real data. Safe to run while enabled=false.
-probe_enabled = true

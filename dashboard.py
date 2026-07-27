@@ -52,25 +52,24 @@ def _read_jsonl_tail(filename: str, n: int = 20) -> list:
 _CLOSE_TYPES = {"SELL","CLOSE","STOP_LOSS","TAKE_PROFIT","SHORT_CLOSE","SELL_SHORT","CLOSE_SHORT"}
 
 def _calc_realized_pnl(paper_mode: bool) -> float:
-    """Sum pnl_eur across all closed main-bot and scalper trades."""
+    """Sum pnl_eur across all closed main-bot trades."""
     trade_file = "trade_events_paper.jsonl" if paper_mode else "trade_events_live.jsonl"
     total = 0.0
-    for fname in (trade_file, "scalper_trades.jsonl"):
-        path = os.path.join(DATA_DIR, fname)
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        row = json.loads(line)
-                        if fname.startswith("scalper") or row.get("type") in _CLOSE_TYPES:
-                            total += float(row.get("pnl_eur", 0))
-                    except Exception:
-                        pass
-        except FileNotFoundError:
-            pass
+    path = os.path.join(DATA_DIR, trade_file)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                    if row.get("type") in _CLOSE_TYPES:
+                        total += float(row.get("pnl_eur", 0))
+                except Exception:
+                    pass
+    except FileNotFoundError:
+        pass
     return total
 
 
@@ -183,12 +182,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       {positions_html}
     </div>
 
-    <!-- Scalper open positions card -->
-    <div class="card">
-      <h2>Scalper Positions &nbsp; {scalper_stats}</h2>
-      {scalper_positions_html}
-    </div>
-
     <!-- Monthly return card -->
     <div class="card full">
       <h2>Monthly Return Target &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Goal: +3% to +8% per month</span></h2>
@@ -256,18 +249,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="card full">
       <h2>AI Model Panel &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">Combined: {intel_score:+.1f} / 5</span></h2>
       {model_html}
-    </div>
-
-    <!-- Scalper card -->
-    <div class="card full">
-      <h2>Scalper &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">dynamic &bull; {scalper_pair_count} pairs &bull; TP {scalper_tp_pct:.2f}%</span> &nbsp; {scalper_stats}</h2>
-      {scalper_html}
-    </div>
-
-    <!-- Scalper AI Tuner card -->
-    <div class="card full">
-      <h2>Scalper AI Tuner &nbsp; <span class="badge" style="background:#21262d;color:#8b949e">free OpenRouter models &bull; tunes every 25 trades</span> &nbsp; {scalper_ai_badge}</h2>
-      {scalper_ai_html}
     </div>
 
     <!-- Recent trades card -->
@@ -900,285 +881,6 @@ def _build_page() -> str:
     else:
         intel_log_html = '<div class="grey" style="padding:8px 0">No AI panel history yet — first entry appears after the next 10-minute refresh.</div>'
 
-    # ── Scalper card ──────────────────────────────────────────────────────────
-    scalper_data = status.get("scalper", {})
-    if scalper_data:
-        _sc_total   = scalper_data.get("total_trades", 0)
-        _sc_wins    = scalper_data.get("wins", 0)
-        _sc_losses  = scalper_data.get("losses", 0)
-        _sc_wr      = scalper_data.get("win_rate", 0)
-        _sc_pnl     = scalper_data.get("total_pnl_eur", 0)
-        _sc_pnl_c   = "#00c851" if _sc_pnl >= 0 else "#ff4444"
-        _sc_vol     = scalper_data.get("volume_usd", 0)
-        _sc_fee     = scalper_data.get("taker_fee_pct", 0.26)
-        _sc_dtp     = scalper_data.get("dynamic_tp_pct", 0.58)
-        _sc_wl_c    = "#00c851" if _sc_wins >= _sc_losses else "#ff4444"
-        scalper_pair_count = scalper_data.get("active_pairs_count", 0)
-        scalper_tp_pct     = _sc_dtp
-        scalper_stats = (
-            f'<span class="badge" style="background:#21262d;color:#8b949e">{_sc_total} trades</span> &nbsp;'
-            f'<span class="badge" style="background:{_sc_wl_c}22;color:{_sc_wl_c}">'
-            f'W {_sc_wins} / L {_sc_losses} &bull; {_sc_wr:.0f}%</span> &nbsp;'
-            f'<span class="badge" style="background:{_sc_pnl_c}22;color:{_sc_pnl_c}">P&amp;L {_sc_pnl:+.4f} EUR</span> &nbsp;'
-            f'<span class="badge" style="background:#21262d;color:#8b949e">Vol ${_sc_vol:,.0f}</span> &nbsp;'
-            f'<span class="badge" style="background:#21262d;color:#58a6ff">Fee {_sc_fee:.2f}% &bull; TP {_sc_dtp:.2f}%</span>'
-        )
-        # Open positions
-        _sc_pos = scalper_data.get("positions", {})
-        _pos_rows = ""
-        for _sp, _sv in _sc_pos.items():
-            _held = round((time.time() - _sv.get("ts", time.time())) / 60, 1)
-            _pos_rows += (
-                f'<tr><td>{_sp}</td><td>{_sv.get("entry", 0):.6f}</td>'
-                f'<td>{_sv.get("qty", 0):.8f}</td><td>{_held}m</td>'
-                f'<td><span style="color:#58a6ff">score {_sv.get("score", 0):.1f}</span></td></tr>'
-            )
-        # Most recent scalp trade only
-        _sc_all_trades = scalper_data.get("recent_trades", [])
-        _sc_last = _sc_all_trades[-1] if _sc_all_trades else None
-        _trade_rows = ""
-        if _sc_last:
-            _tc = "#00c851" if _sc_last.get("pnl_eur", 0) >= 0 else "#ff4444"
-            _trade_rows = (
-                f'<tr><td>{_sc_last.get("ts","")[:19]}</td><td>{_sc_last.get("pair","")}</td>'
-                f'<td>{_sc_last.get("entry",0):.6f}</td><td>{_sc_last.get("exit",0):.6f}</td>'
-                f'<td style="color:{_tc}">{_sc_last.get("pnl_eur",0):+.4f}</td>'
-                f'<td style="color:{_tc}">{_sc_last.get("pnl_pct",0):+.3f}%</td>'
-                f'<td>{_sc_last.get("reason","")}</td><td>{_sc_last.get("held_min",0):.1f}m</td></tr>'
-            )
-        # Compact positions-only html for the top card
-        if _pos_rows:
-            scalper_positions_html = (
-                '<table><tr><th>Pair</th><th>Entry</th><th>Qty</th><th>Held</th><th>Score</th></tr>'
-                + _pos_rows + '</table>'
-            )
-        else:
-            scalper_positions_html = '<div class="grey" style="padding:8px 0">No open scalp positions</div>'
-
-        # Dynamic pair trend grid — driven by whatever pairs the screener returned
-        _pair_scores = scalper_data.get("pair_scores", {})
-        _active_pairs = scalper_data.get("active_pairs", []) or list(_pair_scores.keys())
-
-        def _pair_label(pair: str) -> str:
-            _KNOWN = {
-                "XBTEUR": "BTC", "XXBTZEUR": "BTC",
-                "XETHZEUR": "ETH", "XXRPZEUR": "XRP",
-                "XMREUR": "XMR", "XLTCZEUR": "LTC", "XZECZEUR": "ZEC",
-            }
-            if pair in _KNOWN:
-                return _KNOWN[pair]
-            for suffix in ("ZEUR", "EUR"):
-                if pair.endswith(suffix):
-                    base = pair[: -len(suffix)]
-                    if base.startswith("X") and len(base) > 2:
-                        base = base[1:]
-                    return base
-            return pair
-
-        _trend_cells = ""
-        for _tp in _active_pairs:
-            _sc = _pair_scores.get(_tp)
-            if _sc is None:
-                _arrow, _col = "·", "#8b949e"
-            elif _sc >= 1.5:
-                _arrow, _col = "▲", "#00c851"
-            elif _sc <= -1.5:
-                _arrow, _col = "▼", "#ff4444"
-            elif _sc > 0:
-                _arrow, _col = "↑", "#4caf50"
-            elif _sc < 0:
-                _arrow, _col = "↓", "#f44336"
-            else:
-                _arrow, _col = "–", "#8b949e"
-            _in_pos = "★ " if _tp in _sc_pos else ""
-            _trend_cells += (
-                f'<span style="display:inline-block;min-width:70px;margin:2px 4px;font-size:11px">'
-                f'<span style="color:{_col}">{_arrow}</span> '
-                f'<span style="color:#e6edf3">{_in_pos}{_pair_label(_tp)}</span>'
-                f'</span>'
-            )
-        _trend_grid = (
-            '<b style="color:#8b949e;font-size:11px">PAIR TRENDS</b><br>'
-            f'<div style="padding:6px 0 10px 0;line-height:2">{_trend_cells}</div>'
-        ) if _trend_cells else ""
-
-        scalper_html = _trend_grid
-        if _pos_rows:
-            scalper_html += (
-                '<b style="color:#8b949e;font-size:11px">OPEN POSITIONS</b>'
-                '<table><tr><th>Pair</th><th>Entry</th><th>Qty</th><th>Held</th><th>Signal</th></tr>'
-                + _pos_rows + '</table><br>'
-            )
-        if _trade_rows:
-            scalper_html += (
-                '<b style="color:#8b949e;font-size:11px">RECENT SCALP TRADES</b>'
-                '<table><tr><th>Time</th><th>Pair</th><th>Entry</th><th>Exit</th>'
-                '<th>P&amp;L EUR</th><th>P&amp;L %</th><th>Reason</th><th>Held</th></tr>'
-                + _trade_rows + '</table>'
-            )
-        if not scalper_html:
-            scalper_html = '<div class="grey" style="padding:8px 0">No scalp trades yet — waiting for signal score &ge;1.5</div>'
-    else:
-        scalper_stats          = '<span class="badge" style="background:#21262d;color:#8b949e">not running</span>'
-        scalper_positions_html = '<div class="grey" style="padding:8px 0">Scalper not active</div>'
-        scalper_html           = '<div class="grey" style="padding:8px 0">Scalper engine not active (paper mode only)</div>'
-        scalper_pair_count     = 0
-        scalper_tp_pct         = 0.58
-
-    # ── Scalper AI Tuner ──────────────────────────────────────────────────────
-    ai_adjustments = _read_jsonl_tail("scalper_ai_adjustments.jsonl", n=1)
-    ai_params_raw  = _read_json("scalper_ai_params.json")
-    # Old-signal file has rsi_buy but not rsi_recovery_thresh — treat as absent
-    if ai_params_raw and "rsi_buy" in ai_params_raw and "rsi_recovery_thresh" not in ai_params_raw:
-        ai_params_raw = None
-    _PARAM_LABELS  = {
-        "rsi_recovery_thresh": "RSI Recovery",
-        "rsi_sell":            "RSI Sell",
-        "vol_mult":            "Vol Mult",
-        "score_thresh":        "Score Thresh",
-        "sl_pct":              "Stop Loss %",
-        "max_hold_min":        "Max Hold (m)",
-    }
-    _PARAM_DEFAULTS = {
-        "rsi_recovery_thresh": 45.0, "rsi_sell": 65.0, "vol_mult": 1.5,
-        "score_thresh": 4.0, "sl_pct": 0.50, "max_hold_min": 120.0,
-    }
-
-    if ai_adjustments:
-        latest = ai_adjustments[-1]
-        wr     = latest.get("win_rate", 0)
-        wr_col = "#00c851" if wr >= 50 else ("#ffbb33" if wr >= 40 else "#ff4444")
-        scalper_ai_badge = (
-            f'<span class="badge" style="background:{wr_col}22;color:{wr_col}">'
-            f'last WR {wr:.0f}%</span>'
-        )
-
-        # Current params vs defaults diff
-        param_cells = ""
-        for key, label in _PARAM_LABELS.items():
-            default = _PARAM_DEFAULTS[key]
-            current = float(ai_params_raw.get(key, default)) if ai_params_raw else default
-            changed = abs(current - default) > 1e-4
-            col     = "#58a6ff" if changed else "#8b949e"
-            arrow   = f'<span style="color:#8b949e;font-size:10px"> (def {default})</span>'
-            param_cells += (
-                f'<td style="color:{col};font-weight:{"bold" if changed else "normal"}'
-                f';font-size:12px">{label}<br>'
-                f'<span style="font-size:14px">{current}</span>{arrow}</td>'
-            )
-        blacklist = ai_params_raw.get("pairs_blacklist", []) if ai_params_raw else []
-        bl_html = ""
-        if blacklist:
-            bl_items = "".join(
-                f'<span style="background:#ff444422;color:#ff4444;border-radius:4px;'
-                f'padding:1px 6px;margin:2px;font-size:11px">{p}</span>'
-                for p in blacklist
-            )
-            bl_html = (
-                f'<div style="margin-top:8px;margin-bottom:4px">'
-                f'<span style="color:#8b949e;font-size:11px">BLACKLISTED: </span>{bl_items}</div>'
-            )
-
-        updated_at = ai_params_raw.get("updated_at", "") if ai_params_raw else ""
-        age_str    = _age(updated_at) if updated_at else "never"
-        params_bar = (
-            f'<div style="margin-bottom:12px">'
-            f'<div style="color:#8b949e;font-size:11px;margin-bottom:6px">'
-            f'LIVE PARAMS (last updated {age_str})</div>'
-            f'<table style="width:100%"><tr>{param_cells}</tr></table>'
-            f'{bl_html}</div>'
-        )
-
-        # Adjustment history log
-        adj_rows = ""
-        for adj in reversed(ai_adjustments):
-            adj_ts      = adj.get("ts", "")[:16].replace("T", " ")
-            adj_wr      = adj.get("win_rate", 0)
-            adj_wr_col  = "#00c851" if adj_wr >= 50 else ("#ffbb33" if adj_wr >= 40 else "#ff4444")
-            adj_n       = adj.get("trades_analyzed", 0)
-            changes     = adj.get("changes", [])
-            reasoning   = adj.get("reasoning", "")
-            pair_stats  = adj.get("pair_stats", {})
-            adj_type    = adj.get("type", "propose")
-            type_label  = {
-                "propose":         ('<span style="color:#58a6ff;font-size:10px">▶ TEST</span>', "#58a6ff"),
-                "evaluate_kept":   ('<span style="color:#00c851;font-size:10px">✓ KEPT</span>', "#00c851"),
-                "evaluate_reverted": ('<span style="color:#ff4444;font-size:10px">✗ REVERT</span>', "#ff4444"),
-            }.get(adj_type, ('<span style="color:#8b949e;font-size:10px">—</span>', "#8b949e"))
-            type_badge, _ = type_label
-
-            if not changes:
-                change_html = '<span style="color:#8b949e;font-size:11px">no changes</span>'
-            else:
-                parts = []
-                for c in changes:
-                    param = c.get("param", "")
-                    old   = c.get("old")
-                    new   = c.get("new")
-                    if param == "pairs_blacklist":
-                        for pair in (new or []):
-                            ps  = pair_stats.get(pair, {})
-                            tot = ps.get("w", 0) + ps.get("l", 0)
-                            wr2 = round(ps["w"] / tot * 100) if tot else 0
-                            parts.append(
-                                f'<span style="color:#ff4444">{pair} {wr2}% WR → blacklisted</span>'
-                            )
-                    else:
-                        label = _PARAM_LABELS.get(param, param)
-                        col   = "#58a6ff"
-                        parts.append(
-                            f'<span style="color:{col}">{label} '
-                            f'<span style="color:#8b949e">{old}</span> → '
-                            f'<b>{new}</b></span>'
-                        )
-                change_html = ' &nbsp;|&nbsp; '.join(parts)
-
-            # Worst pairs this round
-            worst = sorted(
-                [(p, s) for p, s in pair_stats.items()
-                 if s.get("w", 0) + s.get("l", 0) >= 3],
-                key=lambda x: x[1]["w"] / (x[1]["w"] + x[1]["l"])
-            )[:3]
-            worst_html = ""
-            if worst:
-                worst_parts = []
-                for p, s in worst:
-                    tot = s["w"] + s["l"]
-                    wr2 = round(s["w"] / tot * 100) if tot else 0
-                    wc  = "#ff4444" if wr2 < 40 else "#ffbb33"
-                    worst_parts.append(f'<span style="color:{wc}">{p} {wr2}%</span>')
-                worst_html = (
-                    f'<div style="font-size:10px;color:#8b949e;margin-top:2px">'
-                    f'worst pairs: {" · ".join(worst_parts)}</div>'
-                )
-
-            adj_rows += (
-                f'<tr style="border-bottom:1px solid #21262d">'
-                f'<td style="color:#8b949e;font-size:11px;white-space:nowrap;vertical-align:top">'
-                f'{adj_ts}<br>{adj_n} trades<br>{type_badge}</td>'
-                f'<td style="color:{adj_wr_col};font-weight:bold;vertical-align:top">{adj_wr:.0f}%</td>'
-                f'<td style="vertical-align:top">{change_html}{worst_html}</td>'
-                f'<td style="color:#8b949e;font-size:11px;vertical-align:top">{reasoning[:120]}</td>'
-                f'</tr>'
-            )
-
-        scalper_ai_html = (
-            params_bar
-            + '<b style="color:#8b949e;font-size:11px">LAST EXPERIMENT</b>'
-            + '<table style="width:100%;margin-top:6px">'
-            + '<tr><th>Time</th><th>WR</th><th>Changes</th><th>AI Reasoning</th></tr>'
-            + adj_rows + '</table>'
-        )
-    else:
-        scalper_ai_badge = '<span class="badge" style="background:#21262d;color:#8b949e">waiting for 25 trades</span>'
-        scalper_ai_html  = (
-            '<div class="grey" style="padding:8px 0">'
-            'AI tuner will activate after 25 scalp trades — it will analyze RSI, VWAP deviation and '
-            'order book imbalance at entry to find which signal combinations win vs lose, '
-            'then adjust thresholds within safe bounds automatically.'
-            '</div>'
-        )
-
     # ── DB stats ──────────────────────────────────────────────────────────────
     db_stats = status.get("db_stats", {})
     if db_stats:
@@ -1295,14 +997,7 @@ def _build_page() -> str:
         intel_log_html          = intel_log_html,
         db_summary              = db_summary,
         circuit_breaker_banner  = circuit_breaker_banner,
-        scalper_stats           = scalper_stats,
-        scalper_pair_count      = scalper_pair_count,
-        scalper_tp_pct          = scalper_tp_pct,
-        scalper_html            = scalper_html,
-        scalper_positions_html  = scalper_positions_html,
         ichi_html               = ichi_html,
-        scalper_ai_badge        = scalper_ai_badge,
-        scalper_ai_html         = scalper_ai_html,
     )
 
 

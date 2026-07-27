@@ -265,6 +265,9 @@ class TradingBot:
         self._dynamic_min_vol_eur   = float(_bs.get('dynamic_pairs_min_vol_eur', 500_000))
         self._dynamic_max_pairs     = int(_bs.get('dynamic_pairs_max', 30))
         self._dynamic_refresh_sec   = int(_bs.get('dynamic_pairs_refresh_min', 15)) * 60
+        # Proven-loser pairs the screener must never re-add (config
+        # [bot_settings] dynamic_pairs_exclude, journal-driven)
+        self._dynamic_pairs_exclude = set(_bs.get('dynamic_pairs_exclude', []))
         self._dynamic_pairs         = set()   # pairs WE added via the screener
         self._dynamic_last_refresh  = 0.0
         self.pair_signals = {}
@@ -366,7 +369,13 @@ class TradingBot:
         self._breakout_timestamps: dict = {}
         self._current_market_regime: str = "RANGING"   # TRENDING_UP / TRENDING_DOWN / RANGING
 
-        # New listings monitor
+        # New listings monitor. Config [bot_settings] listings_enabled — journal
+        # analysis 2026-07-27: listing trades ran net -6.15 EUR (LISTING_STOP_LOSS
+        # 9/9 losers vs +0.77 across 6 profit-takes), so the paper config now
+        # disables new listing BUYS. Exit management of anything already held
+        # continues regardless of this flag.
+        self._listings_enabled = bool(
+            self.config.get('bot_settings', {}).get('listings_enabled', True))
         self._listing_watchlist: dict = _load_watchlist() if _LISTINGS_AVAILABLE else {}
         self._listings_last_check: float = 0.0
         self._listings_check_interval: int = 600    # Sharpe.ai + blog: every 10 min
@@ -521,13 +530,6 @@ class TradingBot:
         self.min_free_margin_buffer = float(self.config.get('shorting', {}).get('min_free_margin_buffer', 0.05))
         # Short enabling toggle
         self.enable_live_shorts = bool(self.config.get('shorting', {}).get('enabled', False))
-
-        # Fast scalp / hit-and-run profile
-        self.enable_fast_scalp = bool(self.config.get('profiles', {}).get('fast_scalp', {}).get('enabled', False))
-        self.fast_scalp_require_flag = bool(self.config.get('profiles', {}).get('fast_scalp', {}).get('require_enable_flag', True))
-        self.fast_scalp_time_stop_minutes = int(self.config.get('profiles', {}).get('fast_scalp', {}).get('time_stop_minutes', 30))
-        self.fast_scalp_stop_loss_pct = float(self.config.get('profiles', {}).get('fast_scalp', {}).get('stop_loss_percent', 0.6))
-        self.fast_scalp_take_profit_pct = float(self.config.get('profiles', {}).get('fast_scalp', {}).get('take_profit_percent', 1.2))
 
         self.start_time = datetime.now()
         self.last_config_reload = datetime.now()
@@ -1306,8 +1308,10 @@ class TradingBot:
         if not screened:
             return
 
-        # Normalize screened altnames to the bot's canonical names
-        desired = self._fetch_valid_trade_pairs(screened)[: self._dynamic_max_pairs]
+        # Normalize screened altnames to the bot's canonical names, dropping
+        # journal-proven losers ([bot_settings] dynamic_pairs_exclude)
+        desired = [p for p in self._fetch_valid_trade_pairs(screened)
+                   if p not in self._dynamic_pairs_exclude][: self._dynamic_max_pairs]
         desired_set = set(desired)
         held = {p for p in self.trade_pairs
                 if self.position_qty.get(p, 0) > 0 or self.short_qty.get(p, 0) > 0}
@@ -3592,16 +3596,6 @@ class TradingBot:
             ))
         except Exception:
             pass
-        # Include open scalper positions — their deployed cash is not a loss
-        _sc = getattr(self, '_scalper', None)
-        if _sc is not None:
-            try:
-                for _scp, _scv in _sc.get_status().get('positions', {}).items():
-                    _sc_qty   = float(_scv.get('qty', 0) or 0)
-                    _sc_price = float(self.pair_prices.get(_scp) or _scv.get('entry') or 0)
-                    holdings_value += _sc_qty * _sc_price
-            except Exception as _sce:
-                self.logger.debug("Scalper portfolio calc error: %s", _sce)
         reserve = float(self._estimate_open_buy_reserve_eur() or 0)
         portfolio_value = float(current_balance or 0) + holdings_value + reserve
         self._last_portfolio_value = portfolio_value   # for the monthly-return calc
@@ -3755,6 +3749,20 @@ class TradingBot:
                 self.logger.info(
                     "BUY skipped for %s: 1h RSI %.1f >= ceiling %.1f (no mean-reversion buys into overbought)",
                     pair, float(_rsi1h), _rsi_ceiling)
+                return
+
+        # 1h-RSI floor: journal analysis 2026-07-27 — mean-reversion entries with
+        # 1h RSI < 50 ran 33% WR / -14.6 EUR over 33 trades (dips inside weak
+        # hourly trends keep falling), while the 50-60 band held a 54% WR. Blocks
+        # BUY when 1h RSI < this on mean_reversion profiles. Config [technical]
+        # min_entry_rsi_1h, 0 = disabled.
+        _rsi_floor = float(self.config.get('technical', {}).get('min_entry_rsi_1h', 0.0))
+        if _rsi_floor > 0 and self._pair_profile(pair).get('strategy') == 'mean_reversion':
+            _rsi1h = self._rsi_1h.get(pair)
+            if _rsi1h is not None and float(_rsi1h) < _rsi_floor:
+                self.logger.info(
+                    "BUY skipped for %s: 1h RSI %.1f < floor %.1f (no mean-reversion buys in weak hourly trend)",
+                    pair, float(_rsi1h), _rsi_floor)
                 return
 
         # Smart-money layer: whale exchange flows (market) + Hyperliquid
@@ -4029,14 +4037,16 @@ class TradingBot:
         if now - self._listings_last_check >= self._listings_check_interval:
             self._listings_last_check = now
             try:
-                # Three sources combined — deduplicated by symbol
+                # Three sources combined — deduplicated by symbol. When
+                # listings_enabled=false only the headlines fetch runs (the
+                # dashboard news card needs it) — no new coins are watched.
                 seen_symbols = set(self._listing_watchlist.keys())
-                blog_listings   = _fetch_blog_listings(hours_lookback=48)
-                sharpe_listings = _fetch_listings(hours_lookback=24)
+                blog_listings   = _fetch_blog_listings(hours_lookback=48) if self._listings_enabled else []
+                sharpe_listings = _fetch_listings(hours_lookback=24) if self._listings_enabled else []
                 self._kraken_headlines = _fetch_blog_headlines(limit=8)
                 # AssetPairs is 1.1MB — only check every 2 hours
                 pairs_listings = []
-                if now - self._assetpairs_last_check >= self._assetpairs_check_interval:
+                if self._listings_enabled and now - self._assetpairs_last_check >= self._assetpairs_check_interval:
                     self._assetpairs_last_check = now
                     pairs_listings = _fetch_new_pairs(hours_lookback=48)
 
@@ -4216,6 +4226,11 @@ class TradingBot:
                 if _listing_expired(entry, self._listing_hold_hours):
                     self.logger.info("NEW LISTING EXPIRED (no buy): %s", symbol)
                     to_remove.append(symbol)
+                    continue
+
+                # Listing BUYS disabled — watchlist entries just age out; exits
+                # for already-bought listings above keep running.
+                if not self._listings_enabled:
                     continue
 
                 # Wait 15 min after detection before buying (let initial price settle)
@@ -4736,13 +4751,6 @@ class TradingBot:
                                 _status["db_stats"] = _get_db_stats()
                             except Exception:
                                 pass
-                        # Scalper status (if engine is attached via main.py)
-                        try:
-                            _sc = getattr(self, '_scalper', None)
-                            if _sc is not None:
-                                _status["scalper"] = _sc.get_status()
-                        except Exception:
-                            pass
                         # Ichimoku + Gaussian signals for dashboard
                         if _ICHI_AVAILABLE:
                             try:

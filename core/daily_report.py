@@ -14,25 +14,23 @@ def _load_trades_last_24h(data_dir: str, paper_mode: bool) -> list:
     trade_file = "trade_events_paper.jsonl" if paper_mode else "trade_events_live.jsonl"
     rows = []
 
-    for fname in (trade_file, "scalper_trades.jsonl"):
-        path = os.path.join(data_dir, fname)
-        source = "scalper" if fname.startswith("scalper") else "main"
-        try:
-            with open(path, "r", encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        row = json.loads(line)
-                        ts = float(row.get("timestamp") or row.get("ts") or row.get("time") or 0)
-                        if ts >= cutoff:
-                            row["_source"] = source
-                            rows.append(row)
-                    except Exception:
-                        pass
-        except FileNotFoundError:
-            pass
+    path = os.path.join(data_dir, trade_file)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                    ts = float(row.get("timestamp") or row.get("ts") or row.get("time") or 0)
+                    if ts >= cutoff:
+                        row["_source"] = "main"
+                        rows.append(row)
+                except Exception:
+                    pass
+    except FileNotFoundError:
+        pass
 
     rows.sort(key=lambda r: float(r.get("timestamp") or r.get("ts") or r.get("time") or 0))
     return rows

@@ -173,44 +173,6 @@ if __name__ == "__main__":
     # silently drift to live config.toml settings after the first reload.
     trading_bot = TradingBot(kraken, config, config_path=CONFIG_PATH)
 
-    # Start scalping engine (paper mode only for now, runs concurrently).
-    # Gated by [scalper] enabled (default true). Paused when the strategy is
-    # net-of-fee EV-negative — flip enabled=true in the config to resume.
-    _scalper = None
-    _scalper_enabled = bool(config.get('scalper', {}).get('enabled', True))
-    if args.paper and not _scalper_enabled:
-        logger.info("[SCALP] Scalper disabled via [scalper] enabled=false — not starting")
-    elif args.paper:
-        try:
-            from core.scalper import ScalperEngine
-            _ws_feed = getattr(trading_bot, 'ws_feed', None)
-            _data_dir = os.path.join(os.path.dirname(__file__), 'data')
-            _scalper = ScalperEngine(
-                kraken_api=kraken,
-                paper_mode=True,
-                data_dir=_data_dir,
-                ws_feed=_ws_feed,
-            )
-            _scalper.start()
-            trading_bot._scalper = _scalper  # expose for status writes
-        except Exception as _se:
-            logger.warning("Scalper failed to start: %s", _se)
-
-    # Signal-excursion observer (measurement only — no positions, balance or fees).
-    # Gated by [scalper] probe_enabled (default false). Runs even when the trader
-    # is paused, to gather excursion data for redesigning exit geometry.
-    _probe = None
-    if args.paper and bool(config.get('scalper', {}).get('probe_enabled', False)):
-        try:
-            from core.scalper_probe import ScalperProbe
-            _ws_feed = getattr(trading_bot, 'ws_feed', None)
-            _data_dir = os.path.join(os.path.dirname(__file__), 'data')
-            _probe = ScalperProbe(kraken_api=kraken, ws_feed=_ws_feed, data_dir=_data_dir)
-            _probe.start()
-            trading_bot._scalper_probe = _probe  # expose for status writes
-        except Exception as _pe:
-            logger.warning("Scalper probe failed to start: %s", _pe)
-
     if args.test:
         logger.info("Running test mode...")
         print("Testing Kraken API connection...")
