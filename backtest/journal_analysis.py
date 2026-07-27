@@ -129,6 +129,12 @@ def _iso_week(t):
 
 BUCKETS = [
     ("ISO week", _iso_week),
+    # AI Trade Desk (2026-07-27): the decisive comparison — do agent-decided
+    # entries beat the rules-only ones? Judge after n>=50 agent trades.
+    ("Trade desk", lambda t: "agent" if _f(t, "agent_decided") else "rules"),
+    ("Agent confidence", lambda t: _band(_f(t, "agent_confidence"), [0.55, 0.7, 0.85],
+                                         ["<=0.55", "0.55-0.7", "0.7-0.85", ">0.85"])
+                                   if _f(t, "agent_decided") else "rules-trade"),
     ("Smart action", lambda t: _f(t, "smart_action") or "none-recorded"),
     ("HL bias", lambda t: _band(_f(t, "hl_bias"), [-2.5, -1.0, 1.0, 2.5],
                                 ["<=-2.5", "-2.5..-1", "-1..+1", "+1..+2.5", ">=+2.5"])),
@@ -203,16 +209,24 @@ def main():
         return (f"{name}: {len(ts)} closed | WR {100.0*wins/len(ts):.1f}% | "
                 f"net {net:+.2f} EUR")
 
+    agent_longs = [t for t in longs if (t.get("features") or {}).get("agent_decided")]
+    rules_longs = [t for t in longs if not (t.get("features") or {}).get("agent_decided")]
+
     print("=" * 62)
     print("JOURNAL ANALYSIS -", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
     print(_summary("LONGS", longs))
+    print(_summary("  of which AGENT-DECIDED", agent_longs))
+    print(_summary("  of which RULES-ONLY", rules_longs))
     print(_summary("SHORTS", shorts))
     print(_summary("EVENT SHORTS", event_shorts))
     print("=" * 62)
 
     html_parts = [f"<h1>Journal analysis - "
                   f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC</h1>"
-                  f"<p>{_summary('LONGS', longs)}<br>{_summary('SHORTS', shorts)}<br>"
+                  f"<p>{_summary('LONGS', longs)}<br>"
+                  f"&nbsp;&nbsp;{_summary('of which AGENT-DECIDED', agent_longs)}<br>"
+                  f"&nbsp;&nbsp;{_summary('of which RULES-ONLY', rules_longs)}<br>"
+                  f"{_summary('SHORTS', shorts)}<br>"
                   f"{_summary('EVENT SHORTS', event_shorts)}</p>"
                   f"<p>&#9888; = n&lt;{MIN_CONF} (low confidence); buckets n&lt;{MIN_SHOW} hidden</p>"]
 

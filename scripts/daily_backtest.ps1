@@ -50,6 +50,17 @@ tar -xzf "$WORK_DIR\tradingbot_data.tar.gz" -C $WORK_DIR "./trade_events_paper.j
 if ($LASTEXITCODE -ne 0) { Log "ERROR: trade_events_paper.jsonl not found in snapshot"; exit 1 }
 
 Copy-Item "$WORK_DIR\trade_events_paper.jsonl" "$DATA_DIR\trade_events_paper.jsonl" -Force
+
+# AI Trade Desk files (2026-07-27): decision journal, learned policy, tuner
+# audit log. Best-effort — absent from snapshots taken before the agent shipped.
+foreach ($af in @("agent_decisions.jsonl", "agent_policy.json", "agent_tuner_log.jsonl")) {
+    tar -xzf "$WORK_DIR\tradingbot_data.tar.gz" -C $WORK_DIR "./$af" 2>$null
+    if (Test-Path "$WORK_DIR\$af") {
+        Copy-Item "$WORK_DIR\$af" "$DATA_DIR\$af" -Force
+        Log "Extracted $af"
+    }
+}
+
 Remove-Item -Recurse -Force $WORK_DIR
 
 $lines = (Get-Content "$DATA_DIR\trade_events_paper.jsonl" | Measure-Object -Line).Lines
