@@ -2636,18 +2636,25 @@ class TradingBot:
         regime  = getattr(self, '_current_market_regime', 'RANGING')
         intel   = getattr(self, '_intelligence_score', 0.0)
 
+        # Regime bases are CONFIGURABLE (2026-08-29). They used to be hardcoded at
+        # 3.0 / 1.25, which silently re-capped winners regardless of
+        # take_profit_percent — a 1.25% TP in a downtrend barely clears the 0.52%
+        # round-trip fee. Defaults preserve the old behaviour.
+        _rm = self.config.get('risk_management', {})
         if regime == 'TRENDING_UP':
-            tp = 3.0
+            tp = float(_rm.get('tp_trending_up_percent', 3.0))
         elif regime == 'TRENDING_DOWN':
-            tp = 1.25
+            tp = float(_rm.get('tp_trending_down_percent', 1.25))
         else:
-            tp = float(self.take_profit_percent)  # config base (2.0%)
+            tp = float(self.take_profit_percent)  # config base
 
-        # AI fine-tune: ±0.25% nudge on strong signals
+        # AI fine-tune: ±0.25% nudge on strong signals. The clamps are RELATIVE to
+        # the configured base — they were absolute (4.0 / 1.0), so a 5.0% base was
+        # silently cut to 4.0 by a bullish intel score, i.e. the nudge inverted.
         if intel > 2:
-            tp = min(tp + 0.25, 4.0)
+            tp = min(tp + 0.25, max(4.0, tp))
         elif intel < -2:
-            tp = max(tp - 0.25, 1.0)
+            tp = max(tp - 0.25, min(1.0, tp))
 
         return round(tp, 2)
 
@@ -3922,10 +3929,18 @@ class TradingBot:
                         _ichi.get("cloud_bottom", 0), _ichi.get("cloud_top", 0),
                     )
                     return
-                if _vs_cloud == "inside" and _trend == "bearish":
+                # Journal replay 2026-08-29: EVERY entry taken inside the cloud
+                # lost money, not just the bearish ones — 15 trades, -9.06 EUR,
+                # median -1.32 EUR, the worst entry bucket in the book. Inside the
+                # cloud is by definition unresolved trend = chop, and chop cannot
+                # pay a 0.52% round-trip fee. Blocking all of them lifts the
+                # replayed book by ~+9 EUR. Config [technical] block_ichimoku_inside
+                # = false restores the old bearish-only block.
+                _block_inside = bool(self.config.get('technical', {}).get('block_ichimoku_inside', True))
+                if _vs_cloud == "inside" and (_block_inside or _trend == "bearish"):
                     self.logger.info(
-                        "BUY skipped for %s: Ichimoku cloud (inside+bearish) — cloud=%.4f-%.4f",
-                        pair, _ichi.get("cloud_bottom", 0), _ichi.get("cloud_top", 0),
+                        "BUY skipped for %s: Ichimoku cloud (inside, trend=%s) — cloud=%.4f-%.4f",
+                        pair, _trend, _ichi.get("cloud_bottom", 0), _ichi.get("cloud_top", 0),
                     )
                     return
                 # Gaussian lower band touch within uptrend → boost score

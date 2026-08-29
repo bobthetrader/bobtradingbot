@@ -44,11 +44,21 @@ listing_trade_eur = 30.0
 
 [risk_management]
 max_drawdown_percent = 25.0
-stop_loss_percent = 1.5              # Wider SL — volatile market needs more room
-min_stop_loss_percent = 1.2          # FLOOR under the regime-aware dynamic SL: the 0.6%
-                                     # bearish stop was below the 0.52% round-trip fee, so
-                                     # wiggles exited at guaranteed fee-dominated net losses
-                                     # (added 2026-07-07). 0 = restore old behaviour.
+# EXIT REBUILD 2026-08-29 — journal replay of the 71 post-reset trades against
+# real 5m candles: gross price P&L was +3.59 EUR but fees were -21.05 EUR, so the
+# signal was ~breakeven and the COSTS + winner-capping exits were the entire loss.
+# Old geometry risked 1.5% to collect 0.7% => needed 65.9% WR, achieved 47.9%.
+# Replay: old rules -23.32 EUR -> this configuration +13.45 EUR on the same entries.
+# Every value below is reversible; see memory project_profitability_diagnosis.md.
+stop_loss_percent = 3.0              # was 1.5 — the old stop sat inside the noise band
+                                     # (median stop-out held only 64 min vs 166-357 min
+                                     # for winners). Replay: stop 1.5 -> 3.0 = -19.4 -> -5.1
+min_stop_loss_percent = 3.0          # FLOOR under the regime-aware dynamic SL, applied LAST
+                                     # in _dynamic_stop_loss_percent() so it pins the stop at
+                                     # 3.0% in bearish/ranging/bullish alike. Was 1.2.
+                                     # 3% of a ~EUR65 position on a EUR500 book = 0.39% equity
+                                     # risk per trade, so the wider stop is still small.
+                                     # 0 = restore pure regime behaviour.
 allocation_per_trade_percent = 12.0 # ~12% of portfolio/trade -> ~EUR58 target
 # Floor so the 7 stacked risk multipliers (Kelly ~0.5x, ATR vol-targeting,
 # correlation, regime) can't shrink every buy into the EUR20s (added 2026-07-06).
@@ -58,7 +68,19 @@ min_target_trade_eur = 50.0
 min_trade_eur = 4.0
 min_auto_scale_notional = 0.1
 min_buy_score = 10.0                 # Needs strong RSI or trend signal
-take_profit_percent = 2.0            # 2.0% TP vs 0.8% SL = 2.5:1 ratio
+take_profit_percent = 5.0            # was 2.0. The ONLY exit that made real money was
+                                     # TAKE_PROFIT_RSI: 5 trades, +4.04% each, +11.45 EUR —
+                                     # i.e. the edge lives in the right tail. Replay on the
+                                     # filtered entries: TP 3.0 -> +1.35, TP 4.0 -> +6.32,
+                                     # TP 5.0 -> +13.45 (and TP 5.0 is the only one still
+                                     # positive after deleting the 3 biggest winners).
+                                     # Regime bases below must be raised too or this is moot.
+# Regime take-profit bases (2026-08-29). Previously HARDCODED at 3.0 bullish /
+# 1.25 bearish inside _dynamic_take_profit_percent(), which silently re-capped
+# winners at 1.25% in any downtrend no matter what take_profit_percent said.
+# Now configurable; set flat 5.0 to match the replayed policy.
+tp_trending_up_percent = 5.0
+tp_trending_down_percent = 5.0
 min_net_sell_profit_pct = 0.5
 # Gain-protection throttle off for paper: don't cut position sizing after hitting
 # the +3%/month target — we want full-size trading to test the wider universe.
@@ -81,13 +103,26 @@ enable_atr_dynamic_tp = false
 enable_mean_reversion_signals = true
 mr_rsi_oversold_threshold = 30       # Only buy genuine oversold (RSI < 30)
 mr_rsi_overbought_threshold = 70     # Only sell genuine overbought (RSI > 70)
-break_even_trigger_percent = 1.0     # Arm the break-even stop only after +1.0% gain
-break_even_offset_pct = 0.7          # BE stop parked at entry+0.7% (covers 0.52% fees + margin), NOT raw entry
-trailing_stop_min_gain_pct = 0.8     # Trailing stop can only fire while still >= +0.8% gross (nets positive after fees)
+# BREAK-EVEN DISABLED 2026-08-29. It was the single most expensive mechanism in
+# the bot: 26 of 71 trades (a THIRD of the book) exited via BREAK_EVEN for +1.71
+# EUR TOTAL — +0.066 EUR each — after already running +1.0% in our favour. It
+# converted the winners that pay for the stops into rounding errors.
+# Replay: disabling it alone moved the book -23.32 -> -19.39. true = restore.
+enable_break_even = false
+break_even_trigger_percent = 1.0     # inert while enable_break_even = false
+break_even_offset_pct = 0.7          # inert while enable_break_even = false
+# Trailing now REPLACES break-even as the profit-protector, but engages far later:
+# it fires only once a position has run up and then given back 2.0%, and never
+# below +1.5% gross (= +0.98% net of the 0.52% round-trip fee).
+trailing_stop_percent = 2.0          # give-back from peak that triggers the exit (was 1.5 default)
+trailing_stop_min_gain_pct = 1.5     # was 0.8 — exit must still net ~+1% after fees
 max_consecutive_losses = 5
 pause_after_loss_streak_minutes = 60 # was 0 = pause disabled; streak counter is now NET of fees (2026-07-06)
 max_open_positions = 6               # was 3 — 3 slots stayed full of parked longs, blocking new long entries
-time_stop_hours = 24                 # was default 72 — recycle flat/dead-money longs faster so slots free up
+time_stop_hours = 48                 # was 24. Winners need room in TIME as well as price:
+                                     # replay stop2.5/no-TP went +0.06 at 24h vs +2.18 at 48h,
+                                     # and the biggest winners were still running at the 24h
+                                     # mark. Also halves turnover => less fee drag.
 
 [intelligence]
 # AI panel cadence. Raised 600->1800 (2026-07-04) to cut OpenRouter cost ~3x:
@@ -149,6 +184,12 @@ max_entry_rsi_1h = 60
 # ran 33% WR / -14.6 EUR over 33 trades — dips inside weak hourly trends keep
 # falling. Only the 50-60 band held up (54% WR). 0 = off.
 min_entry_rsi_1h = 50
+# Block ALL buys while price sits INSIDE the Ichimoku cloud (2026-08-29). The gate
+# previously blocked only inside+bearish; the journal replay showed every
+# inside-cloud entry lost — 15 trades, -9.06 EUR, median -1.32, the worst entry
+# bucket in the book. Inside the cloud = unresolved trend = chop, and chop cannot
+# pay the 0.52% round-trip fee. false = revert to blocking only inside+bearish.
+block_ichimoku_inside = true
 
 [optimizer]
 enabled = true
@@ -161,7 +202,14 @@ eval_every_n_trades = 10
 # Runs via the Claude Code CLI on the Max subscription (CLAUDE_CODE_OAUTH_TOKEN
 # in .env, from `claude setup-token`) — NO metered API billing; worst case is a
 # rate limit and every failure falls back to pure rule behaviour.
-enabled = true
+#
+# DISABLED 2026-08-29 pending a proper verdict. Over its first 17 closed trades
+# the desk ran 41.2% WR / -8.51 EUR vs rules-only 50.0% WR / -8.90 EUR over 54 —
+# 3x the loss per trade, the worst median trade in the candle replay (-1.18 EUR),
+# and negative in both the raw journal and the replay. Short of the >=50-trade
+# judging bar, but it is costing money while we fix exit geometry, so it is off
+# until the exit rebuild is judged. true = re-enable.
+enabled = false
 max_calls_per_day = 40      # hard stop, then rules-only for the rest of the day
 timeout_seconds = 25        # per decision; CLI failure -> rules
 tune_time_utc = "21:15"     # nightly self-tune, after the 08-20 trading window
